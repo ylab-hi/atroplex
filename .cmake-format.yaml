@@ -1,0 +1,50 @@
+# .cmake-format.yaml - CMake formatting configuration
+
+# Line width for wrapping
+line_width: 100
+tab_size: 2
+use_tabchars: false # Use spaces instead of tabs
+
+# Formatting options
+format:
+  # Maximum lines for horizontal wrapping (0 = unlimited)
+  max_lines_hwrap: 0
+
+  # Do not automatically sort argument lists
+  autosort: false
+
+  # Command names in lowercase
+  command_case: "lower"
+
+  # Keywords like PUBLIC, PRIVATE, INTERFACE in uppercase
+  keyword_case: "upper"
+
+  # Multi-line formatting for readability
+  wrap:
+    long_list: ALWAYS # Wrap long argument lists (e.g., target_link_libraries)
+    call: MULTILINE # Wrap multi-line calls consistently
+  continuation_indent: 4 # Indent continuation lines by 4 spaces
+  separate_ctrl_name_with_space: true # Add space after commands like if(), foreach()
+
+# Parsing options
+parse:
+# Placeholder for custom commands (currently disabled)
+# additional_commands:
+#   foo:
+#     flags:
+#       - BAR
+#       - BAZ
+#     kwargs:
+#       HEADERS: "*"
+#       SOURCES: "*"
+#       DEPENDS: "*"
+
+# File encoding
+encoding: "utf-8"
+
+# Line endings
+line_ending: "unix"
+
+# Comment markup and reflowing
+markup:
+  enable_markup: false

@@ -1,0 +1,13 @@
+/*
+ * SPDX-License-Identifier: MIT
+ *
+ * Copyright (c) 2025 Richard A. Schäfer
+ *
+ * This file is part of genogrove and is licensed under the terms of the MIT
+ * license. See the LICENSE file in the root of the repository for more
+ * information.
+ */
+
+#define atroplex_VERSION_MAJOR @atroplex_VERSION_MAJOR@
+#define atroplex_VERSION_MINOR @atroplex_VERSION_MINOR@
+#define atroplex_VERSION_PATCH @atroplex_VERSION_PATCH@
