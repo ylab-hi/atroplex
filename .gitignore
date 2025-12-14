@@ -91,4 +91,7 @@ build
 .cache
 CLAUDE.md
 
+# atroplex-specific
+.config.hpp
+
 # End of https://www.toptal.com/developers/gitignore/api/cmake,macos,c++

@@ -34,7 +34,7 @@ target_include_directories(atroplex PUBLIC
         "${CMAKE_CURRENT_SOURCE_DIR}/include"
         ${HTSLIB_INCLUDE_DIRS}
 )
-target_link_libraries(morrigan
+target_link_libraries(atroplex
         cxxopts
         genogrove
         ${HTSLIB_LIBRARIES}
