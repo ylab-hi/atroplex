@@ -14,12 +14,20 @@
 // standard
 #include <filesystem>
 #include <memory>
+#include <string>
 
 // cxxopts
 #include <cxxopts.hpp>
 
-// class
-#include "filetype_detector.hpp"
+// genogrove
+#include <genogrove/structure/grove/grove.hpp>
+#include <genogrove/data_type/interval.hpp>
+#include <genogrove/io/gff_reader.hpp>
+#include <genogrove/io/filetype_detector.hpp>
+
+namespace gdt = genogrove::data_type;
+namespace ggs = genogrove::structure;
+namespace gio = genogrove::io;
 
 /**
  * base handles the initial file type detection and routing
@@ -31,15 +39,28 @@ public:
     explicit base(const cxxopts::ParseResult& params);
     ~base();
 
+    void validate(const cxxopts::ParseResult& args);
+
     // main processing pipeline
     void process();
 
     // Getter
+    ggs::grove<gdt::interval, gio::gff_entry>* get_grove() const { return grove; }
 
 private:
     cxxopts::ParseResult params;
-    std::filesystem::path input_path;
-    filetype detected_filetype;
+    bool gzipped;
+
+    // grove structure for genomic intervals
+    ggs::grove<gdt::interval, gff_entry>* grove = nullptr;
+
+    // steps for the pipeline
+    void start();
+    void detect_input_filetype();
+    void align_reads();
+    void create_genogrove(const std::string& annotation_path);
+    void load_genogrove(const std::string& gg_path);
+
 };
 
 #endif //ATROPLEX_BASE_HPP

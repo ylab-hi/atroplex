@@ -1,5 +1,5 @@
 /*
- * SPDX-License-Identifier: MIT
+ * SPDX-License-Identifier: GPLv3
  *
  * Copyright (c) 2025 Richard A. Schäfer
  *
@@ -21,14 +21,17 @@
 
 namespace gdt = genogrove::data_type;
 
+
 struct segment {
     segment_identifier id;
     gdt::genomic_coordinate genomic_coordinate;
 
-
-
-
 };
+
+struct exon {
+    int num;
+};
+
 
 
 #endif //ATROPLEX_GRAPH_STRUCTURE_HPP
