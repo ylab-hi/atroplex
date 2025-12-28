@@ -49,16 +49,18 @@ public:
 
 private:
     cxxopts::ParseResult params;
+    gio::filetype ftype;
+    gio::compression_type compression;
     bool gzipped;
 
     // grove structure for genomic intervals
-    ggs::grove<gdt::interval, gff_entry>* grove = nullptr;
+    ggs::grove<gdt::interval, gio::gff_entry>* grove = nullptr;
 
     // steps for the pipeline
     void start();
     void detect_input_filetype();
     void align_reads();
-    void create_genogrove(const std::string& annotation_path);
+    void create_genogrove(const std::vector<std::string>& build_files);
     void load_genogrove(const std::string& gg_path);
 
 };
