@@ -6,6 +6,7 @@
 
 // class
 #include "utility.hpp"
+#include "genogrove_builder.hpp"
 
 // genogrove
 #include <genogrove/io/gff_reader.hpp>
@@ -18,12 +19,28 @@ namespace ggs = genogrove::structure;
 namespace gio = genogrove::io;
 
 base::base(const cxxopts::ParseResult& params)
-    : params{params}, ftype{filetype::UNKNOWN}, gzipped{false} {
+    : params{params}, ftype{gio::filetype::UNKNOWN}, compression{false} {
+
+    // Check if a genogrove file is provided - if so load genogrove structure
+    if(params.count("genogrove")) {
+        std::string gg_path = params["genogrove"].as<std::string>();
+        if(std::filesystem::exists(gg_path)) {
+            logging::info("Loading existing genogrove from: " + gg_path);
+            load_genogrove(gg_path);
+        } else {
+            logging::warning("Genogrove file not found: " + gg_path);
+        }
+    }
+
+    if(params.count("build-from")) {
+        auto build_files = params["build-from"].as<std::vector<std::string>>();
+        create_genogrove(build_files);
+    }
 }
 
 base::~base() {
-    if(grove) {
-        delete grove;
+    if(structures) {
+        delete structures;
     }
 }
 
@@ -44,65 +61,35 @@ void base::process() {
 void base::start() {
     logging::info("Initializing genogrove structure...");
 
-    // Check if a genogrove file is provided
-    if(params.count("genogrove")) {
-        std::string gg_path = params["genogrove"].as<std::string>();
-        if(std::filesystem::exists(gg_path)) {
-            logging::info("Loading existing genogrove from: " + gg_path);
-            load_genogrove(gg_path);
-        } else {
-            logging::warning("Genogrove file not found: " + gg_path);
-        }
+
+
+
+
+
+    // If no structures loaded and build-from files are provided, create new structures
+    if(!structures && params.count("build-from")) {
+        auto build_files = params["build-from"].as<std::vector<std::string>>();
+
+        logging::info("Creating genomic structures from " + std::to_string(build_files.size()) + " file(s)");
+        create_genogrove(build_files);
     }
 
-    // If no grove loaded and annotation is provided, create new grove
-    if(!grove && params.count("annotation")) {
-        std::string annotation_path = params["annotation"].as<std::string>();
-        if(!std::filesystem::exists(annotation_path)) {
-            logging::error("Annotation file not found: " + annotation_path);
-            throw std::runtime_error("Annotation file not found");
-        }
-
-        logging::info("Creating genogrove from annotation: " + annotation_path);
-        create_genogrove(annotation_path);
-    }
-
-    if(!grove) {
-        logging::warning("No genogrove structure loaded or created");
+    if(!structures) {
+        logging::warning("No genomic structures loaded or created");
     } else {
-        logging::info("Genogrove structure ready");
+        logging::info("Genomic structures ready (grove + transcript graph)");
     }
 }
 
-void base::create_genogrove(const std::string& annotation_path) {
+void base::create_genogrove(const std::vector<std::string>& build_files) {
     int order = params["order"].as<int>();
-    logging::info("Creating grove with order: " + std::to_string(order));
 
-    // Create grove with interval as key and gff_entry as data
-    grove = new ggs::grove<gdt::interval, gff_entry>(order);
+    // Use the genogrove_builder to handle multiple files and file types
+    structures = genogrove_builder::build_from_files(build_files, order);
 
-    // Read and insert GFF entries
-    gff_reader reader(annotation_path);
-    gff_entry entry;
-    size_t count = 0;
-
-    while(reader.has_next()) {
-        if(!reader.read_next(entry)) {
-            if(reader.get_error_message().empty()) {
-                break; // EOF
-            }
-            logging::error("Error reading annotation at line " +
-                         std::to_string(reader.get_current_line()) +
-                         ": " + reader.get_error_message());
-            continue;
-        }
-
-        // Insert entry: seqid as index, interval as key, gff_entry as data
-        grove->insert_data(entry.seqid, entry.interval, entry);
-        count++;
+    if (!structures) {
+        logging::error("Failed to create genomic structures from provided files");
     }
-
-    logging::info("Inserted " + std::to_string(count) + " entries into genogrove");
 }
 
 void base::load_genogrove(const std::string& gg_path) {
@@ -114,7 +101,7 @@ void base::detect_input_filetype(){
     logging::info("Detecting input file type...");
 
     std::string input_path = params["input"].as<std::string>();
-    filetype_detector detector;
+    gio::filetype_detector detector;
     auto [detected_ftype, is_gzipped] = detector.detect_filetype(input_path);
 
     ftype = detected_ftype;
@@ -122,19 +109,19 @@ void base::detect_input_filetype(){
 
     std::string ftype_str;
     switch(detected_ftype) {
-        case filetype::FASTQ:
+        case gio::filetype::FASTQ:
             ftype_str = "FASTQ";
             break;
-        case filetype::BAM:
+        case gio::filetype::BAM:
             ftype_str = "BAM";
             break;
-        case filetype::GFF:
+        case gio::filetype::GFF:
             ftype_str = "GFF";
             break;
-        case filetype::GTF:
+        case gio::filetype::GTF:
             ftype_str = "GTF";
             break;
-        case filetype::GG:
+        case gio::filetype::GG:
             ftype_str = "Genogrove";
             break;
         default:

@@ -39,8 +39,8 @@ int main(int argc, char** argv) {
                 cxxopts::value<std::string>())
             ("g,genogrove", "Genogrove file in .gg format (optional)",
                 cxxopts::value<std::string>())
-            ("a,annotation", "Annotation file in GFF/GTF format (optional)",
-                cxxopts::value<std::string>())
+            ("b,build-from", "Build the genogrove structure from file(s) (can be specified multiple times)",
+                cxxopts::value<std::vector<std::string>>())
             ("k,order", "Order of genogrove (only used when genogrove is newly created)",
                 cxxopts::value<int>()->default_value("3"))
             ;

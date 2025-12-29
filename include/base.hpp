@@ -25,8 +25,13 @@
 #include <genogrove/io/gff_reader.hpp>
 #include <genogrove/io/filetype_detector.hpp>
 
+#include "genomic_feature.hpp"
+
+// class
+#include "genogrove_builder.hpp"
+
 namespace gdt = genogrove::data_type;
-namespace ggs = genogrove::structure;
+namespace gst = genogrove::structure;
 namespace gio = genogrove::io;
 
 /**
@@ -44,17 +49,19 @@ public:
     // main processing pipeline
     void process();
 
-    // Getter
-    ggs::grove<gdt::interval, gio::gff_entry>* get_grove() const { return grove; }
+    // Getters
+    genomic_structures* get_structures() const { return structures; }
 
 private:
     cxxopts::ParseResult params;
+    gst::grove<gdt::interval, genomic_feature> grove;
+
     gio::filetype ftype;
     gio::compression_type compression;
     bool gzipped;
 
-    // grove structure for genomic intervals
-    ggs::grove<gdt::interval, gio::gff_entry>* grove = nullptr;
+    // Genomic data structures (grove + transcript graph)
+    genomic_structures* structures = nullptr;
 
     // steps for the pipeline
     void start();
