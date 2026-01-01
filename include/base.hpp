@@ -50,18 +50,15 @@ public:
     void process();
 
     // Getters
-    genomic_structures* get_structures() const { return structures; }
+    grove_type* get_grove() const { return grove; }
 
 private:
     cxxopts::ParseResult params;
-    gst::grove<gdt::interval, genomic_feature> grove;
+    grove_type* grove = nullptr;
 
     gio::filetype ftype;
     gio::compression_type compression;
     bool gzipped;
-
-    // Genomic data structures (grove + transcript graph)
-    genomic_structures* structures = nullptr;
 
     // steps for the pipeline
     void start();

@@ -1,9 +1,9 @@
 /*
- * SPDX-License-Identifier: MIT
+ * SPDX-License-Identifier: GPLv3
  *
  * Copyright (c) 2025 Richard A. Schäfer
  *
- * This file is part of atroplex and is licensed under the terms of the MIT
+ * This file is part of atroplex and is licensed under the terms of the GPLv3
  * license. See the LICENSE file in the root of the repository for more
  * information.
  */
@@ -39,12 +39,13 @@ static std::string extract_attribute(const std::string& attributes, const std::s
     return "";
 }
 
-genomic_feature genomic_feature::from_gff_entry(
+exon_feature exon_feature::from_gff_entry(
     const std::string& attributes,
-    size_t node_id,
-    feature_type type
+    const std::string& seqid,
+    const gdt::interval& interval,
+    char strand
 ) {
-    genomic_feature feature(node_id, type);
+    exon_feature feature;
 
     // Extract common attributes
     feature.id = extract_attribute(attributes, "ID");
@@ -54,10 +55,10 @@ genomic_feature genomic_feature::from_gff_entry(
 
     feature.gene_id = extract_attribute(attributes, "gene_id");
     feature.gene_name = extract_attribute(attributes, "gene_name");
-    feature.gene_type = extract_attribute(attributes, "gene_type");
+    feature.gene_biotype = extract_attribute(attributes, "gene_type");
 
-    if (feature.gene_type.empty()) {
-        feature.gene_type = extract_attribute(attributes, "gene_biotype");
+    if (feature.gene_biotype.empty()) {
+        feature.gene_biotype = extract_attribute(attributes, "gene_biotype");
     }
 
     // Transcript information
@@ -67,11 +68,6 @@ genomic_feature genomic_feature::from_gff_entry(
     }
     if (!transcript_id.empty()) {
         feature.transcript_ids.insert(transcript_id);
-    }
-
-    feature.transcript_type = extract_attribute(attributes, "transcript_type");
-    if (feature.transcript_type.empty()) {
-        feature.transcript_type = extract_attribute(attributes, "transcript_biotype");
     }
 
     // Source
@@ -86,6 +82,11 @@ genomic_feature genomic_feature::from_gff_entry(
             feature.exon_number = -1;
         }
     }
+
+    // Build coordinate string: chr:strand:start-end
+    feature.coordinate = seqid + ":" + strand + ":" +
+                        std::to_string(interval.get_start()) + "-" +
+                        std::to_string(interval.get_end());
 
     return feature;
 }

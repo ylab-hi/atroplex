@@ -1,9 +1,9 @@
 /*
- * SPDX-License-Identifier: MIT
+ * SPDX-License-Identifier: GPLv3
  *
  * Copyright (c) 2025 Richard A. Schäfer
  *
- * This file is part of atroplex and is licensed under the terms of the MIT
+ * This file is part of atroplex and is licensed under the terms of the GPLv3
  * license. See the LICENSE file in the root of the repository for more
  * information.
  */
@@ -13,60 +13,169 @@
 
 #include <string>
 #include <unordered_set>
+#include <unordered_map>
+#include <vector>
+#include <variant>
+
+// genogrove
+#include <genogrove/data_type/interval.hpp>
+
+namespace gdt = genogrove::data_type;
 
 /**
- * Type of genomic feature stored in the grove
+ * Edge metadata for grove graph
+ * Tracks which transcript/segment an edge belongs to
  */
-enum class feature_type {
-    EXON,
-    SEGMENT
+struct edge_metadata {
+    // Primary identifier for this edge (transcript or segment ID)
+    std::string id;
+
+    // Type of edge
+    enum class edge_type {
+        EXON_TO_EXON,      // Exon chain within a segment
+        SEGMENT_TO_EXON,   // Segment links to its first exon
+        SEGMENT_TO_SEGMENT // Transcript path through segments
+    } type;
+
+    edge_metadata() : type(edge_type::EXON_TO_EXON) {}
+
+    edge_metadata(std::string id, edge_type t)
+        : id(std::move(id)), type(t) {}
 };
 
 /**
- * Genomic feature data stored in the grove
- * Represents both exons and segments with biological metadata
- * Links to the unified transcript graph via graph_node_id
+ * Exon feature: spatial interval with biological annotations
+ * Used for read overlap queries and CDS/UTR disambiguation
  */
-struct genomic_feature {
-    // Reference to unified transcript graph
-    size_t graph_node_id;
-
-    // Feature classification
-    feature_type type;
-
+struct exon_feature {
     // Core identifiers
-    std::string id;              // Feature ID (exon_id or segment_id)
-    std::string gene_id;         // Gene identifier
-    std::string gene_name;       // Gene name/symbol
-    std::string gene_type;       // Gene biotype (protein_coding, lncRNA, etc.)
+    std::string id;                  // Exon ID
+    std::string gene_id;             // Gene identifier
+    std::string gene_name;           // Gene name/symbol
+    std::string gene_biotype;        // Gene biotype (protein_coding, lncRNA, etc.)
+    std::string coordinate;          // Genomic coordinate e.g., chr1:+:100-200
 
-    // Transcript information
-    std::unordered_set<std::string> transcript_ids;  // All transcripts using this feature
-    std::string transcript_type;  // Transcript biotype
+    // Transcript associations
+    std::unordered_set<std::string> transcript_ids;  // Reference transcripts using this exon
 
     // Additional annotations
-    std::string source;          // Source of annotation (e.g., GENCODE, Ensembl)
-    int exon_number;            // Exon number within transcript (-1 for segments/unknown)
+    std::string source;              // Source of annotation (e.g., GENCODE, Ensembl)
+    int exon_number;                 // Exon number within transcript (-1 for unknown)
+
+    // Overlapping feature annotations (CDS, UTR, codons)
+    // Maps feature type (e.g., "CDS", "five_prime_UTR", "start_codon") to intervals
+    // Example: exon [100-300] might have:
+    //   "CDS" -> {[120-300]}
+    //   "five_prime_UTR" -> {[100-119]}
+    //   "start_codon" -> {[120-122]}
+    std::unordered_map<std::string, std::vector<gdt::interval>> overlapping_features;
 
     // Constructors
-    genomic_feature()
-        : graph_node_id(0), type(feature_type::EXON), exon_number(-1) {}
+    exon_feature() : exon_number(-1) {}
 
-    genomic_feature(size_t node_id, feature_type t)
-        : graph_node_id(node_id), type(t), exon_number(-1) {}
-
-    // Create feature from GFF entry
-    static genomic_feature from_gff_entry(
+    // Create exon from GFF entry
+    static exon_feature from_gff_entry(
         const std::string& attributes,
-        size_t node_id,
-        feature_type type
+        const std::string& seqid,
+        const gdt::interval& interval,
+        char strand
     );
 
-    // Helper to check if this is an exon
-    bool is_exon() const { return type == feature_type::EXON; }
+    // Check if exon overlaps with a specific feature type
+    bool has_overlapping_feature(const std::string& feature_type) const {
+        return overlapping_features.find(feature_type) != overlapping_features.end();
+    }
 
-    // Helper to check if this is a segment
-    bool is_segment() const { return type == feature_type::SEGMENT; }
+    // Get intervals where a specific feature type overlaps
+    const std::vector<gdt::interval>* get_overlapping_intervals(const std::string& feature_type) const {
+        auto it = overlapping_features.find(feature_type);
+        return it != overlapping_features.end() ? &it->second : nullptr;
+    }
 };
+
+/**
+ * Segment feature: spans consecutive exons, represents transcript paths
+ * Used for graph traversal and transcript assignment
+ */
+struct segment_feature {
+    // Core identifiers
+    std::string id;                  // Segment ID
+    std::string gene_id;             // Gene identifier
+    std::string gene_name;           // Gene name/symbol
+    std::string gene_biotype;        // Gene biotype
+    std::string coordinate;          // Genomic coordinate e.g., chr1:+:100-500
+
+    // Transcript associations
+    std::unordered_set<std::string> transcript_ids;  // Transcripts using this segment
+
+    // Segment structure
+    int exon_count;                  // Number of exons in this segment
+
+    // Read support metadata (populated during discovery phase)
+    size_t read_coverage;            // Number of reads supporting this segment
+    std::vector<std::string> supporting_reads;  // Read IDs that support this segment
+
+    // Provenance tracking
+    enum class source_type {
+        REFERENCE,   // From GFF/GTF annotation
+        DISCOVERED,  // Discovered from read analysis
+        FUSION       // User-defined or detected fusion
+    } source;
+
+    // Constructors
+    segment_feature()
+        : exon_count(0), read_coverage(0), source(source_type::REFERENCE) {}
+
+    segment_feature(source_type src)
+        : exon_count(0), read_coverage(0), source(src) {}
+
+    // Check if this is a reference segment
+    bool is_reference() const { return source == source_type::REFERENCE; }
+
+    // Check if this is a discovered segment
+    bool is_discovered() const { return source == source_type::DISCOVERED; }
+
+    // Check if this is a fusion segment
+    bool is_fusion() const { return source == source_type::FUSION; }
+
+    // Add read support
+    void add_read_support(const std::string& read_id) {
+        supporting_reads.push_back(read_id);
+        read_coverage++;
+    }
+};
+
+/**
+ * Genomic feature variant: can be either exon or segment
+ * Use std::holds_alternative<T> to check type
+ * Use std::get<T> to access specific type
+ */
+using genomic_feature = std::variant<exon_feature, segment_feature>;
+
+// Helper functions to check variant type
+inline bool is_exon(const genomic_feature& feature) {
+    return std::holds_alternative<exon_feature>(feature);
+}
+
+inline bool is_segment(const genomic_feature& feature) {
+    return std::holds_alternative<segment_feature>(feature);
+}
+
+// Helper functions to get variant value
+inline exon_feature& get_exon(genomic_feature& feature) {
+    return std::get<exon_feature>(feature);
+}
+
+inline const exon_feature& get_exon(const genomic_feature& feature) {
+    return std::get<exon_feature>(feature);
+}
+
+inline segment_feature& get_segment(genomic_feature& feature) {
+    return std::get<segment_feature>(feature);
+}
+
+inline const segment_feature& get_segment(const genomic_feature& feature) {
+    return std::get<segment_feature>(feature);
+}
 
 #endif //ATROPLEX_GENOMIC_FEATURE_HPP

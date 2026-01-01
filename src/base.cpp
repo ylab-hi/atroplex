@@ -39,8 +39,8 @@ base::base(const cxxopts::ParseResult& params)
 }
 
 base::~base() {
-    if(structures) {
-        delete structures;
+    if(grove) {
+        delete grove;
     }
 }
 
@@ -61,23 +61,18 @@ void base::process() {
 void base::start() {
     logging::info("Initializing genogrove structure...");
 
-
-
-
-
-
-    // If no structures loaded and build-from files are provided, create new structures
-    if(!structures && params.count("build-from")) {
+    // If no grove loaded and build-from files are provided, create new grove
+    if(!grove && params.count("build-from")) {
         auto build_files = params["build-from"].as<std::vector<std::string>>();
 
-        logging::info("Creating genomic structures from " + std::to_string(build_files.size()) + " file(s)");
+        logging::info("Creating grove from " + std::to_string(build_files.size()) + " file(s)");
         create_genogrove(build_files);
     }
 
-    if(!structures) {
-        logging::warning("No genomic structures loaded or created");
+    if(!grove) {
+        logging::warning("No grove loaded or created");
     } else {
-        logging::info("Genomic structures ready (grove + transcript graph)");
+        logging::info("Grove ready with spatial index and graph structure");
     }
 }
 
@@ -85,10 +80,10 @@ void base::create_genogrove(const std::vector<std::string>& build_files) {
     int order = params["order"].as<int>();
 
     // Use the genogrove_builder to handle multiple files and file types
-    structures = genogrove_builder::build_from_files(build_files, order);
+    grove = genogrove_builder::build_from_files(build_files, order);
 
-    if (!structures) {
-        logging::error("Failed to create genomic structures from provided files");
+    if (!grove) {
+        logging::error("Failed to create grove from provided files");
     }
 }
 
@@ -138,4 +133,3 @@ void base::align_reads() {
     // TODO: Implement alignment for FASTQ input
     logging::warning("Alignment not yet implemented");
 }
-
