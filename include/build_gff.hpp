@@ -13,6 +13,7 @@
 
 // standard
 #include <string>
+#include <optional>
 #include <vector>
 #include <map>
 #include <filesystem>
@@ -21,6 +22,7 @@
 #include <genogrove/structure/grove/grove.hpp>
 #include <genogrove/data_type/interval.hpp>
 #include <genogrove/io/gff_reader.hpp>
+#include <genogrove/data_type/genomic_coordinate.hpp>
 
 // class
 #include "genomic_feature.hpp"
@@ -92,17 +94,19 @@ private:
     /**
      * Extract gene_id from GFF attributes
      */
-    static std::string extract_gene_id(const std::map<std::string, std::string>& attributes);
+    static std::optional<std::string> extract_gene_id(
+        const std::map<std::string, std::string>& attributes);
 
     /**
      * Extract transcript_id from GFF attributes
      */
-    static std::string extract_transcript_id(const std::map<std::string, std::string>& attributes);
+    static std::optional<std::string> extract_transcript_id(
+        const std::map<std::string, std::string>& attributes);
 
     /**
      * Extract generic attribute from GFF attributes map
      */
-    static std::string extract_attribute(
+    static std::optional<std::string> extract_attribute(
         const std::map<std::string, std::string>& attributes,
         const std::string& key
     );

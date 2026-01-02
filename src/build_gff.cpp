@@ -18,6 +18,8 @@
 #include "utility.hpp"
 #include "build_gff.hpp"
 
+// genogrove
+
 void build_gff::build(
     grove_type& grove,
     const std::filesystem::path& filepath
@@ -32,19 +34,16 @@ void build_gff::build(
     for(const auto& entry : reader) {
         line_count++;
 
-        // Process relevant features: exon, CDS, UTRs, codons
+        // Process relevant features: exon, CDS, UTRs, codons (for now only gene/transcript/exon)
         // We need all of these to properly annotate exons with overlapping features
         if (entry.type != "exon" &&
-            entry.type != "CDS" &&
-            entry.type != "five_prime_UTR" &&
-            entry.type != "three_prime_UTR" &&
-            entry.type != "start_codon" &&
-            entry.type != "stop_codon") {
+            entry.type != "transcript" &&
+            entry.type != "gene") {
             continue;
         }
 
-        std::string gene_id = extract_gene_id(entry.attributes);
-        if (gene_id.empty()) {
+        std::optional<std::string> gene_id = extract_transcript_id(entry.attributes);
+        if (!gene_id.has_value()) {
             continue; // Skip entries without gene_id
         }
 
@@ -54,8 +53,8 @@ void build_gff::build(
             genes.erase(current_gene_id); // Free memory
         }
 
-        current_gene_id = gene_id;
-        genes[gene_id].push_back(entry);
+        current_gene_id = gene_id.value();
+        genes[gene_id.value()].push_back(entry);
     }
 
     // Process last gene
@@ -63,7 +62,9 @@ void build_gff::build(
         process_gene(grove, genes[current_gene_id]);
     }
 
-    logging::info("Processed " + std::to_string(line_count) + " lines from " + filepath.filename().string());
+    if(line_count % 10000 == 0) {
+        logging::info("Processed " + std::to_string(line_count) + " lines from " + filepath.filename().string());
+    }
 }
 
 void build_gff::process_gene(
@@ -71,15 +72,29 @@ void build_gff::process_gene(
     const std::vector<gio::gff_entry>& gene_entries
 ) {
     // Separate exons from annotation features
-    std::vector<gio::gff_entry> annotations;
+    // std::vector<gio::gff_entry> annotations;
 
     // Group entries by transcript
-    std::unordered_map<std::string, std::vector<gio::gff_entry>> transcripts;
+    // std::unordered_map<std::string, std::vector<gio::gff_entry>> transcripts;
+
+    std::string gene_id;
 
     for (const auto& entry : gene_entries) {
-        std::string transcript_id = extract_transcript_id(entry.attributes);
-        if (!transcript_id.empty()) {
-            transcripts[transcript_id].push_back(entry);
+        if (entry.type == "gene") {
+            // as we already tested for a value (we assume gene_id can always be determined)
+            std::string gene_id = extract_gene_id(entry.attributes).value();
+
+
+
+        }
+
+
+
+
+
+        std::optional<std::string> transcript_id = extract_transcript_id(entry.attributes);
+        if (!transcript_id.has_value()) {
+            transcripts[transcript_id.value()].push_back(entry);
         }
 
         // Collect annotations for later
@@ -236,38 +251,29 @@ void build_gff::annotate_exons(
     }
 }
 
-std::string build_gff::extract_gene_id(const std::map<std::string, std::string>& attributes) {
-    // Try common attribute names
+std::optional<std::string> build_gff::extract_gene_id(
+    const std::map<std::string, std::string>& attributes) {
+
+    // format of GENCODE is gene_id=
     auto it = attributes.find("gene_id");
     if (it != attributes.end()) {
         return it->second;
     }
-
-    it = attributes.find("GeneID");
-    if (it != attributes.end()) {
-        return it->second;
-    }
-
-    return "";
+    return std::nullopt;
 }
 
-std::string build_gff::extract_transcript_id(const std::map<std::string, std::string>& attributes) {
+std::optional<std::string> build_gff::extract_transcript_id(
+    const std::map<std::string, std::string>& attributes) {
+
     // Try GTF format: transcript_id
     auto it = attributes.find("transcript_id");
     if (it != attributes.end()) {
         return it->second;
     }
-
-    // Try GFF3 format: Parent
-    it = attributes.find("Parent");
-    if (it != attributes.end()) {
-        return it->second;
-    }
-
-    return "";
+    return std::nullopt;
 }
 
-std::string build_gff::extract_attribute(
+std::optional<std::string> build_gff::extract_attribute(
     const std::map<std::string, std::string>& attributes,
     const std::string& key
 ) {
@@ -275,5 +281,5 @@ std::string build_gff::extract_attribute(
     if (it != attributes.end()) {
         return it->second;
     }
-    return "";
+    return std::nullopt;
 }
