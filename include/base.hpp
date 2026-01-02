@@ -28,7 +28,7 @@
 #include "genomic_feature.hpp"
 
 // class
-#include "genogrove_builder.hpp"
+#include "builder.hpp"
 
 namespace gdt = genogrove::data_type;
 namespace gst = genogrove::structure;

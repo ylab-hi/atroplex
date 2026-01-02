@@ -6,7 +6,7 @@
 
 // class
 #include "utility.hpp"
-#include "genogrove_builder.hpp"
+#include "builder.hpp"
 
 // genogrove
 #include <genogrove/io/gff_reader.hpp>
@@ -80,7 +80,7 @@ void base::create_genogrove(const std::vector<std::string>& build_files) {
     int order = params["order"].as<int>();
 
     // Use the genogrove_builder to handle multiple files and file types
-    grove = genogrove_builder::build_from_files(build_files, order);
+    grove = builder::build_from_files(build_files, order);
 
     if (!grove) {
         logging::error("Failed to create grove from provided files");
@@ -90,43 +90,6 @@ void base::create_genogrove(const std::vector<std::string>& build_files) {
 void base::load_genogrove(const std::string& gg_path) {
     // TODO: Implement genogrove deserialization
     logging::error("Genogrove loading not yet implemented");
-}
-
-void base::detect_input_filetype(){
-    logging::info("Detecting input file type...");
-
-    std::string input_path = params["input"].as<std::string>();
-    gio::filetype_detector detector;
-    auto [detected_ftype, is_gzipped] = detector.detect_filetype(input_path);
-
-    ftype = detected_ftype;
-    gzipped = is_gzipped;
-
-    std::string ftype_str;
-    switch(detected_ftype) {
-        case gio::filetype::FASTQ:
-            ftype_str = "FASTQ";
-            break;
-        case gio::filetype::BAM:
-            ftype_str = "BAM";
-            break;
-        case gio::filetype::GFF:
-            ftype_str = "GFF";
-            break;
-        case gio::filetype::GTF:
-            ftype_str = "GTF";
-            break;
-        case gio::filetype::GG:
-            ftype_str = "Genogrove";
-            break;
-        default:
-            ftype_str = "UNKNOWN";
-            logging::error("Unknown file type for input file");
-            throw std::runtime_error("Unsupported file type");
-    }
-
-    logging::info("Detected file type: " + ftype_str +
-                 (is_gzipped ? " (gzipped)" : ""));
 }
 
 void base::align_reads() {

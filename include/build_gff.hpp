@@ -8,18 +8,19 @@
  * information.
  */
 
-#ifndef ATROPLEX_GENOGROVE_BUILDER_HPP
-#define ATROPLEX_GENOGROVE_BUILDER_HPP
+#ifndef ATROPLEX_BUILD_GFF_HPP
+#define ATROPLEX_BUILD_GFF_HPP
 
 // standard
 #include <string>
 #include <vector>
+#include <map>
+#include <filesystem>
 
 // genogrove
 #include <genogrove/structure/grove/grove.hpp>
 #include <genogrove/data_type/interval.hpp>
 #include <genogrove/io/gff_reader.hpp>
-#include <genogrove/io/filetype_detector.hpp>
 
 // class
 #include "genomic_feature.hpp"
@@ -28,45 +29,28 @@ namespace gdt = genogrove::data_type;
 namespace gst = genogrove::structure;
 namespace gio = genogrove::io;
 
-// Type aliases for grove structure
+// Type aliases
 using grove_type = gst::grove<gdt::interval, genomic_feature, edge_metadata>;
 using key_ptr = gdt::key<gdt::interval, genomic_feature>*;
 
 /**
- * GenogroveBuilder handles the creation of genogrove structures from various file types.
- * Processes gene-by-gene to minimize memory usage.
- * Workflow per gene:
- * 1. Insert exons into grove (spatial intervals)
- * 2. For each transcript: create segments and link exons
- * 3. Annotate exons with overlapping features (CDS, UTR, codons)
+ * GFF/GTF-specific grove builder
+ * Handles construction of grove structures from GFF/GTF annotation files
  *
- * Supports:
- * - GFF/GTF annotation files
- * - Future: BED, BAM, or other interval-based formats
+ * Processing strategy:
+ * - Gene-by-gene processing for memory efficiency
+ * - Creates exon features with CDS/UTR overlaps
+ * - Creates segment features representing transcript paths
+ * - Links exons within segments via graph edges
  */
-class genogrove_builder {
+class build_gff {
 public:
     /**
-     * Build genogrove from multiple input files
-     * @param files Vector of file paths to process
-     * @param order Order of the genogrove structure
-     * @return Pointer to grove (caller owns the memory)
-     */
-    static grove_type* build_from_files(
-        const std::vector<std::string>& files,
-        int order
-    );
-
-    /**
-     * Process a single GFF/GTF file and add to grove
-     * Processes gene-by-gene for memory efficiency
-     * @param grove Grove to add entries to
+     * Build grove from single GFF/GTF file
+     * @param grove Grove to populate
      * @param filepath Path to GFF/GTF file
      */
-    static void build_from_gff(
-        grove_type& grove,
-        const std::filesystem::path& filepath
-    );
+    static void build(grove_type& grove, const std::filesystem::path& filepath);
 
 private:
     /**
@@ -90,7 +74,7 @@ private:
         grove_type& grove,
         const std::string& transcript_id,
         const std::vector<gio::gff_entry>& all_entries,
-        std::unordered_map<gdt::interval, key_ptr>& exon_keys
+        std::map<gdt::interval, key_ptr>& exon_keys
     );
 
     /**
@@ -101,7 +85,7 @@ private:
      */
     static void annotate_exons(
         grove_type& grove,
-        const std::unordered_map<gdt::interval, key_ptr>& exon_keys,
+        const std::map<gdt::interval, key_ptr>& exon_keys,
         const std::vector<gio::gff_entry>& annotations
     );
 
@@ -113,7 +97,15 @@ private:
     /**
      * Extract transcript_id from GFF attributes
      */
-    static std::string extract_transcript_id(const std::string& attributes);
+    static std::string extract_transcript_id(const std::map<std::string, std::string>& attributes);
+
+    /**
+     * Extract generic attribute from GFF attributes map
+     */
+    static std::string extract_attribute(
+        const std::map<std::string, std::string>& attributes,
+        const std::string& key
+    );
 };
 
-#endif //ATROPLEX_GENOGROVE_BUILDER_HPP
+#endif //ATROPLEX_BUILD_GFF_HPP
