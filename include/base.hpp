@@ -1,9 +1,9 @@
 /*
- * SPDX-License-Identifier: MIT
+ * SPDX-License-Identifier: GPLv3
  *
  * Copyright (c) 2025 Richard A. Schäfer
  *
- * This file is part of genogrove and is licensed under the terms of the MIT
+ * This file is part of atroplex and is licensed under the terms of the GPLv3
  * license. See the LICENSE file in the root of the repository for more
  * information.
  */
@@ -50,11 +50,11 @@ public:
     void process();
 
     // Getters
-    grove_type* get_grove() const { return grove; }
+    grove_type* get_grove() const { return grove.get(); }
 
 private:
     cxxopts::ParseResult params;
-    grove_type* grove = nullptr;
+    std::unique_ptr<grove_type> grove;
 
     gio::filetype ftype;
     gio::compression_type compression;

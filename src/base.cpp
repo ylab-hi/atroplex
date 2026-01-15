@@ -38,11 +38,7 @@ base::base(const cxxopts::ParseResult& params)
     }
 }
 
-base::~base() {
-    if(grove) {
-        delete grove;
-    }
-}
+base::~base() = default;
 
 void base::validate(const cxxopts::ParseResult& args){
     // check if the input file exists
@@ -64,8 +60,6 @@ void base::start() {
     // If no grove loaded and build-from files are provided, create new grove
     if(!grove && params.count("build-from")) {
         auto build_files = params["build-from"].as<std::vector<std::string>>();
-
-        logging::info("Creating grove from " + std::to_string(build_files.size()) + " file(s)");
         create_genogrove(build_files);
     }
 
@@ -79,12 +73,13 @@ void base::start() {
 void base::create_genogrove(const std::vector<std::string>& build_files) {
     int order = params["order"].as<int>();
 
-    // Use the genogrove_builder to handle multiple files and file types
-    grove = builder::build_from_files(build_files, order);
+    logging::info("Creating grove with order: " + std::to_string(order));
 
-    if (!grove) {
-        logging::error("Failed to create grove from provided files");
-    }
+    // Base creates and owns the grove
+    grove = std::make_unique<grove_type>(order);
+
+    // Builder populates the grove from annotation files
+    builder::build_from_files(*grove, build_files);
 }
 
 void base::load_genogrove(const std::string& gg_path) {

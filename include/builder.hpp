@@ -1,9 +1,9 @@
 /*
- * SPDX-License-Identifier: MIT
+ * SPDX-License-Identifier: GPLv3
  *
  * Copyright (c) 2025 Richard A. Schäfer
  *
- * This file is part of atroplex and is licensed under the terms of the MIT
+ * This file is part of atroplex and is licensed under the terms of the GPLv3
  * license. See the LICENSE file in the root of the repository for more
  * information.
  */
@@ -32,11 +32,13 @@ using grove_type = gst::grove<gdt::interval, genomic_feature, edge_metadata>;
 using key_ptr = gdt::key<gdt::interval, genomic_feature>*;
 
 /**
- * GenogroveBuilder - Main interface for grove construction
+ * GenogroveBuilder - Toolkit for grove construction and modification
  *
- * Dispatches to format-specific builders based on file type detection.
+ * Stateless builder that operates on grove references.
  * Supports:
- * - GFF/GTF annotation files (via gff_grove_builder)
+ * - Initial construction from GFF/GTF annotation files
+ * - Extension with discovered transcripts (Phase 3)
+ * - Addition of fusion segments (Phase 3)
  * - Future: BED, BAM, or other interval-based formats
  */
 class builder {
@@ -45,14 +47,17 @@ public:
      * Build genogrove from multiple input files
      * Automatically detects file types and dispatches to appropriate builders
      *
+     * @param grove Reference to grove to populate
      * @param files Vector of file paths to process
-     * @param order Order of the genogrove structure
-     * @return Pointer to grove (caller owns the memory)
      */
-    static grove_type* build_from_files(
-        const std::vector<std::string>& files,
-        int order
+    static void build_from_files(
+        grove_type& grove,
+        const std::vector<std::string>& files
     );
+
+    // Future extension methods for Phase 2/3:
+    // static void add_discovered_transcripts(grove_type& grove, const std::vector<alignment_entry>& reads);
+    // static void add_fusion_segments(grove_type& grove, const fusion_data& fusions);
 };
 
 #endif //ATROPLEX_GENOGROVE_BUILDER_HPP

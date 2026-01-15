@@ -11,11 +11,13 @@
 #ifndef ATROPLEX_GENOMIC_FEATURE_HPP
 #define ATROPLEX_GENOMIC_FEATURE_HPP
 
+// standard
 #include <string>
 #include <unordered_set>
 #include <unordered_map>
 #include <vector>
 #include <variant>
+#include <map>
 
 // genogrove
 #include <genogrove/data_type/interval.hpp>
@@ -75,7 +77,7 @@ struct exon_feature {
 
     // Create exon from GFF entry
     static exon_feature from_gff_entry(
-        const std::string& attributes,
+        const std::map<std::string, std::string>& attributes,
         const std::string& seqid,
         const gdt::interval& interval,
         char strand

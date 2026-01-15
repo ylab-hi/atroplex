@@ -13,34 +13,18 @@
 #include <sstream>
 
 /**
- * Parse GFF/GTF attributes string to extract key-value pairs
+ * Helper to extract attribute from map, return empty string if not found
  */
-static std::string extract_attribute(const std::string& attributes, const std::string& key) {
-    // Try GTF format: key "value"
-    size_t pos = attributes.find(key);
-    if (pos != std::string::npos) {
-        size_t start = attributes.find('"', pos);
-        size_t end = attributes.find('"', start + 1);
-        if (start != std::string::npos && end != std::string::npos) {
-            return attributes.substr(start + 1, end - start - 1);
-        }
-    }
-
-    // Try GFF3 format: key=value
-    std::string key_equals = key + "=";
-    pos = attributes.find(key_equals);
-    if (pos != std::string::npos) {
-        size_t start = pos + key_equals.length();
-        size_t end = attributes.find(';', start);
-        if (end == std::string::npos) end = attributes.length();
-        return attributes.substr(start, end - start);
-    }
-
-    return "";
+static std::string get_attribute(
+    const std::map<std::string, std::string>& attributes,
+    const std::string& key
+) {
+    auto it = attributes.find(key);
+    return (it != attributes.end()) ? it->second : "";
 }
 
 exon_feature exon_feature::from_gff_entry(
-    const std::string& attributes,
+    const std::map<std::string, std::string>& attributes,
     const std::string& seqid,
     const gdt::interval& interval,
     char strand
@@ -48,33 +32,33 @@ exon_feature exon_feature::from_gff_entry(
     exon_feature feature;
 
     // Extract common attributes
-    feature.id = extract_attribute(attributes, "ID");
+    feature.id = get_attribute(attributes, "ID");
     if (feature.id.empty()) {
-        feature.id = extract_attribute(attributes, "exon_id");
+        feature.id = get_attribute(attributes, "exon_id");
     }
 
-    feature.gene_id = extract_attribute(attributes, "gene_id");
-    feature.gene_name = extract_attribute(attributes, "gene_name");
-    feature.gene_biotype = extract_attribute(attributes, "gene_type");
+    feature.gene_id = get_attribute(attributes, "gene_id");
+    feature.gene_name = get_attribute(attributes, "gene_name");
+    feature.gene_biotype = get_attribute(attributes, "gene_type");
 
     if (feature.gene_biotype.empty()) {
-        feature.gene_biotype = extract_attribute(attributes, "gene_biotype");
+        feature.gene_biotype = get_attribute(attributes, "gene_biotype");
     }
 
     // Transcript information
-    std::string transcript_id = extract_attribute(attributes, "transcript_id");
+    std::string transcript_id = get_attribute(attributes, "transcript_id");
     if (transcript_id.empty()) {
-        transcript_id = extract_attribute(attributes, "Parent");
+        transcript_id = get_attribute(attributes, "Parent");
     }
     if (!transcript_id.empty()) {
         feature.transcript_ids.insert(transcript_id);
     }
 
     // Source
-    feature.source = extract_attribute(attributes, "source");
+    feature.source = get_attribute(attributes, "source");
 
     // Exon number
-    std::string exon_num_str = extract_attribute(attributes, "exon_number");
+    std::string exon_num_str = get_attribute(attributes, "exon_number");
     if (!exon_num_str.empty()) {
         try {
             feature.exon_number = std::stoi(exon_num_str);
