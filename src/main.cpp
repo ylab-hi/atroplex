@@ -21,7 +21,7 @@
 #include "base.hpp"
 
 void showVersion(std::ostream& _str) {
-    _str << "morrigan v" << atroplex_VERSION_MAJOR;
+    _str << "atroplex v" << atroplex_VERSION_MAJOR;
     _str << "." << atroplex_VERSION_MINOR << ".";
     _str << atroplex_VERSION_PATCH << " - ";
     _str << "Detect full-length transcripts from long-read ";
@@ -41,8 +41,22 @@ int main(int argc, char** argv) {
                 cxxopts::value<std::string>())
             ("b,build-from", "Build the genogrove structure from file(s) (can be specified multiple times)",
                 cxxopts::value<std::vector<std::string>>())
+            ("o,output", "Output file path for built genogrove index (.gg)",
+                cxxopts::value<std::string>())
             ("k,order", "Order of genogrove (only used when genogrove is newly created)",
                 cxxopts::value<int>()->default_value("3"))
+            ("build-only", "Only build the genogrove index, skip analysis")
+            ;
+
+        options.add_options("Pan-transcriptome")
+            ("sample-manifest", "TSV file with sample metadata (sample_id, file, tissue, condition, ...)",
+                cxxopts::value<std::string>())
+            ("sample-id", "Sample identifier for single-sample build",
+                cxxopts::value<std::string>())
+            ("tissue", "Tissue type for single-sample build",
+                cxxopts::value<std::string>())
+            ("condition", "Condition for single-sample build",
+                cxxopts::value<std::string>())
             ;
 
         options.add_options("Other")
@@ -62,11 +76,25 @@ int main(int argc, char** argv) {
             return 0;
         }
 
-        // Check if input is provided
-        if (!result.count("input")) {
-            logging::error("Please specify an input file with -i/--input");
-            std::cout << options.help() << std::endl;
-            return 1;
+        // Validate arguments based on mode
+        bool build_only = result.count("build-only") > 0;
+        bool has_manifest = result.count("sample-manifest") > 0;
+        bool has_build_files = result.count("build-from") > 0;
+
+        // Build-only mode requires either manifest or build-from files
+        if (build_only) {
+            if (!has_manifest && !has_build_files) {
+                logging::error("Build-only mode requires --sample-manifest or --build-from files");
+                std::cout << options.help() << std::endl;
+                return 1;
+            }
+        } else {
+            // Analysis mode requires input file
+            if (!result.count("input")) {
+                logging::error("Please specify an input file with -i/--input");
+                std::cout << options.help() << std::endl;
+                return 1;
+            }
         }
 
         // Create base processor which handles file type detection and routing

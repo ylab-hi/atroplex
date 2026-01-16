@@ -19,14 +19,14 @@ namespace logging {
     }
 
     void info(const std::string& message) {
-        std::cout << "[MORRIGAN] " << get_timestamp() << " - " << message << std::endl;
+        std::cout << "[atroplex] " << get_timestamp() << " - " << message << std::endl;
     }
 
     void warning(const std::string& message) {
-        std::cout << YELLOW << "[MORRIGAN] " << get_timestamp() << " - WARNING: " << message << RESET << std::endl;
+        std::cout << YELLOW << "[atroplex] " << get_timestamp() << " - WARNING: " << message << RESET << std::endl;
     }
 
     void error(const std::string& message) {
-        std::cerr << RED << "[MORRIGAN] " << get_timestamp() << " - ERROR: " << message << RESET << std::endl;
+        std::cerr << RED << "[atroplex] " << get_timestamp() << " - ERROR: " << message << RESET << std::endl;
     }
 }

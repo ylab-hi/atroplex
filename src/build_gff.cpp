@@ -21,7 +21,8 @@
 // genogrove
 
 void build_gff::build(grove_type& grove,
-    const std::filesystem::path& filepath) {
+    const std::filesystem::path& filepath,
+    const std::string& sample_id) {
     gio::gff_reader reader(filepath.string());
 
     // Buffer for gene entries - process one gene at a time
@@ -40,7 +41,7 @@ void build_gff::build(grove_type& grove,
 
         // If we've moved to a new gene, process the previous one
         if (!current_gene_id.empty() && gene_id.value() != current_gene_id) {
-            process_gene(grove, genes[current_gene_id]);
+            process_gene(grove, genes[current_gene_id], sample_id);
             genes.erase(current_gene_id); // Free memory
         }
 
@@ -50,7 +51,7 @@ void build_gff::build(grove_type& grove,
 
     // Process last gene
     if (!current_gene_id.empty()) {
-        process_gene(grove, genes[current_gene_id]);
+        process_gene(grove, genes[current_gene_id], sample_id);
     }
 
     if(line_count % 10000 == 0) {
@@ -60,7 +61,8 @@ void build_gff::build(grove_type& grove,
 
 void build_gff::process_gene(
     grove_type& grove,
-    const std::vector<gio::gff_entry>& gene_entries
+    const std::vector<gio::gff_entry>& gene_entries,
+    const std::string& sample_id
 ) {
     // Group entries by transcript
     std::unordered_map<std::string, std::vector<gio::gff_entry>> transcripts;
@@ -79,7 +81,7 @@ void build_gff::process_gene(
 
     // Process each transcript: create exon chains (no segments yet)
     for (auto& [transcript_id, entries] : transcripts) {
-        process_transcript(grove, transcript_id, entries, exon_keys);
+        process_transcript(grove, transcript_id, entries, exon_keys, sample_id);
     }
 
     // TODO: Annotate all exons with overlapping features (CDS, UTR, codons)
@@ -90,7 +92,8 @@ void build_gff::process_transcript(
     grove_type& grove,
     const std::string& transcript_id,
     const std::vector<gio::gff_entry>& all_entries,
-    std::map<gdt::interval, key_ptr>& exon_keys
+    std::map<gdt::interval, key_ptr>& exon_keys,
+    const std::string& sample_id
 ) {
     // Extract only exons from all entries
     std::vector<gio::gff_entry> exons;
@@ -125,7 +128,12 @@ void build_gff::process_transcript(
             exon_key = it->second;
             auto& feature_data = exon_key->get_data();
             if (is_exon(feature_data)) {
-                get_exon(feature_data).transcript_ids.insert(transcript_id);
+                auto& exon = get_exon(feature_data);
+                exon.transcript_ids.insert(transcript_id);
+                // Pan-transcriptome: add sample if provided
+                if (!sample_id.empty()) {
+                    exon.add_sample(sample_id);
+                }
             }
         } else {
             // Create new exon feature from GFF entry
@@ -136,6 +144,11 @@ void build_gff::process_transcript(
                 exon_entry.strand.value_or('+')
             );
             exon_feat.transcript_ids.insert(transcript_id);
+
+            // Pan-transcriptome: add sample if provided
+            if (!sample_id.empty()) {
+                exon_feat.add_sample(sample_id);
+            }
 
             // Wrap in variant and insert into grove
             genomic_feature feature = exon_feat;

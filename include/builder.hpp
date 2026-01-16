@@ -22,6 +22,7 @@
 
 // class
 #include "genomic_feature.hpp"
+#include "sample_info.hpp"
 
 namespace gdt = genogrove::data_type;
 namespace gst = genogrove::structure;
@@ -37,6 +38,7 @@ using key_ptr = gdt::key<gdt::interval, genomic_feature>*;
  * Stateless builder that operates on grove references.
  * Supports:
  * - Initial construction from GFF/GTF annotation files
+ * - Pan-transcriptome builds with sample tracking
  * - Extension with discovered transcripts (Phase 3)
  * - Addition of fusion segments (Phase 3)
  * - Future: BED, BAM, or other interval-based formats
@@ -44,7 +46,7 @@ using key_ptr = gdt::key<gdt::interval, genomic_feature>*;
 class builder {
 public:
     /**
-     * Build genogrove from multiple input files
+     * Build genogrove from multiple input files (single-sample mode, no sample tracking)
      * Automatically detects file types and dispatches to appropriate builders
      *
      * @param grove Reference to grove to populate
@@ -53,6 +55,32 @@ public:
     static void build_from_files(
         grove_type& grove,
         const std::vector<std::string>& files
+    );
+
+    /**
+     * Build genogrove from multiple input files with a single sample_id
+     * All features will be tagged with the provided sample_id
+     *
+     * @param grove Reference to grove to populate
+     * @param files Vector of file paths to process
+     * @param sample_id Sample identifier for pan-transcriptome tracking
+     */
+    static void build_from_files(
+        grove_type& grove,
+        const std::vector<std::string>& files,
+        const std::string& sample_id
+    );
+
+    /**
+     * Build genogrove from sample manifest (pan-transcriptome mode)
+     * Each sample's files will be tagged with their respective sample_id
+     *
+     * @param grove Reference to grove to populate
+     * @param samples Vector of sample_info with file paths and metadata
+     */
+    static void build_from_samples(
+        grove_type& grove,
+        const std::vector<sample_info>& samples
     );
 
     // Future extension methods for Phase 2/3:

@@ -31,10 +31,9 @@ base::base(const cxxopts::ParseResult& params)
             logging::warning("Genogrove file not found: " + gg_path);
         }
     }
-
     if(params.count("build-from")) {
         auto build_files = params["build-from"].as<std::vector<std::string>>();
-        create_genogrove(build_files);
+        build(build_files);
     }
 }
 
@@ -60,7 +59,7 @@ void base::start() {
     // If no grove loaded and build-from files are provided, create new grove
     if(!grove && params.count("build-from")) {
         auto build_files = params["build-from"].as<std::vector<std::string>>();
-        create_genogrove(build_files);
+        build(build_files);
     }
 
     if(!grove) {
@@ -70,7 +69,7 @@ void base::start() {
     }
 }
 
-void base::create_genogrove(const std::vector<std::string>& build_files) {
+void base::build(const std::vector<std::string>& build_files) {
     int order = params["order"].as<int>();
 
     logging::info("Creating grove with order: " + std::to_string(order));

@@ -44,6 +44,7 @@ using key_ptr = gdt::key<gdt::interval, genomic_feature>*;
  * - Creates exon features with CDS/UTR overlaps
  * - Creates segment features representing transcript paths
  * - Links exons within segments via graph edges
+ * - Tags features with sample_id for pan-transcriptome tracking
  */
 class build_gff {
 public:
@@ -51,18 +52,22 @@ public:
      * Build grove from single GFF/GTF file
      * @param grove Grove to populate
      * @param filepath Path to GFF/GTF file
+     * @param sample_id Sample identifier for pan-transcriptome tracking (empty for single-sample mode)
      */
-    static void build(grove_type& grove, const std::filesystem::path& filepath);
+    static void build(grove_type& grove, const std::filesystem::path& filepath,
+                      const std::string& sample_id = "");
 
 private:
     /**
      * Process all transcripts from a single gene
      * @param grove Grove to add entries to
      * @param gene_entries All GFF entries for this gene (exons, CDS, UTR, codons)
+     * @param sample_id Sample identifier for pan-transcriptome tracking
      */
     static void process_gene(
         grove_type& grove,
-        const std::vector<gio::gff_entry>& gene_entries
+        const std::vector<gio::gff_entry>& gene_entries,
+        const std::string& sample_id
     );
 
     /**
@@ -71,12 +76,14 @@ private:
      * @param transcript_id Transcript ID
      * @param all_entries All entries for this transcript (exons + annotations)
      * @param exon_keys Map of exon intervals to their keys (for reuse across transcripts)
+     * @param sample_id Sample identifier for pan-transcriptome tracking
      */
     static void process_transcript(
         grove_type& grove,
         const std::string& transcript_id,
         const std::vector<gio::gff_entry>& all_entries,
-        std::map<gdt::interval, key_ptr>& exon_keys
+        std::map<gdt::interval, key_ptr>& exon_keys,
+        const std::string& sample_id
     );
 
     /**

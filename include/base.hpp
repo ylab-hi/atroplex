@@ -64,7 +64,7 @@ private:
     void start();
     void detect_input_filetype();
     void align_reads();
-    void create_genogrove(const std::vector<std::string>& build_files);
+    void build(const std::vector<std::string>& build_files);
     void load_genogrove(const std::string& gg_path);
 
 };

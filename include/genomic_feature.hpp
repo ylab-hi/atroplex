@@ -72,6 +72,11 @@ struct exon_feature {
     //   "start_codon" -> {[120-122]}
     std::unordered_map<std::string, std::vector<gdt::interval>> overlapping_features;
 
+    // Pan-transcriptome: sample tracking with expression values
+    // Maps sample_id -> expression value (TPM, FPKM, count, etc.)
+    // Presence in map indicates feature exists in that sample
+    std::unordered_map<std::string, float> sample_expression;
+
     // Constructors
     exon_feature() : exon_number(-1) {}
 
@@ -92,6 +97,54 @@ struct exon_feature {
     const std::vector<gdt::interval>* get_overlapping_intervals(const std::string& feature_type) const {
         auto it = overlapping_features.find(feature_type);
         return it != overlapping_features.end() ? &it->second : nullptr;
+    }
+
+    // --- Pan-transcriptome sample methods ---
+
+    // Add sample with optional expression value
+    void add_sample(const std::string& sample_id, float expression = 0.0f) {
+        sample_expression[sample_id] = expression;
+    }
+
+    // Check if feature exists in a specific sample
+    bool in_sample(const std::string& sample_id) const {
+        return sample_expression.count(sample_id) > 0;
+    }
+
+    // Get expression value for a sample (returns 0 if not present)
+    float get_expression(const std::string& sample_id) const {
+        auto it = sample_expression.find(sample_id);
+        return it != sample_expression.end() ? it->second : 0.0f;
+    }
+
+    // Get all sample IDs containing this feature
+    std::unordered_set<std::string> get_sample_ids() const {
+        std::unordered_set<std::string> ids;
+        for (const auto& [sample_id, _] : sample_expression) {
+            ids.insert(sample_id);
+        }
+        return ids;
+    }
+
+    // Get number of samples containing this feature
+    size_t sample_count() const {
+        return sample_expression.size();
+    }
+
+    // Calculate frequency across pan-transcriptome
+    float frequency(size_t total_samples) const {
+        if (total_samples == 0) return 0.0f;
+        return static_cast<float>(sample_expression.size()) / static_cast<float>(total_samples);
+    }
+
+    // Check if feature is conserved (present in all samples)
+    bool is_conserved(size_t total_samples) const {
+        return sample_expression.size() == total_samples;
+    }
+
+    // Check if feature is sample-specific (only in one sample)
+    bool is_sample_specific() const {
+        return sample_expression.size() == 1;
     }
 };
 
@@ -116,6 +169,10 @@ struct segment_feature {
     // Read support metadata (populated during discovery phase)
     size_t read_coverage;            // Number of reads supporting this segment
     std::vector<std::string> supporting_reads;  // Read IDs that support this segment
+
+    // Pan-transcriptome: sample tracking with expression values
+    // Maps sample_id -> expression value (TPM, FPKM, count, etc.)
+    std::unordered_map<std::string, float> sample_expression;
 
     // Provenance tracking
     enum class source_type {
@@ -144,6 +201,54 @@ struct segment_feature {
     void add_read_support(const std::string& read_id) {
         supporting_reads.push_back(read_id);
         read_coverage++;
+    }
+
+    // --- Pan-transcriptome sample methods ---
+
+    // Add sample with optional expression value
+    void add_sample(const std::string& sample_id, float expression = 0.0f) {
+        sample_expression[sample_id] = expression;
+    }
+
+    // Check if feature exists in a specific sample
+    bool in_sample(const std::string& sample_id) const {
+        return sample_expression.count(sample_id) > 0;
+    }
+
+    // Get expression value for a sample (returns 0 if not present)
+    float get_expression(const std::string& sample_id) const {
+        auto it = sample_expression.find(sample_id);
+        return it != sample_expression.end() ? it->second : 0.0f;
+    }
+
+    // Get all sample IDs containing this feature
+    std::unordered_set<std::string> get_sample_ids() const {
+        std::unordered_set<std::string> ids;
+        for (const auto& [sample_id, _] : sample_expression) {
+            ids.insert(sample_id);
+        }
+        return ids;
+    }
+
+    // Get number of samples containing this feature
+    size_t sample_count() const {
+        return sample_expression.size();
+    }
+
+    // Calculate frequency across pan-transcriptome
+    float frequency(size_t total_samples) const {
+        if (total_samples == 0) return 0.0f;
+        return static_cast<float>(sample_expression.size()) / static_cast<float>(total_samples);
+    }
+
+    // Check if feature is conserved (present in all samples)
+    bool is_conserved(size_t total_samples) const {
+        return sample_expression.size() == total_samples;
+    }
+
+    // Check if feature is sample-specific (only in one sample)
+    bool is_sample_specific() const {
+        return sample_expression.size() == 1;
     }
 };
 
