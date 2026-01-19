@@ -12,6 +12,7 @@
 #define ATROPLEX_BUILD_GFF_HPP
 
 // standard
+#include <cstdint>
 #include <string>
 #include <optional>
 #include <vector>
@@ -26,6 +27,7 @@
 
 // class
 #include "genomic_feature.hpp"
+#include "sample_info.hpp"
 
 namespace gdt = genogrove::data_type;
 namespace gst = genogrove::structure;
@@ -52,22 +54,41 @@ public:
      * Build grove from single GFF/GTF file
      * @param grove Grove to populate
      * @param filepath Path to GFF/GTF file
-     * @param sample_id Sample identifier for pan-transcriptome tracking (empty for single-sample mode)
+     * @param sample_id Sample registry ID for pan-transcriptome tracking (nullopt for single-sample mode)
      */
     static void build(grove_type& grove, const std::filesystem::path& filepath,
-                      const std::string& sample_id = "");
+                      std::optional<uint32_t> sample_id = std::nullopt);
+
+    /**
+     * Parse GTF/GFF header to extract annotation metadata
+     * Supports GENCODE, Ensembl, and generic GTF headers
+     *
+     * GENCODE headers:
+     *   ##description: evidence-based annotation of the human genome (GRCh38), version 44
+     *   ##provider: GENCODE
+     *   ##date: 2023-09-07
+     *
+     * Ensembl headers:
+     *   #!genome-build GRCh38.p14
+     *   #!genome-version GRCh38
+     *   #!genebuild-last-updated 2023-09
+     *
+     * @param filepath Path to GFF/GTF file
+     * @return sample_info populated with extracted metadata
+     */
+    static sample_info parse_header(const std::filesystem::path& filepath);
 
 private:
     /**
      * Process all transcripts from a single gene
      * @param grove Grove to add entries to
      * @param gene_entries All GFF entries for this gene (exons, CDS, UTR, codons)
-     * @param sample_id Sample identifier for pan-transcriptome tracking
+     * @param sample_id Sample registry ID for pan-transcriptome tracking
      */
     static void process_gene(
         grove_type& grove,
         const std::vector<gio::gff_entry>& gene_entries,
-        const std::string& sample_id
+        std::optional<uint32_t> sample_id
     );
 
     /**
@@ -76,14 +97,14 @@ private:
      * @param transcript_id Transcript ID
      * @param all_entries All entries for this transcript (exons + annotations)
      * @param exon_keys Map of exon intervals to their keys (for reuse across transcripts)
-     * @param sample_id Sample identifier for pan-transcriptome tracking
+     * @param sample_id Sample registry ID for pan-transcriptome tracking
      */
     static void process_transcript(
         grove_type& grove,
         const std::string& transcript_id,
         const std::vector<gio::gff_entry>& all_entries,
         std::map<gdt::interval, key_ptr>& exon_keys,
-        const std::string& sample_id
+        std::optional<uint32_t> sample_id
     );
 
     /**
