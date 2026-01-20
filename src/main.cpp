@@ -31,7 +31,7 @@ void showVersion(std::ostream& _str) {
 
 int main(int argc, char** argv) {
     try {
-        cxxopts::Options options("morrigan",
+        cxxopts::Options options("atroplex",
             "Detect full-length transcripts from long-read sequencing data");
 
         options.add_options("General")
@@ -89,12 +89,12 @@ int main(int argc, char** argv) {
                 return 1;
             }
         } else {
-            // Analysis mode requires input file
-            if (!result.count("input")) {
-                logging::error("Please specify an input file with -i/--input");
-                std::cout << options.help() << std::endl;
-                return 1;
-            }
+            // Analysis mode requires input file (for debugging disables)
+            // if (!result.count("input")) {
+            //     logging::error("Please specify an input file with -i/--input");
+            //     std::cout << options.help() << std::endl;
+            //     return 1;
+            // }
         }
 
         // Create base processor which handles file type detection and routing

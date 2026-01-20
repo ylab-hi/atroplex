@@ -10,9 +10,11 @@
 
 // standard
 #include <filesystem>
+#include <fstream>
 #include <map>
 #include <unordered_map>
 #include <algorithm>
+#include <regex>
 
 // class
 #include "utility.hpp"
@@ -22,16 +24,25 @@
 
 void build_gff::build(grove_type& grove,
     const std::filesystem::path& filepath,
-    const std::string& sample_id) {
+    std::optional<uint32_t> sample_id) {
     gio::gff_reader reader(filepath.string());
 
     // Buffer for gene entries - process one gene at a time
     std::unordered_map<std::string, std::vector<gio::gff_entry>> genes;
     std::string current_gene_id;
     size_t line_count = 0;
+    size_t segment_count = 0;
+
+    std::string progress_prefix = "Processing " + filepath.filename().string();
+    logging::progress_start();
 
     for(const auto& entry : reader) {
         line_count++;
+
+        // Update progress every 1000 entries
+        if (line_count % 1000 == 0) {
+            logging::progress(line_count, progress_prefix);
+        }
 
         // Extract gene_id to group entries by gene
         std::optional<std::string> gene_id = entry.get_gene_id();
@@ -41,7 +52,7 @@ void build_gff::build(grove_type& grove,
 
         // If we've moved to a new gene, process the previous one
         if (!current_gene_id.empty() && gene_id.value() != current_gene_id) {
-            process_gene(grove, genes[current_gene_id], sample_id);
+            process_gene(grove, genes[current_gene_id], sample_id, segment_count);
             genes.erase(current_gene_id); // Free memory
         }
 
@@ -51,18 +62,17 @@ void build_gff::build(grove_type& grove,
 
     // Process last gene
     if (!current_gene_id.empty()) {
-        process_gene(grove, genes[current_gene_id], sample_id);
+        process_gene(grove, genes[current_gene_id], sample_id, segment_count);
     }
 
-    if(line_count % 10000 == 0) {
-        logging::info("Processed " + std::to_string(line_count) + " lines from " + filepath.filename().string());
-    }
+    logging::progress_done(segment_count, "Processed " + filepath.filename().string());
 }
 
 void build_gff::process_gene(
     grove_type& grove,
     const std::vector<gio::gff_entry>& gene_entries,
-    const std::string& sample_id
+    std::optional<uint32_t> sample_id,
+    size_t& segment_count
 ) {
     // Group entries by transcript
     std::unordered_map<std::string, std::vector<gio::gff_entry>> transcripts;
@@ -76,12 +86,11 @@ void build_gff::process_gene(
     }
 
     // Map to track exon keys (exons can be shared across transcripts)
-    // Using std::map because gdt::interval doesn't have a hash function
     std::map<gdt::interval, key_ptr> exon_keys;
 
-    // Process each transcript: create exon chains (no segments yet)
+    // Process each transcript: create exon chains and segments
     for (auto& [transcript_id, entries] : transcripts) {
-        process_transcript(grove, transcript_id, entries, exon_keys, sample_id);
+        process_transcript(grove, transcript_id, entries, exon_keys, sample_id, segment_count);
     }
 
     // TODO: Annotate all exons with overlapping features (CDS, UTR, codons)
@@ -93,7 +102,8 @@ void build_gff::process_transcript(
     const std::string& transcript_id,
     const std::vector<gio::gff_entry>& all_entries,
     std::map<gdt::interval, key_ptr>& exon_keys,
-    const std::string& sample_id
+    std::optional<uint32_t> sample_id,
+    size_t& segment_count
 ) {
     // Extract only exons from all entries
     std::vector<gio::gff_entry> exons;
@@ -107,11 +117,19 @@ void build_gff::process_transcript(
         return;
     }
 
-    // Sort exons by genomic position
+    // Determine strand (use first exon's strand, default to +)
+    char strand = exons.front().strand.value_or('+');
+
+    // Sort exons in 5'→3' biological order:
+    // - On + strand: ascending positions (5' = low coordinate, 3' = high coordinate)
+    // - On - strand: descending positions (5' = high coordinate, 3' = low coordinate)
     std::sort(exons.begin(), exons.end(),
-             [](const gio::gff_entry& a, const gio::gff_entry& b) {
+             [strand](const gio::gff_entry& a, const gio::gff_entry& b) {
                  if (a.seqid != b.seqid) return a.seqid < b.seqid;
-                 return a.interval.get_start() < b.interval.get_start();
+                 if (strand == '-') {
+                     return a.interval.get_start() > b.interval.get_start();  // Descending for - strand
+                 }
+                 return a.interval.get_start() < b.interval.get_start();  // Ascending for + strand
              });
 
     // Collect exon keys for this transcript
@@ -131,8 +149,8 @@ void build_gff::process_transcript(
                 auto& exon = get_exon(feature_data);
                 exon.transcript_ids.insert(transcript_id);
                 // Pan-transcriptome: add sample if provided
-                if (!sample_id.empty()) {
-                    exon.add_sample(sample_id);
+                if (sample_id.has_value()) {
+                    exon.add_sample(*sample_id);
                 }
             }
         } else {
@@ -146,13 +164,13 @@ void build_gff::process_transcript(
             exon_feat.transcript_ids.insert(transcript_id);
 
             // Pan-transcriptome: add sample if provided
-            if (!sample_id.empty()) {
-                exon_feat.add_sample(sample_id);
+            if (sample_id.has_value()) {
+                exon_feat.add_sample(*sample_id);
             }
 
-            // Wrap in variant and insert into grove
+            // Wrap in variant and add as external key (graph-only, not spatially indexed)
             genomic_feature feature = exon_feat;
-            exon_key = grove.insert_data(exon_entry.seqid, exon_entry.interval, feature);
+            exon_key = grove.add_external_key(exon_entry.interval, feature);
             exon_keys[exon_entry.interval] = exon_key;
         }
 
@@ -165,7 +183,52 @@ void build_gff::process_transcript(
         grove.add_edge(transcript_exon_keys[i], transcript_exon_keys[i + 1], edge_meta);
     }
 
-    // TODO: Step 3 - Create segments later
+    // Step 3: Create segment (spatially indexed) spanning transcript extent
+    // Use min/max of all exon positions (not first/last, since exons are sorted by biological order)
+    auto [min_it, max_it] = std::minmax_element(exons.begin(), exons.end(),
+        [](const gio::gff_entry& a, const gio::gff_entry& b) {
+            return a.interval.get_start() < b.interval.get_start();
+        });
+
+    gdt::interval segment_interval;
+    segment_interval.set_start(min_it->interval.get_start());
+    segment_interval.set_end(max_it->interval.get_end());
+
+    // Build coordinate string (strand already defined above)
+    const auto& first_exon = exons.front();  // First in biological order (5' end)
+    std::string coordinate = first_exon.seqid + ":" + strand + ":" +
+                             std::to_string(segment_interval.get_start()) + "-" +
+                             std::to_string(segment_interval.get_end());
+
+    // Create segment feature
+    segment_feature seg_feat(segment_feature::source_type::REFERENCE);
+    seg_feat.id = transcript_id;
+    seg_feat.transcript_ids.insert(transcript_id);
+    seg_feat.exon_count = static_cast<int>(exons.size());
+    seg_feat.coordinate = coordinate;
+
+    // Copy gene info from first exon
+    const auto& first_exon_key = transcript_exon_keys.front();
+    if (is_exon(first_exon_key->get_data())) {
+        const auto& exon_data = get_exon(first_exon_key->get_data());
+        seg_feat.gene_id = exon_data.gene_id;
+        seg_feat.gene_name = exon_data.gene_name;
+        seg_feat.gene_biotype = exon_data.gene_biotype;
+    }
+
+    // Pan-transcriptome: add sample if provided
+    if (sample_id.has_value()) {
+        seg_feat.add_sample(*sample_id);
+    }
+
+    // Insert segment (spatially indexed for transcript-level queries)
+    genomic_feature seg_feature = seg_feat;
+    key_ptr seg_key = grove.insert_data(first_exon.seqid, segment_interval, seg_feature);
+    segment_count++;
+
+    // Step 4: Link segment to first exon
+    edge_metadata seg_edge(transcript_id, edge_metadata::edge_type::SEGMENT_TO_EXON);
+    grove.add_edge(seg_key, transcript_exon_keys.front(), seg_edge);
 }
 
 void build_gff::annotate_exons(
@@ -224,4 +287,138 @@ std::optional<std::string> build_gff::extract_attribute(
         return it->second;
     }
     return std::nullopt;
+}
+
+sample_info build_gff::parse_header(const std::filesystem::path& filepath) {
+    sample_info info;
+    info.source_file = filepath;
+
+    std::ifstream file(filepath);
+    if (!file.is_open()) {
+        logging::warning("Could not open file for header parsing: " + filepath.string());
+        info.id = filepath.stem().string();
+        return info;
+    }
+
+    std::string line;
+    bool found_provider = false;
+
+    // Read header lines (start with #)
+    while (std::getline(file, line)) {
+        // Stop at first non-header line
+        if (line.empty() || line[0] != '#') {
+            break;
+        }
+
+        // Skip ##gff-version and ##sequence-region directives
+        if (line.starts_with("##gff-version") || line.starts_with("##sequence-region")) {
+            continue;
+        }
+
+        // GENCODE format: #key: value (single #)
+        // Example:
+        //   #description: evidence-based annotation of the human genome (GRCh38), version 49
+        //   #provider: GENCODE
+        //   #date: 2025-07-08
+        if (line.starts_with("#") && !line.starts_with("##") && !line.starts_with("#!")) {
+            // Remove leading #
+            std::string content = line.substr(1);
+
+            // Find colon separator
+            size_t colon_pos = content.find(':');
+            if (colon_pos != std::string::npos) {
+                std::string key = content.substr(0, colon_pos);
+                std::string value = content.substr(colon_pos + 1);
+
+                // Trim whitespace from value
+                size_t start = value.find_first_not_of(" \t");
+                if (start != std::string::npos) {
+                    value = value.substr(start);
+                }
+
+                if (key == "provider") {
+                    info.annotation_source = value;
+                    found_provider = true;
+                } else if (key == "description") {
+                    // Parse version from description
+                    // "evidence-based annotation of the human genome (GRCh38), version 49 (Ensembl 115)"
+                    std::regex version_regex(R"(version\s+(\d+))");
+                    std::smatch match;
+                    if (std::regex_search(value, match, version_regex)) {
+                        info.annotation_version = "v" + match[1].str();
+                    }
+
+                    // Parse genome build from description (first parenthetical)
+                    std::regex genome_regex(R"(\(([^)]+)\))");
+                    if (std::regex_search(value, match, genome_regex)) {
+                        info.with_attribute("genome_build", match[1].str());
+                    }
+
+                    // Store full description
+                    info.with_attribute("description", value);
+                } else if (key == "date") {
+                    info.with_attribute("date", value);
+                } else if (key == "format") {
+                    info.with_attribute("format", value);
+                } else if (key == "contact") {
+                    info.with_attribute("contact", value);
+                }
+            }
+        }
+        // Ensembl format: #!key value
+        else if (line.starts_with("#!")) {
+            std::string content = line.substr(2);
+
+            // Find first space separator
+            size_t space_pos = content.find(' ');
+            if (space_pos != std::string::npos) {
+                std::string key = content.substr(0, space_pos);
+                std::string value = content.substr(space_pos + 1);
+
+                // Trim whitespace from value
+                size_t start = value.find_first_not_of(" \t");
+                if (start != std::string::npos) {
+                    value = value.substr(start);
+                }
+
+                if (key == "genome-build") {
+                    info.with_attribute("genome_build", value);
+                } else if (key == "genome-version") {
+                    info.with_attribute("genome_version", value);
+                } else if (key == "genebuild-last-updated") {
+                    info.with_attribute("date", value);
+                } else if (key == "genome-build-accession") {
+                    info.with_attribute("genome_accession", value);
+                }
+
+                // If we see Ensembl-style headers, set provider
+                if (!found_provider) {
+                    info.annotation_source = "Ensembl";
+                    found_provider = true;
+                }
+            }
+        }
+    }
+
+    // Build sample ID from metadata
+    if (!info.annotation_source.empty()) {
+        info.id = info.annotation_source;
+        if (!info.annotation_version.empty()) {
+            info.id += "_" + info.annotation_version;
+        }
+        // Add genome build if available
+        std::string genome_build = info.get_attribute("genome_build");
+        if (!genome_build.empty()) {
+            info.id += "_" + genome_build;
+        }
+    } else {
+        // Fallback to filename
+        info.id = filepath.stem().string();
+    }
+
+    logging::info("Parsed header metadata: id=" + info.id +
+                  ", source=" + info.annotation_source +
+                  ", version=" + info.annotation_version);
+
+    return info;
 }

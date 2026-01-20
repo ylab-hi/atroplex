@@ -84,11 +84,13 @@ private:
      * @param grove Grove to add entries to
      * @param gene_entries All GFF entries for this gene (exons, CDS, UTR, codons)
      * @param sample_id Sample registry ID for pan-transcriptome tracking
+     * @param segment_count Reference to segment counter (incremented for each segment created)
      */
     static void process_gene(
         grove_type& grove,
         const std::vector<gio::gff_entry>& gene_entries,
-        std::optional<uint32_t> sample_id
+        std::optional<uint32_t> sample_id,
+        size_t& segment_count
     );
 
     /**
@@ -98,13 +100,15 @@ private:
      * @param all_entries All entries for this transcript (exons + annotations)
      * @param exon_keys Map of exon intervals to their keys (for reuse across transcripts)
      * @param sample_id Sample registry ID for pan-transcriptome tracking
+     * @param segment_count Reference to segment counter (incremented when segment is created)
      */
     static void process_transcript(
         grove_type& grove,
         const std::string& transcript_id,
         const std::vector<gio::gff_entry>& all_entries,
         std::map<gdt::interval, key_ptr>& exon_keys,
-        std::optional<uint32_t> sample_id
+        std::optional<uint32_t> sample_id,
+        size_t& segment_count
     );
 
     /**

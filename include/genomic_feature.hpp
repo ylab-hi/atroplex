@@ -12,6 +12,7 @@
 #define ATROPLEX_GENOMIC_FEATURE_HPP
 
 // standard
+#include <cstdint>
 #include <string>
 #include <unordered_set>
 #include <unordered_map>
@@ -73,9 +74,10 @@ struct exon_feature {
     std::unordered_map<std::string, std::vector<gdt::interval>> overlapping_features;
 
     // Pan-transcriptome: sample tracking with expression values
-    // Maps sample_id -> expression value (TPM, FPKM, count, etc.)
+    // Maps sample registry ID -> expression value (TPM, FPKM, count, etc.)
+    // Use sample_registry::instance().get(id) to retrieve full sample_info
     // Presence in map indicates feature exists in that sample
-    std::unordered_map<std::string, float> sample_expression;
+    std::unordered_map<uint32_t, float> sample_expression;
 
     // Constructors
     exon_feature() : exon_number(-1) {}
@@ -101,25 +103,25 @@ struct exon_feature {
 
     // --- Pan-transcriptome sample methods ---
 
-    // Add sample with optional expression value
-    void add_sample(const std::string& sample_id, float expression = 0.0f) {
+    // Add sample with optional expression value (sample_id from sample_registry)
+    void add_sample(uint32_t sample_id, float expression = 0.0f) {
         sample_expression[sample_id] = expression;
     }
 
     // Check if feature exists in a specific sample
-    bool in_sample(const std::string& sample_id) const {
-        return sample_expression.count(sample_id) > 0;
+    bool in_sample(uint32_t sample_id) const {
+        return sample_expression.contains(sample_id);
     }
 
     // Get expression value for a sample (returns 0 if not present)
-    float get_expression(const std::string& sample_id) const {
+    float get_expression(uint32_t sample_id) const {
         auto it = sample_expression.find(sample_id);
         return it != sample_expression.end() ? it->second : 0.0f;
     }
 
     // Get all sample IDs containing this feature
-    std::unordered_set<std::string> get_sample_ids() const {
-        std::unordered_set<std::string> ids;
+    std::unordered_set<uint32_t> get_sample_ids() const {
+        std::unordered_set<uint32_t> ids;
         for (const auto& [sample_id, _] : sample_expression) {
             ids.insert(sample_id);
         }
@@ -171,8 +173,9 @@ struct segment_feature {
     std::vector<std::string> supporting_reads;  // Read IDs that support this segment
 
     // Pan-transcriptome: sample tracking with expression values
-    // Maps sample_id -> expression value (TPM, FPKM, count, etc.)
-    std::unordered_map<std::string, float> sample_expression;
+    // Maps sample registry ID -> expression value (TPM, FPKM, count, etc.)
+    // Use sample_registry::instance().get(id) to retrieve full sample_info
+    std::unordered_map<uint32_t, float> sample_expression;
 
     // Provenance tracking
     enum class source_type {
@@ -205,25 +208,25 @@ struct segment_feature {
 
     // --- Pan-transcriptome sample methods ---
 
-    // Add sample with optional expression value
-    void add_sample(const std::string& sample_id, float expression = 0.0f) {
+    // Add sample with optional expression value (sample_id from sample_registry)
+    void add_sample(uint32_t sample_id, float expression = 0.0f) {
         sample_expression[sample_id] = expression;
     }
 
     // Check if feature exists in a specific sample
-    bool in_sample(const std::string& sample_id) const {
-        return sample_expression.count(sample_id) > 0;
+    bool in_sample(uint32_t sample_id) const {
+        return sample_expression.contains(sample_id);
     }
 
     // Get expression value for a sample (returns 0 if not present)
-    float get_expression(const std::string& sample_id) const {
+    float get_expression(uint32_t sample_id) const {
         auto it = sample_expression.find(sample_id);
         return it != sample_expression.end() ? it->second : 0.0f;
     }
 
     // Get all sample IDs containing this feature
-    std::unordered_set<std::string> get_sample_ids() const {
-        std::unordered_set<std::string> ids;
+    std::unordered_set<uint32_t> get_sample_ids() const {
+        std::unordered_set<uint32_t> ids;
         for (const auto& [sample_id, _] : sample_expression) {
             ids.insert(sample_id);
         }
