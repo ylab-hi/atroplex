@@ -34,8 +34,8 @@ namespace gst = genogrove::structure;
 namespace gio = genogrove::io;
 
 // Type aliases
-using grove_type = gst::grove<gdt::interval, genomic_feature, edge_metadata>;
-using key_ptr = gdt::key<gdt::interval, genomic_feature>*;
+using grove_type = gst::grove<gdt::genomic_coordinate, genomic_feature, edge_metadata>;
+using key_ptr = gdt::key<gdt::genomic_coordinate, genomic_feature>*;
 
 /**
  * GFF/GTF-specific grove builder
@@ -58,6 +58,19 @@ public:
      */
     static void build(grove_type& grove, const std::filesystem::path& filepath,
                       std::optional<uint32_t> sample_id = std::nullopt);
+
+    /**
+     * Generate a structure key from ordered exon coordinates
+     * Format: seqid:strand:start-end,start-end,...
+     * Example: chr1:+:100-200,300-400,500-600
+     * @param seqid Chromosome/sequence ID
+     * @param exon_coords Ordered vector of exon coordinates (must be in 5'→3' order)
+     * @return Structure key string
+     */
+    static std::string make_exon_structure_key(
+        const std::string& seqid,
+        const std::vector<gdt::genomic_coordinate>& exon_coords
+    );
 
     /**
      * Parse GTF/GFF header to extract annotation metadata
@@ -106,7 +119,7 @@ private:
         grove_type& grove,
         const std::string& transcript_id,
         const std::vector<gio::gff_entry>& all_entries,
-        std::map<gdt::interval, key_ptr>& exon_keys,
+        std::map<gdt::genomic_coordinate, key_ptr>& exon_keys,
         std::optional<uint32_t> sample_id,
         size_t& segment_count
     );
@@ -119,7 +132,7 @@ private:
      */
     static void annotate_exons(
         grove_type& grove,
-        const std::map<gdt::interval, key_ptr>& exon_keys,
+        const std::map<gdt::genomic_coordinate, key_ptr>& exon_keys,
         const std::vector<gio::gff_entry>& annotations
     );
 

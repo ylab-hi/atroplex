@@ -76,7 +76,6 @@ void build_gff::process_gene(
 ) {
     // Group entries by transcript
     std::unordered_map<std::string, std::vector<gio::gff_entry>> transcripts;
-
     for (const auto& entry : gene_entries) {
         // Extract transcript_id to group by transcript
         std::optional<std::string> transcript_id = entry.get_transcript_id();
@@ -86,7 +85,11 @@ void build_gff::process_gene(
     }
 
     // Map to track exon keys (exons can be shared across transcripts)
-    std::map<gdt::interval, key_ptr> exon_keys;
+    std::map<gdt::genomic_coordinate, key_ptr> exon_keys;
+
+    // Map to track segments (so they can be deduplicated) - according to exon structure
+    // Key: string representation of the exon chain: "chr1:+:100-200,300-400,500-600"
+    std::unordered_map<std::string, key_ptr> segment_keys;
 
     // Process each transcript: create exon chains and segments
     for (auto& [transcript_id, entries] : transcripts) {
@@ -101,7 +104,7 @@ void build_gff::process_transcript(
     grove_type& grove,
     const std::string& transcript_id,
     const std::vector<gio::gff_entry>& all_entries,
-    std::map<gdt::interval, key_ptr>& exon_keys,
+    std::map<gdt::genomic_coordinate, key_ptr>& exon_keys,
     std::optional<uint32_t> sample_id,
     size_t& segment_count
 ) {
@@ -133,14 +136,23 @@ void build_gff::process_transcript(
              });
 
     // Collect exon keys for this transcript
+    std::vector<gdt::genomic_coordinate> exon_coords;
     std::vector<key_ptr> transcript_exon_keys;
 
-    // Step 1: Insert or reuse exons
+    // Step 1: insert or reuse exons
     for (const auto& exon_entry : exons) {
         key_ptr exon_key;
 
-        // Check if this exon already exists (same interval)
-        auto it = exon_keys.find(exon_entry.interval);
+        // Create genomic_coordinate for this exon (includes strand)
+        char exon_strand = exon_entry.strand.value_or('+');
+        gdt::genomic_coordinate exon_coord(
+            exon_strand,
+            exon_entry.interval.get_start(),
+            exon_entry.interval.get_end()
+        );
+
+        // Check if this exon already exists (same coordinate including strand)
+        auto it = exon_keys.find(exon_coord);
         if (it != exon_keys.end()) {
             // Reuse existing exon, add this transcript to it
             exon_key = it->second;
@@ -159,7 +171,7 @@ void build_gff::process_transcript(
                 exon_entry.attributes,
                 exon_entry.seqid,
                 exon_entry.interval,
-                exon_entry.strand.value_or('+')
+                exon_strand
             );
             exon_feat.transcript_ids.insert(transcript_id);
 
@@ -170,8 +182,8 @@ void build_gff::process_transcript(
 
             // Wrap in variant and add as external key (graph-only, not spatially indexed)
             genomic_feature feature = exon_feat;
-            exon_key = grove.add_external_key(exon_entry.interval, feature);
-            exon_keys[exon_entry.interval] = exon_key;
+            exon_key = grove.add_external_key(exon_coord, feature);
+            exon_keys[exon_coord] = exon_key;
         }
 
         transcript_exon_keys.push_back(exon_key);
@@ -190,15 +202,18 @@ void build_gff::process_transcript(
             return a.interval.get_start() < b.interval.get_start();
         });
 
-    gdt::interval segment_interval;
-    segment_interval.set_start(min_it->interval.get_start());
-    segment_interval.set_end(max_it->interval.get_end());
+    // Create genomic_coordinate for the segment (includes strand)
+    gdt::genomic_coordinate segment_coord(
+        strand,
+        min_it->interval.get_start(),
+        max_it->interval.get_end()
+    );
 
     // Build coordinate string (strand already defined above)
     const auto& first_exon = exons.front();  // First in biological order (5' end)
     std::string coordinate = first_exon.seqid + ":" + strand + ":" +
-                             std::to_string(segment_interval.get_start()) + "-" +
-                             std::to_string(segment_interval.get_end());
+                             std::to_string(segment_coord.get_start()) + "-" +
+                             std::to_string(segment_coord.get_end());
 
     // Create segment feature
     segment_feature seg_feat(segment_feature::source_type::REFERENCE);
@@ -223,7 +238,7 @@ void build_gff::process_transcript(
 
     // Insert segment (spatially indexed for transcript-level queries)
     genomic_feature seg_feature = seg_feat;
-    key_ptr seg_key = grove.insert_data(first_exon.seqid, segment_interval, seg_feature);
+    key_ptr seg_key = grove.insert_data(first_exon.seqid, segment_coord, seg_feature);
     segment_count++;
 
     // Step 4: Link segment to first exon
@@ -233,23 +248,23 @@ void build_gff::process_transcript(
 
 void build_gff::annotate_exons(
     grove_type& grove,
-    const std::map<gdt::interval, key_ptr>& exon_keys,
+    const std::map<gdt::genomic_coordinate, key_ptr>& exon_keys,
     const std::vector<gio::gff_entry>& annotations
 ) {
     // For each annotation feature (CDS, UTR, codon)
     for (const auto& annot : annotations) {
         // Find overlapping exons
-        for (const auto& [exon_interval, exon_key] : exon_keys) {
-            // Check for overlap
-            if (exon_interval.get_end() < annot.interval.get_start() ||
-                exon_interval.get_start() > annot.interval.get_end()) {
+        for (const auto& [exon_coord, exon_key] : exon_keys) {
+            // Check for overlap (ignoring strand for now - annotations should match exon strand)
+            if (exon_coord.get_end() < annot.interval.get_start() ||
+                exon_coord.get_start() > annot.interval.get_end()) {
                 continue; // No overlap
             }
 
             // Compute overlapping interval
             gdt::interval overlap;
-            overlap.set_start(std::max(exon_interval.get_start(), annot.interval.get_start()));
-            overlap.set_end(std::min(exon_interval.get_end(), annot.interval.get_end()));
+            overlap.set_start(std::max(exon_coord.get_start(), annot.interval.get_start()));
+            overlap.set_end(std::min(exon_coord.get_end(), annot.interval.get_end()));
 
             // Add to exon's overlapping features using public getter
             auto& feature_data = exon_key->get_data();
@@ -258,6 +273,34 @@ void build_gff::annotate_exons(
             }
         }
     }
+}
+
+std::string build_gff::make_exon_structure_key(
+    const std::string& seqid,
+    const std::vector<gdt::genomic_coordinate>& exon_coords
+) {
+    if (exon_coords.empty()) {
+        return "";
+    }
+
+    std::string key;
+    key.reserve(seqid.size() + 3 + exon_coords.size() * 24);  // Pre-allocate estimate
+
+    key += seqid;
+    key += ':';
+    key += exon_coords.front().get_strand();
+    key += ':';
+
+    for (size_t i = 0; i < exon_coords.size(); ++i) {
+        if (i > 0) {
+            key += ',';
+        }
+        key += std::to_string(exon_coords[i].get_start());
+        key += '-';
+        key += std::to_string(exon_coords[i].get_end());
+    }
+
+    return key;
 }
 
 std::optional<std::string> build_gff::extract_gene_id(
