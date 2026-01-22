@@ -12,30 +12,22 @@
 #define ATROPLEX_BUILD_GFF_HPP
 
 // standard
-#include <cstdint>
 #include <string>
 #include <optional>
 #include <vector>
 #include <map>
+#include <unordered_map>
 #include <filesystem>
+#include <mutex>
 
 // genogrove
-#include <genogrove/structure/grove/grove.hpp>
-#include <genogrove/data_type/interval.hpp>
 #include <genogrove/io/gff_reader.hpp>
-#include <genogrove/data_type/genomic_coordinate.hpp>
 
 // class
 #include "genomic_feature.hpp"
 #include "sample_info.hpp"
 
-namespace gdt = genogrove::data_type;
-namespace gst = genogrove::structure;
 namespace gio = genogrove::io;
-
-// Type aliases
-using grove_type = gst::grove<gdt::genomic_coordinate, genomic_feature, edge_metadata>;
-using key_ptr = gdt::key<gdt::genomic_coordinate, genomic_feature>*;
 
 /**
  * GFF/GTF-specific grove builder
@@ -54,10 +46,17 @@ public:
      * Build grove from single GFF/GTF file
      * @param grove Grove to populate
      * @param filepath Path to GFF/GTF file
-     * @param sample_id Sample registry ID for pan-transcriptome tracking (nullopt for single-sample mode)
+     * @param sample_id Sample registry ID for pan-transcriptome tracking
+     * @param exon_caches Chromosome-level exon caches (for cross-file deduplication)
+     * @param segment_caches Chromosome-level segment caches (for cross-file deduplication)
+     * @param segment_count Reference to segment counter (incremented for new segments)
      */
-    static void build(grove_type& grove, const std::filesystem::path& filepath,
-                      std::optional<uint32_t> sample_id = std::nullopt);
+    static void build(grove_type& grove,
+                      const std::filesystem::path& filepath,
+                      std::optional<uint32_t> sample_id,
+                      chromosome_exon_caches& exon_caches,
+                      chromosome_segment_caches& segment_caches,
+                      size_t& segment_count);
 
     /**
      * Generate a structure key from ordered exon coordinates
@@ -91,35 +90,46 @@ public:
      */
     static sample_info parse_header(const std::filesystem::path& filepath);
 
-private:
     /**
      * Process all transcripts from a single gene
+     * Called by builder for parallel chromosome processing
      * @param grove Grove to add entries to
+     * @param grove_mutex Mutex protecting grove operations (for thread-safety)
      * @param gene_entries All GFF entries for this gene (exons, CDS, UTR, codons)
+     * @param exon_cache Chromosome-level exon cache (for deduplication)
+     * @param segment_cache Chromosome-level segment cache (for deduplication)
      * @param sample_id Sample registry ID for pan-transcriptome tracking
      * @param segment_count Reference to segment counter (incremented for each segment created)
      */
     static void process_gene(
         grove_type& grove,
+        std::mutex& grove_mutex,
         const std::vector<gio::gff_entry>& gene_entries,
+        exon_cache_type& exon_cache,
+        segment_cache_type& segment_cache,
         std::optional<uint32_t> sample_id,
         size_t& segment_count
     );
 
+private:
     /**
      * Process a single transcript: create exon chain and segment
      * @param grove Grove to add entries to
+     * @param grove_mutex Mutex protecting grove operations
      * @param transcript_id Transcript ID
      * @param all_entries All entries for this transcript (exons + annotations)
-     * @param exon_keys Map of exon intervals to their keys (for reuse across transcripts)
+     * @param exon_keys Map of exon coordinates to their keys (for reuse across transcripts)
+     * @param segment_keys Map of exon structure keys to segment keys (for deduplication)
      * @param sample_id Sample registry ID for pan-transcriptome tracking
      * @param segment_count Reference to segment counter (incremented when segment is created)
      */
     static void process_transcript(
         grove_type& grove,
+        std::mutex& grove_mutex,
         const std::string& transcript_id,
         const std::vector<gio::gff_entry>& all_entries,
         std::map<gdt::genomic_coordinate, key_ptr>& exon_keys,
+        std::unordered_map<std::string, key_ptr>& segment_keys,
         std::optional<uint32_t> sample_id,
         size_t& segment_count
     );
@@ -136,21 +146,62 @@ private:
         const std::vector<gio::gff_entry>& annotations
     );
 
+    // ========== Transcript processing helpers ==========
+
     /**
-     * Extract gene_id from GFF attributes
+     * Extract exon entries and sort in 5'→3' biological order
+     * @return Sorted exon entries (empty if no exons found)
      */
+    static std::vector<gio::gff_entry> extract_sorted_exons(
+        const std::vector<gio::gff_entry>& transcript_entries
+    );
+
+    /**
+     * Insert new exon or reuse existing one with same coordinates
+     * @return Key pointer to the exon (new or existing)
+     */
+    static key_ptr insert_exon(
+        grove_type& grove,
+        std::mutex& grove_mutex,
+        const gio::gff_entry& exon_entry,
+        const std::string& transcript_id,
+        std::map<gdt::genomic_coordinate, key_ptr>& exon_cache,
+        std::optional<uint32_t> sample_id
+    );
+
+    /**
+     * Create edges between consecutive exons in a chain
+     */
+    static void link_exon_chain(
+        grove_type& grove,
+        std::mutex& grove_mutex,
+        const std::vector<key_ptr>& exon_chain,
+        const std::string& transcript_id
+    );
+
+    /**
+     * Create new segment or reuse existing one with same exon structure
+     */
+    static void create_segment(
+        grove_type& grove,
+        std::mutex& grove_mutex,
+        const std::string& transcript_id,
+        const std::vector<gio::gff_entry>& sorted_exons,
+        const std::vector<gdt::genomic_coordinate>& exon_coords,
+        const std::vector<key_ptr>& exon_chain,
+        std::unordered_map<std::string, key_ptr>& segment_cache,
+        std::optional<uint32_t> sample_id,
+        size_t& segment_count
+    );
+
+    // ========== Attribute extraction helpers ==========
+
     static std::optional<std::string> extract_gene_id(
         const std::map<std::string, std::string>& attributes);
 
-    /**
-     * Extract transcript_id from GFF attributes
-     */
     static std::optional<std::string> extract_transcript_id(
         const std::map<std::string, std::string>& attributes);
 
-    /**
-     * Extract generic attribute from GFF attributes map
-     */
     static std::optional<std::string> extract_attribute(
         const std::map<std::string, std::string>& attributes,
         const std::string& key

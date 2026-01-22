@@ -5,6 +5,40 @@
 #include <iomanip>
 #include <sstream>
 #include <locale>
+#include <mutex>
+
+std::string normalize_chromosome(const std::string& seqid) {
+    // Already has chr prefix - check for MT variant
+    if (seqid.size() >= 3 && seqid.substr(0, 3) == "chr") {
+        return seqid;
+    }
+
+    // Ensembl mitochondria
+    if (seqid == "MT") {
+        return "chrM";
+    }
+
+    // Numeric chromosomes (1-22) or sex chromosomes (X, Y) or M
+    if (!seqid.empty()) {
+        // Check if it's a valid chromosome to prefix
+        // Numeric: 1, 2, ..., 22
+        // Letters: X, Y, M
+        bool is_numeric = true;
+        for (char c : seqid) {
+            if (!std::isdigit(c)) {
+                is_numeric = false;
+                break;
+            }
+        }
+
+        if (is_numeric || seqid == "X" || seqid == "Y" || seqid == "M") {
+            return "chr" + seqid;
+        }
+    }
+
+    // Unknown format - return as-is
+    return seqid;
+}
 
 namespace logging {
     // ANSI color codes
@@ -12,6 +46,9 @@ namespace logging {
     const std::string YELLOW = "\033[33m";
     const std::string RED = "\033[31m";
     const std::string CYAN = "\033[36m";
+
+    // Thread safety
+    static std::mutex log_mutex;
 
     // Progress tracking
     static std::chrono::steady_clock::time_point progress_start_time;
@@ -37,22 +74,27 @@ namespace logging {
     }
 
     void info(const std::string& message) {
+        std::lock_guard<std::mutex> lock(log_mutex);
         std::cout << "[atroplex] " << get_timestamp() << " - " << message << std::endl;
     }
 
     void warning(const std::string& message) {
+        std::lock_guard<std::mutex> lock(log_mutex);
         std::cout << YELLOW << "[atroplex] " << get_timestamp() << " - WARNING: " << message << RESET << std::endl;
     }
 
     void error(const std::string& message) {
+        std::lock_guard<std::mutex> lock(log_mutex);
         std::cerr << RED << "[atroplex] " << get_timestamp() << " - ERROR: " << message << RESET << std::endl;
     }
 
     void progress_start() {
+        std::lock_guard<std::mutex> lock(log_mutex);
         progress_start_time = std::chrono::steady_clock::now();
     }
 
     void progress(size_t lines, const std::string& prefix) {
+        std::lock_guard<std::mutex> lock(log_mutex);
         auto now = std::chrono::steady_clock::now();
         auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - progress_start_time).count();
 
@@ -66,6 +108,7 @@ namespace logging {
     }
 
     void progress_done(size_t segments, const std::string& prefix) {
+        std::lock_guard<std::mutex> lock(log_mutex);
         auto now = std::chrono::steady_clock::now();
         auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - progress_start_time).count();
         double seconds = static_cast<double>(elapsed) / 1000.0;

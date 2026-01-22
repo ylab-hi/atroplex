@@ -71,6 +71,7 @@ void base::start() {
 
 void base::build(const std::vector<std::string>& build_files) {
     int order = params["order"].as<int>();
+    uint32_t threads = params["threads"].as<uint32_t>();
 
     logging::info("Creating grove with order: " + std::to_string(order));
 
@@ -78,7 +79,7 @@ void base::build(const std::vector<std::string>& build_files) {
     grove = std::make_unique<grove_type>(order);
 
     // Builder populates the grove from annotation files
-    builder::build_from_files(*grove, build_files);
+    builder::build_from_files(*grove, build_files, threads);
 }
 
 void base::load_genogrove(const std::string& gg_path) {

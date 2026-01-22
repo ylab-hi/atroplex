@@ -45,6 +45,8 @@ int main(int argc, char** argv) {
                 cxxopts::value<std::string>())
             ("k,order", "Order of genogrove (only used when genogrove is newly created)",
                 cxxopts::value<int>()->default_value("3"))
+            ("t,threads", "Number of threads for parallel processing (0 = auto-detect)",
+                cxxopts::value<uint32_t>()->default_value("1"))
             ("build-only", "Only build the genogrove index, skip analysis")
             ;
 

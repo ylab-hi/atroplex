@@ -15,6 +15,14 @@
 #include <chrono>
 #include <string>
 
+/**
+ * Normalize chromosome name to UCSC/GENCODE style
+ * - "1" → "chr1", "X" → "chrX", "Y" → "chrY"
+ * - "MT" → "chrM" (Ensembl mitochondria)
+ * - "chr1" → "chr1" (already normalized)
+ */
+std::string normalize_chromosome(const std::string& seqid);
+
 namespace logging {
     void info(const std::string& message);
     void warning(const std::string& message);

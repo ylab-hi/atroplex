@@ -22,8 +22,11 @@
 
 // genogrove
 #include <genogrove/data_type/interval.hpp>
+#include <genogrove/data_type/genomic_coordinate.hpp>
+#include <genogrove/structure/grove/grove.hpp>
 
 namespace gdt = genogrove::data_type;
+namespace gst = genogrove::structure;
 
 /**
  * Edge metadata for grove graph
@@ -287,5 +290,17 @@ inline segment_feature& get_segment(genomic_feature& feature) {
 inline const segment_feature& get_segment(const genomic_feature& feature) {
     return std::get<segment_feature>(feature);
 }
+
+// ========== Grove type aliases ==========
+// Canonical definitions used throughout the codebase
+
+using grove_type = gst::grove<gdt::genomic_coordinate, genomic_feature, edge_metadata>;
+using key_ptr = gdt::key<gdt::genomic_coordinate, genomic_feature>*;
+
+// Cache types for deduplication across files (pan-transcriptome)
+using exon_cache_type = std::map<gdt::genomic_coordinate, key_ptr>;
+using segment_cache_type = std::unordered_map<std::string, key_ptr>;
+using chromosome_exon_caches = std::map<std::string, exon_cache_type>;
+using chromosome_segment_caches = std::map<std::string, segment_cache_type>;
 
 #endif //ATROPLEX_GENOMIC_FEATURE_HPP

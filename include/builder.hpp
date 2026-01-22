@@ -12,27 +12,18 @@
 #define ATROPLEX_GENOGROVE_BUILDER_HPP
 
 // standard
-#include <cstdint>
-#include <optional>
 #include <string>
 #include <vector>
+#include <cstdint>
 
 // genogrove
-#include <genogrove/structure/grove/grove.hpp>
-#include <genogrove/data_type/interval.hpp>
 #include <genogrove/io/filetype_detector.hpp>
 
 // class
 #include "genomic_feature.hpp"
 #include "sample_info.hpp"
 
-namespace gdt = genogrove::data_type;
-namespace gst = genogrove::structure;
 namespace gio = genogrove::io;
-
-// Type aliases for grove structure
-using grove_type = gst::grove<gdt::interval, genomic_feature, edge_metadata>;
-using key_ptr = gdt::key<gdt::interval, genomic_feature>*;
 
 /**
  * GenogroveBuilder - Toolkit for grove construction and modification
@@ -57,10 +48,12 @@ public:
      *
      * @param grove Reference to grove to populate
      * @param files Vector of file paths to process
+     * @param threads Number of threads (reserved for future use, currently ignored)
      */
     static void build_from_files(
         grove_type& grove,
-        const std::vector<std::string>& files
+        const std::vector<std::string>& files,
+        uint32_t threads = 1
     );
 
     // Future extension methods for Phase 2/3:
