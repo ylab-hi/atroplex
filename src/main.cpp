@@ -64,6 +64,7 @@ int main(int argc, char** argv) {
         options.add_options("Other")
             ("h,help", "Print help message")
             ("v,version", "Print version number")
+            ("progress", "Show progress with carriage return updates (for interactive use)")
             ;
 
         auto result = options.parse(argc, argv);
@@ -76,6 +77,11 @@ int main(int argc, char** argv) {
         if (result.count("version")) {
             showVersion(std::cout);
             return 0;
+        }
+
+        // Enable progress output if requested
+        if (result.count("progress")) {
+            logging::set_progress_enabled(true);
         }
 
         // Validate arguments based on mode

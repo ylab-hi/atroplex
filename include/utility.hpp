@@ -29,8 +29,17 @@ namespace logging {
     void error(const std::string& message);
 
     /**
+     * Enable or disable progress output (carriage return updates)
+     * Progress is disabled by default for compatibility with non-interactive
+     * environments (SLURM, CI, etc.). Use --progress flag to enable.
+     * @param enabled Whether to show progress updates
+     */
+    void set_progress_enabled(bool enabled);
+
+    /**
      * Display progress with carriage return (overwrites current line)
      * Shows line count with comma formatting and lines/sec rate
+     * Does nothing if progress is disabled via set_progress_enabled(false)
      * @param lines Number of lines read
      * @param prefix Prefix message (e.g., "Processing gencode.gtf")
      */

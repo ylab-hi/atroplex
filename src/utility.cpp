@@ -52,6 +52,12 @@ namespace logging {
 
     // Progress tracking
     static std::chrono::steady_clock::time_point progress_start_time;
+    static bool progress_enabled = false;  // Disabled by default (for SLURM, CI, etc.)
+
+    void set_progress_enabled(bool enabled) {
+        std::lock_guard<std::mutex> lock(log_mutex);
+        progress_enabled = enabled;
+    }
 
     // Internal helper to get timestamp
     static std::string get_timestamp() {
@@ -95,6 +101,8 @@ namespace logging {
 
     void progress(size_t lines, const std::string& prefix) {
         std::lock_guard<std::mutex> lock(log_mutex);
+        if (!progress_enabled) return;
+
         auto now = std::chrono::steady_clock::now();
         auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - progress_start_time).count();
 
@@ -113,10 +121,14 @@ namespace logging {
         auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - progress_start_time).count();
         double seconds = static_cast<double>(elapsed) / 1000.0;
 
-        // Clear the progress line and print final message
-        std::cout << "\r" << "[atroplex] " << get_timestamp() << " - "
+        // Clear the progress line (if enabled) and print final message
+        if (progress_enabled) {
+            std::cout << "\r";  // Clear progress line
+        }
+        std::cout << "[atroplex] " << get_timestamp() << " - "
                   << prefix << " " << format_number(segments) << " segments"
                   << " in " << std::fixed << std::setprecision(1) << seconds << "s"
-                  << "                    " << std::endl;  // Extra spaces to clear, then newline
+                  << (progress_enabled ? "                    " : "")  // Extra spaces only if clearing
+                  << std::endl;
     }
 }
