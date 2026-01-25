@@ -49,9 +49,8 @@ void builder::build_from_files(grove_type& grove,
         return;
     }
 
-    // TODO: Threading disabled until genogrove operations are thread-safe
     if (threads > 1) {
-        logging::warning("Multi-threading not yet supported, using single thread");
+        logging::info("Note: Multi-threading for build not yet optimized, using single thread");
     }
 
     logging::info("Populating grove from " + std::to_string(files.size()) + " file(s)");
@@ -83,7 +82,7 @@ void builder::build_from_files(grove_type& grove,
             uint32_t registry_id = sample_registry::instance().register_data(std::move(info));
 
             // Build with persistent caches for cross-file deduplication
-            build_gff::build(grove, filepath, registry_id, exon_caches, segment_caches, segment_count);
+            build_gff::build(grove, filepath, registry_id, exon_caches, segment_caches, segment_count, threads);
         } else {
             logging::warning("Unsupported file type for: " + filepath);
         }

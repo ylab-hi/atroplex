@@ -50,13 +50,15 @@ public:
      * @param exon_caches Chromosome-level exon caches (for cross-file deduplication)
      * @param segment_caches Chromosome-level segment caches (for cross-file deduplication)
      * @param segment_count Reference to segment counter (incremented for new segments)
+     * @param num_threads Number of worker threads (0 = auto-detect)
      */
     static void build(grove_type& grove,
                       const std::filesystem::path& filepath,
                       std::optional<uint32_t> sample_id,
                       chromosome_exon_caches& exon_caches,
                       chromosome_segment_caches& segment_caches,
-                      size_t& segment_count);
+                      size_t& segment_count,
+                      uint32_t num_threads = 0);
 
     /**
      * Generate a structure key from ordered exon coordinates

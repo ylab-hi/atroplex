@@ -28,59 +28,55 @@ void build_gff::build(grove_type& grove,
     std::optional<uint32_t> sample_id,
     chromosome_exon_caches& exon_caches,
     chromosome_segment_caches& segment_caches,
-    size_t& segment_count) {
+    size_t& segment_count,
+    uint32_t /*num_threads*/) {
+
     gio::gff_reader reader(filepath.string());
 
-    // Local mutex for single-threaded build (no contention)
+    // Dummy mutex (unused in single-threaded mode, but required by process_gene signature)
     std::mutex grove_mutex;
 
-    // Buffer for gene entries - process one gene at a time
-    std::unordered_map<std::string, std::vector<gio::gff_entry>> genes;
+    // Buffer for current gene's entries
+    std::vector<gio::gff_entry> current_gene_entries;
     std::string current_gene_id;
+    std::string current_chrom;
     size_t line_count = 0;
 
     std::string progress_prefix = "Processing " + filepath.filename().string();
     logging::progress_start();
 
-    for(const auto& entry : reader) {
+    for (const auto& entry : reader) {
         line_count++;
 
-        // Update progress every 1000 entries
-        if (line_count % 1000 == 0) {
+        if (line_count % 50000 == 0) {
             logging::progress(line_count, progress_prefix);
         }
 
-        // Extract gene_id to group entries by gene
         std::optional<std::string> gene_id = entry.get_gene_id();
         if (!gene_id.has_value()) {
-            continue; // Skip entries without gene_id
+            continue;
         }
 
-        // If we've moved to a new gene, process the previous one
+        std::string seqid = normalize_chromosome(entry.seqid);
+
+        // Gene changed - process previous gene
         if (!current_gene_id.empty() && gene_id.value() != current_gene_id) {
-            const auto& gene_entries = genes[current_gene_id];
-            if (!gene_entries.empty()) {
-                std::string seqid = normalize_chromosome(gene_entries.front().seqid);
-                process_gene(grove, grove_mutex, gene_entries,
-                    exon_caches[seqid], segment_caches[seqid],
-                    sample_id, segment_count);
-            }
-            genes.erase(current_gene_id); // Free memory
+            process_gene(grove, grove_mutex, current_gene_entries,
+                exon_caches[current_chrom], segment_caches[current_chrom],
+                sample_id, segment_count);
+            current_gene_entries.clear();
         }
 
         current_gene_id = gene_id.value();
-        genes[gene_id.value()].push_back(entry);
+        current_chrom = seqid;
+        current_gene_entries.push_back(entry);
     }
 
-    // Process last gene
-    if (!current_gene_id.empty()) {
-        const auto& gene_entries = genes[current_gene_id];
-        if (!gene_entries.empty()) {
-            std::string seqid = normalize_chromosome(gene_entries.front().seqid);
-            process_gene(grove, grove_mutex, gene_entries,
-                exon_caches[seqid], segment_caches[seqid],
-                sample_id, segment_count);
-        }
+    // Process final gene
+    if (!current_gene_entries.empty()) {
+        process_gene(grove, grove_mutex, current_gene_entries,
+            exon_caches[current_chrom], segment_caches[current_chrom],
+            sample_id, segment_count);
     }
 
     logging::progress_done(segment_count, "Processed " + filepath.filename().string());
