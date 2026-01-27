@@ -24,8 +24,11 @@
 #include <genogrove/data_type/interval.hpp>
 #include <genogrove/io/gff_reader.hpp>
 #include <genogrove/io/filetype_detector.hpp>
+#include <genogrove/io/bam_reader.hpp>
 
 #include "genomic_feature.hpp"
+#include "read_cluster.hpp"
+#include "transcript_matcher.hpp"
 
 // class
 #include "builder.hpp"
@@ -66,6 +69,7 @@ private:
     void align_reads();
     void build(const std::vector<std::string>& build_files);
     void load_genogrove(const std::string& gg_path);
+    void process_reads();
 
 };
 
