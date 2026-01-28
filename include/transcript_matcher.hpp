@@ -11,52 +11,126 @@
 #ifndef ATROPLEX_TRANSCRIPT_MATCHER_HPP
 #define ATROPLEX_TRANSCRIPT_MATCHER_HPP
 
-// standard
 #include <vector>
 #include <string>
 #include <unordered_set>
+#include <optional>
 
-// atroplex
 #include "genomic_feature.hpp"
 #include "read_cluster.hpp"
+
+/**
+ * SQANTI-like structural categories for transcript classification
+ */
+enum class structural_category {
+    FSM,            // Full Splice Match - all junctions match reference transcript
+    ISM,            // Incomplete Splice Match - subset of junctions from reference
+    NIC,            // Novel In Catalog - novel combination of known splice sites
+    NNC,            // Novel Not in Catalog - at least one novel splice site
+    GENIC_INTRON,   // Mono-exon, entirely within intron
+    GENIC_GENOMIC,  // Overlaps both intron and exon regions
+    ANTISENSE,      // Overlaps gene on opposite strand
+    INTERGENIC,     // No gene overlap
+    AMBIGUOUS       // Multiple equally good matches (internal use)
+};
+
+/**
+ * Subcategories for ISM (Incomplete Splice Match)
+ */
+enum class ism_subcategory {
+    NONE,
+    PREFIX,         // 5' fragment - missing 3' end junctions
+    SUFFIX,         // 3' fragment - missing 5' end junctions
+    INTERNAL,       // Internal fragment - missing both ends
+    MONO_EXON       // Single exon matching part of multi-exon transcript
+};
+
+/**
+ * Subcategories for NIC (Novel In Catalog)
+ */
+enum class nic_subcategory {
+    NONE,
+    COMBINATION,        // Novel combination of known junctions
+    INTRON_RETENTION,   // Intron retention event
+    ALT_3PRIME,         // Alternative 3' splice site (known acceptor)
+    ALT_5PRIME,         // Alternative 5' splice site (known donor)
+    EXON_SKIPPING       // Known exon(s) skipped
+};
+
+/**
+ * Subcategories for NNC (Novel Not in Catalog)
+ */
+enum class nnc_subcategory {
+    NONE,
+    NOVEL_DONOR,        // At least one novel donor site
+    NOVEL_ACCEPTOR,     // At least one novel acceptor site
+    NOVEL_BOTH,         // Both novel donor and acceptor sites
+    NOVEL_EXON          // Novel internal exon
+};
+
+/**
+ * Subcategory wrapper - holds the appropriate subcategory based on structural category
+ */
+struct subcategory {
+    ism_subcategory ism = ism_subcategory::NONE;
+    nic_subcategory nic = nic_subcategory::NONE;
+    nnc_subcategory nnc = nnc_subcategory::NONE;
+
+    std::string to_string() const;
+};
+
+/**
+ * Convert structural category to string
+ */
+std::string to_string(structural_category cat);
 
 /**
  * Result of matching a read cluster against reference segments
  */
 struct match_result {
-    /**
-     * Classification of the match
-     */
-    enum class match_type {
-        EXACT,           // All junctions match a known transcript exactly
-        COMPATIBLE,      // Junctions are subset of known transcript (partial coverage)
-        NOVEL_JUNCTION,  // Has splice junction not in any known transcript
-        NOVEL_EXON,      // Extends beyond known exon boundaries
-        INTERGENIC,      // No overlap with any known genes
-        AMBIGUOUS        // Multiple equally good matches
-    };
-
-    match_type type = match_type::INTERGENIC;
+    // Primary SQANTI-like classification
+    structural_category category = structural_category::INTERGENIC;
+    subcategory subcat;
 
     // Best matching segment(s)
     std::vector<key_ptr> matched_segments;
     std::vector<std::string> matched_transcript_ids;
+    std::vector<std::string> matched_gene_ids;
+
+    // Reference transcript info (for FSM/ISM)
+    std::optional<std::string> reference_transcript;
+    std::optional<std::string> reference_gene;
 
     // Match quality metrics
     double junction_match_score = 0.0;   // Fraction of junctions that match
     int matching_junctions = 0;
-    int total_junctions = 0;
+    int total_query_junctions = 0;       // Junctions in query (read cluster)
+    int total_ref_junctions = 0;         // Junctions in reference transcript
     int exon_boundary_mismatches = 0;    // Total bp off from exon boundaries
 
-    // For NOVEL_JUNCTION/NOVEL_EXON types
+    // Splice site analysis (for NIC/NNC classification)
+    int known_donors = 0;        // Query donors matching known donor sites
+    int known_acceptors = 0;     // Query acceptors matching known acceptor sites
+    int novel_donors = 0;        // Query donors not in reference
+    int novel_acceptors = 0;     // Query acceptors not in reference
+
+    // Novel junctions found
     std::vector<splice_junction> novel_junctions;
 
     // Helpers
-    bool is_exact() const { return type == match_type::EXACT; }
-    bool is_novel() const {
-        return type == match_type::NOVEL_JUNCTION || type == match_type::NOVEL_EXON;
+    bool is_fsm() const { return category == structural_category::FSM; }
+    bool is_ism() const { return category == structural_category::ISM; }
+    bool is_nic() const { return category == structural_category::NIC; }
+    bool is_nnc() const { return category == structural_category::NNC; }
+    bool is_novel() const { return is_nic() || is_nnc(); }
+    bool is_genic() const {
+        return category == structural_category::GENIC_INTRON ||
+               category == structural_category::GENIC_GENOMIC;
     }
     bool has_match() const { return !matched_segments.empty(); }
+
+    // Get full category string (e.g., "ISM_prefix", "NNC_novel_donor")
+    std::string category_string() const;
 };
 
 /**
@@ -66,7 +140,7 @@ struct match_result {
  * 1. Spatial query to find candidate segments
  * 2. Drill down to exon chains via graph edges
  * 3. Score junction match quality
- * 4. Classify and optionally update grove
+ * 4. Classify using SQANTI-like categories
  */
 class transcript_matcher {
 public:
@@ -75,64 +149,78 @@ public:
      */
     struct config {
         int junction_tolerance = 5;      // Max bp difference for junction match
-        double min_junction_score = 0.8; // Min fraction of junctions to match
+        double min_junction_score = 0.8; // Min fraction of junctions to match for FSM/ISM
         int min_overlap_bp = 50;         // Minimum overlap with segment
-        bool allow_partial = true;       // Allow partial transcript matches
+        bool allow_partial = true;       // Allow partial transcript matches (ISM)
         bool track_novel = true;         // Track novel junctions
+        int splice_site_window = 10;     // Window for matching splice sites as "known"
     };
 
     /**
-     * Construct matcher with reference to grove
-     * @param grove Reference to grove containing segments and exons
-     * @param cfg Configuration options
+     * Matching statistics (SQANTI categories)
      */
+    struct stats {
+        size_t total_matches = 0;
+        size_t fsm_matches = 0;
+        size_t ism_matches = 0;
+        size_t nic_matches = 0;
+        size_t nnc_matches = 0;
+        size_t genic_intron_matches = 0;
+        size_t genic_genomic_matches = 0;
+        size_t antisense_matches = 0;
+        size_t intergenic_matches = 0;
+        size_t ambiguous_matches = 0;
+
+        // ISM subcategory counts
+        size_t ism_prefix = 0;
+        size_t ism_suffix = 0;
+        size_t ism_internal = 0;
+        size_t ism_mono_exon = 0;
+
+        // NIC subcategory counts
+        size_t nic_combination = 0;
+        size_t nic_intron_retention = 0;
+        size_t nic_alt_3prime = 0;
+        size_t nic_alt_5prime = 0;
+        size_t nic_exon_skipping = 0;
+
+        // NNC subcategory counts
+        size_t nnc_novel_donor = 0;
+        size_t nnc_novel_acceptor = 0;
+        size_t nnc_novel_both = 0;
+        size_t nnc_novel_exon = 0;
+
+        // Grove updates
+        size_t segments_updated = 0;
+        size_t segments_created = 0;
+    };
+
     explicit transcript_matcher(grove_type& grove) : transcript_matcher(grove, config{}) {}
     transcript_matcher(grove_type& grove, const config& cfg);
 
     /**
      * Match a read cluster to reference transcripts
-     * @param cluster The read cluster to match
-     * @return Match result with classification and matched transcripts
      */
     match_result match(const read_cluster& cluster);
 
     /**
      * Batch match multiple clusters
-     * @param clusters Vector of clusters to match
-     * @return Vector of match results (same order as input)
      */
     std::vector<match_result> match_batch(const std::vector<read_cluster>& clusters);
 
     /**
      * Update grove with match results
-     * Adds read support to matched segments, optionally creates discovered segments
      * @param cluster The read cluster
      * @param result The match result
+     * @param add_novel Whether to add novel transcripts to grove
      */
-    void update_grove(const read_cluster& cluster, const match_result& result);
-
-    /**
-     * Matching statistics
-     */
-    struct stats {
-        size_t total_matches = 0;
-        size_t exact_matches = 0;
-        size_t compatible_matches = 0;
-        size_t novel_junction_matches = 0;
-        size_t novel_exon_matches = 0;
-        size_t intergenic_matches = 0;
-        size_t ambiguous_matches = 0;
-        size_t segments_updated = 0;
-        size_t segments_created = 0;
-    };
+    void update_grove(const read_cluster& cluster, const match_result& result,
+                      bool add_novel = false);
 
     const stats& get_stats() const { return stats_; }
 
     /**
-     * Write match results to TSV file
-     * @param filepath Output file path
-     * @param clusters The read clusters that were matched
-     * @param results The match results (same order as clusters)
+     * Write match results to SQANTI-like TSV file
      */
     static void write_results(const std::string& filepath,
                               const std::vector<read_cluster>& clusters,
@@ -140,7 +228,6 @@ public:
 
     /**
      * Write summary statistics to file
-     * @param filepath Output file path
      */
     void write_summary(const std::string& filepath) const;
 
@@ -149,66 +236,94 @@ private:
     config cfg_;
     stats stats_;
 
+    // Known splice sites from reference (populated during construction)
+    std::unordered_set<size_t> known_donor_sites_;    // 5' splice sites
+    std::unordered_set<size_t> known_acceptor_sites_; // 3' splice sites
+
     /**
-     * Step 1: Find candidate segments via spatial query
-     * @param cluster Read cluster to query
-     * @return Vector of segment key pointers that overlap
+     * Build index of known splice sites from grove
+     */
+    void index_splice_sites();
+
+    /**
+     * Check if a splice site is known (within tolerance)
+     */
+    bool is_known_donor(const std::string& seqid, size_t position) const;
+    bool is_known_acceptor(const std::string& seqid, size_t position) const;
+
+    /**
+     * Find candidate segments via spatial query
      */
     std::vector<key_ptr> find_candidate_segments(const read_cluster& cluster);
 
     /**
-     * Step 2: Get exon chain for a segment/transcript
-     * Traverses SEGMENT_TO_EXON and EXON_TO_EXON edges
-     * @param segment Segment to drill down from
-     * @param transcript_id Transcript to follow
-     * @return Ordered vector of exon key pointers
+     * Get exon chain for a segment/transcript
      */
     std::vector<key_ptr> get_exon_chain(key_ptr segment, const std::string& transcript_id);
 
     /**
-     * Step 3: Score how well cluster junctions match exon chain
-     * @param cluster Read cluster with junctions
-     * @param exon_chain Ordered exon keys
-     * @return Fraction of matching junctions [0.0, 1.0]
+     * Score how well cluster junctions match exon chain
      */
     double score_junction_match(const read_cluster& cluster,
                                 const std::vector<key_ptr>& exon_chain);
 
     /**
-     * Step 4: Classify match based on score and junction analysis
-     * @param cluster The read cluster
-     * @param best_chain Best matching exon chain
-     * @param best_score Score from score_junction_match
-     * @return Classified match type
+     * Classify match using SQANTI categories
      */
-    match_result::match_type classify_match(
-        const read_cluster& cluster,
-        const std::vector<key_ptr>& best_chain,
-        double best_score);
+    void classify_match(match_result& result,
+                        const read_cluster& cluster,
+                        const std::vector<key_ptr>& best_chain);
+
+    /**
+     * Determine ISM subcategory based on which junctions are missing
+     */
+    ism_subcategory classify_ism(const read_cluster& cluster,
+                                  const std::vector<key_ptr>& ref_chain);
+
+    /**
+     * Determine NIC subcategory
+     */
+    nic_subcategory classify_nic(const read_cluster& cluster,
+                                  const std::vector<key_ptr>& ref_chain);
+
+    /**
+     * Determine NNC subcategory based on novel splice sites
+     */
+    nnc_subcategory classify_nnc(const match_result& result);
+
+    /**
+     * Analyze splice sites in query for known/novel classification
+     */
+    void analyze_splice_sites(match_result& result, const read_cluster& cluster);
+
+    /**
+     * Check for intron retention events
+     */
+    bool has_intron_retention(const read_cluster& cluster,
+                              const std::vector<key_ptr>& ref_chain);
 
     /**
      * Find novel junctions not present in reference
-     * @param cluster Read cluster with junctions
-     * @param exon_chain Best matching exon chain
-     * @return Vector of novel junctions
      */
     std::vector<splice_junction> find_novel_junctions(
         const read_cluster& cluster,
         const std::vector<key_ptr>& exon_chain);
 
     /**
-     * Create a new discovered segment for novel junction patterns
-     * @param cluster Read cluster defining the segment
-     * @return Key pointer to new segment (or nullptr if creation failed)
+     * Create a new discovered segment for novel patterns
      */
     key_ptr create_discovered_segment(const read_cluster& cluster);
 
     /**
      * Extract reference junctions from exon chain
-     * Junctions are boundaries between consecutive exons
      */
     std::vector<splice_junction> extract_reference_junctions(
         const std::vector<key_ptr>& exon_chain);
+
+    /**
+     * Update stats based on match result
+     */
+    void update_stats(const match_result& result);
 };
 
 #endif // ATROPLEX_TRANSCRIPT_MATCHER_HPP

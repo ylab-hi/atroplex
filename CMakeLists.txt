@@ -29,7 +29,8 @@ find_package(PkgConfig REQUIRED)
 pkg_check_modules(HTSLIB REQUIRED htslib)
 
 file(GLOB SOURCES "src/*.cpp")
-add_executable(atroplex ${SOURCES})
+file(GLOB SUBCALL_SOURCES "src/subcall/*.cpp")
+add_executable(atroplex ${SOURCES} ${SUBCALL_SOURCES})
 target_include_directories(atroplex PUBLIC
         "${CMAKE_CURRENT_SOURCE_DIR}/include"
         ${HTSLIB_INCLUDE_DIRS}

@@ -153,16 +153,17 @@ void base::process_reads() {
     // Step 3: Update grove with read support
     logging::info("Updating grove with read support...");
     for (size_t i = 0; i < clusters.size(); ++i) {
-        matcher.update_grove(clusters[i], results[i]);
+        matcher.update_grove(clusters[i], results[i], false);  // Don't add novel by default
     }
 
     const auto& match_stats = matcher.get_stats();
     logging::info("Matching complete:");
     logging::info("  Total matches: " + std::to_string(match_stats.total_matches));
-    logging::info("  Exact: " + std::to_string(match_stats.exact_matches));
-    logging::info("  Compatible: " + std::to_string(match_stats.compatible_matches));
-    logging::info("  Novel junction: " + std::to_string(match_stats.novel_junction_matches));
-    logging::info("  Novel exon: " + std::to_string(match_stats.novel_exon_matches));
+    logging::info("  FSM (Full Splice Match): " + std::to_string(match_stats.fsm_matches));
+    logging::info("  ISM (Incomplete Splice Match): " + std::to_string(match_stats.ism_matches));
+    logging::info("  NIC (Novel In Catalog): " + std::to_string(match_stats.nic_matches));
+    logging::info("  NNC (Novel Not in Catalog): " + std::to_string(match_stats.nnc_matches));
+    logging::info("  Genic (intron/genomic): " + std::to_string(match_stats.genic_intron_matches + match_stats.genic_genomic_matches));
     logging::info("  Intergenic: " + std::to_string(match_stats.intergenic_matches));
     logging::info("  Ambiguous: " + std::to_string(match_stats.ambiguous_matches));
     logging::info("  Segments updated: " + std::to_string(match_stats.segments_updated));

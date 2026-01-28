@@ -15,13 +15,110 @@
 #include <sstream>
 #include <fstream>
 #include <cmath>
+#include <functional>
+
+// ============================================================================
+// Helper functions for category string conversion
+// ============================================================================
+
+std::string to_string(structural_category cat) {
+    switch (cat) {
+        case structural_category::FSM: return "FSM";
+        case structural_category::ISM: return "ISM";
+        case structural_category::NIC: return "NIC";
+        case structural_category::NNC: return "NNC";
+        case structural_category::GENIC_INTRON: return "genic_intron";
+        case structural_category::GENIC_GENOMIC: return "genic_genomic";
+        case structural_category::ANTISENSE: return "antisense";
+        case structural_category::INTERGENIC: return "intergenic";
+        case structural_category::AMBIGUOUS: return "ambiguous";
+        default: return "unknown";
+    }
+}
+
+std::string subcategory::to_string() const {
+    if (ism != ism_subcategory::NONE) {
+        switch (ism) {
+            case ism_subcategory::PREFIX: return "5prime_fragment";
+            case ism_subcategory::SUFFIX: return "3prime_fragment";
+            case ism_subcategory::INTERNAL: return "internal_fragment";
+            case ism_subcategory::MONO_EXON: return "mono-exon";
+            default: return "";
+        }
+    }
+    if (nic != nic_subcategory::NONE) {
+        switch (nic) {
+            case nic_subcategory::COMBINATION: return "combination";
+            case nic_subcategory::INTRON_RETENTION: return "intron_retention";
+            case nic_subcategory::ALT_3PRIME: return "alternative_3end";
+            case nic_subcategory::ALT_5PRIME: return "alternative_5end";
+            case nic_subcategory::EXON_SKIPPING: return "exon_skipping";
+            default: return "";
+        }
+    }
+    if (nnc != nnc_subcategory::NONE) {
+        switch (nnc) {
+            case nnc_subcategory::NOVEL_DONOR: return "novel_donor";
+            case nnc_subcategory::NOVEL_ACCEPTOR: return "novel_acceptor";
+            case nnc_subcategory::NOVEL_BOTH: return "novel_donor_and_acceptor";
+            case nnc_subcategory::NOVEL_EXON: return "novel_exon";
+            default: return "";
+        }
+    }
+    return "";
+}
+
+std::string match_result::category_string() const {
+    std::string cat_str = ::to_string(category);
+    std::string sub_str = subcat.to_string();
+    if (!sub_str.empty()) {
+        return cat_str + "_" + sub_str;
+    }
+    return cat_str;
+}
 
 // ============================================================================
 // transcript_matcher implementation
 // ============================================================================
 
 transcript_matcher::transcript_matcher(grove_type& grove, const config& cfg)
-    : grove_(grove), cfg_(cfg) {}
+    : grove_(grove), cfg_(cfg) {
+    // Index known splice sites from reference
+    index_splice_sites();
+}
+
+void transcript_matcher::index_splice_sites() {
+    // TODO: Iterate through all exons in grove and record splice sites
+    // For now this is a placeholder - would need grove iteration support
+    // This would be populated from exon boundaries:
+    // - donor = exon end (5' splice site)
+    // - acceptor = exon start (3' splice site)
+}
+
+bool transcript_matcher::is_known_donor(const std::string& seqid, size_t position) const {
+    // Check if position (with tolerance) matches any known donor site
+    // For now, simplified - would use spatial index for efficiency
+    for (int offset = -cfg_.splice_site_window; offset <= cfg_.splice_site_window; ++offset) {
+        size_t check_pos = position + offset;
+        // Hash: combine seqid hash with position
+        size_t key = std::hash<std::string>{}(seqid) ^ (check_pos << 1);
+        if (known_donor_sites_.count(key)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool transcript_matcher::is_known_acceptor(const std::string& seqid, size_t position) const {
+    for (int offset = -cfg_.splice_site_window; offset <= cfg_.splice_site_window; ++offset) {
+        size_t check_pos = position + offset;
+        size_t key = std::hash<std::string>{}(seqid) ^ (check_pos << 1);
+        if (known_acceptor_sites_.count(key)) {
+            return true;
+        }
+    }
+    return false;
+}
 
 match_result transcript_matcher::match(const read_cluster& cluster) {
     match_result result;
@@ -31,8 +128,8 @@ match_result transcript_matcher::match(const read_cluster& cluster) {
     auto candidates = find_candidate_segments(cluster);
 
     if (candidates.empty()) {
-        result.type = match_result::match_type::INTERGENIC;
-        stats_.intergenic_matches++;
+        result.category = structural_category::INTERGENIC;
+        update_stats(result);
         return result;
     }
 
@@ -40,7 +137,9 @@ match_result transcript_matcher::match(const read_cluster& cluster) {
     double best_score = 0.0;
     key_ptr best_segment = nullptr;
     std::string best_transcript_id;
+    std::string best_gene_id;
     std::vector<key_ptr> best_exon_chain;
+    int best_ref_junctions = 0;
 
     for (key_ptr seg_key : candidates) {
         if (!is_segment(seg_key->get_data())) continue;
@@ -58,31 +157,41 @@ match_result transcript_matcher::match(const read_cluster& cluster) {
                 best_score = score;
                 best_segment = seg_key;
                 best_transcript_id = transcript_id;
+                best_gene_id = seg.gene_id;
                 best_exon_chain = exon_chain;
+                best_ref_junctions = static_cast<int>(exon_chain.size()) - 1;
             }
         }
     }
 
-    // Step 4: Classify match
+    // No matching segment found
     if (best_segment == nullptr) {
-        result.type = match_result::match_type::INTERGENIC;
-        stats_.intergenic_matches++;
+        // Check if we're within a gene but not matching any transcript
+        // This could be GENIC_INTRON or GENIC_GENOMIC
+        result.category = structural_category::INTERGENIC;
+        update_stats(result);
         return result;
     }
 
+    // Populate result with match info
     result.matched_segments.push_back(best_segment);
     result.matched_transcript_ids.push_back(best_transcript_id);
+    result.matched_gene_ids.push_back(best_gene_id);
+    result.reference_transcript = best_transcript_id;
+    result.reference_gene = best_gene_id;
     result.junction_match_score = best_score;
-    result.total_junctions = static_cast<int>(cluster.consensus_junctions.size());
-    result.matching_junctions = static_cast<int>(best_score * result.total_junctions + 0.5);
+    result.total_query_junctions = static_cast<int>(cluster.consensus_junctions.size());
+    result.total_ref_junctions = best_ref_junctions;
+    result.matching_junctions = static_cast<int>(best_score * result.total_query_junctions + 0.5);
 
-    // Classify based on score
-    result.type = classify_match(cluster, best_exon_chain, best_score);
+    // Analyze splice sites for NIC/NNC classification
+    analyze_splice_sites(result, cluster);
 
-    // Find novel junctions if applicable
-    if (cfg_.track_novel && result.is_novel()) {
-        result.novel_junctions = find_novel_junctions(cluster, best_exon_chain);
-    }
+    // Find novel junctions
+    result.novel_junctions = find_novel_junctions(cluster, best_exon_chain);
+
+    // Classify using SQANTI categories
+    classify_match(result, cluster, best_exon_chain);
 
     // Check for ambiguous matches (multiple transcripts with same best score)
     int equal_matches = 0;
@@ -97,38 +206,199 @@ match_result transcript_matcher::match(const read_cluster& cluster) {
             if (exon_chain.empty()) continue;
 
             double score = score_junction_match(cluster, exon_chain);
-            if (std::abs(score - best_score) < 0.001) {
+            if (std::abs(score - best_score) < 0.001 && score >= cfg_.min_junction_score) {
                 equal_matches++;
                 result.matched_segments.push_back(seg_key);
                 result.matched_transcript_ids.push_back(transcript_id);
+                result.matched_gene_ids.push_back(seg.gene_id);
             }
         }
     }
 
-    if (equal_matches > 0) {
-        result.type = match_result::match_type::AMBIGUOUS;
-        stats_.ambiguous_matches++;
+    if (equal_matches > 0 && result.is_fsm()) {
+        result.category = structural_category::AMBIGUOUS;
+    }
+
+    update_stats(result);
+    return result;
+}
+
+void transcript_matcher::classify_match(match_result& result,
+                                         const read_cluster& cluster,
+                                         const std::vector<key_ptr>& best_chain) {
+    // Single-exon reads (no junctions)
+    if (cluster.consensus_junctions.empty()) {
+        // Check if entirely within intron or overlapping exon
+        if (!best_chain.empty()) {
+            // Check if read overlaps any exon
+            bool overlaps_exon = false;
+            for (const auto& exon_key : best_chain) {
+                const auto& exon_coord = exon_key->get_value();
+                if (cluster.end > exon_coord.get_start() &&
+                    cluster.start < exon_coord.get_end()) {
+                    overlaps_exon = true;
+                    break;
+                }
+            }
+
+            if (overlaps_exon) {
+                // Mono-exon within gene region
+                result.category = structural_category::GENIC_GENOMIC;
+            } else {
+                // Entirely within intron
+                result.category = structural_category::GENIC_INTRON;
+            }
+        } else {
+            result.category = structural_category::INTERGENIC;
+        }
+        return;
+    }
+
+    // Multi-exon reads
+    auto ref_junctions = extract_reference_junctions(best_chain);
+
+    // FSM: All query junctions match reference, same number of junctions
+    if (result.junction_match_score >= 0.999 &&
+        result.total_query_junctions == result.total_ref_junctions) {
+        result.category = structural_category::FSM;
+        return;
+    }
+
+    // ISM: All query junctions match reference, but fewer junctions (subset)
+    if (result.junction_match_score >= 0.999 &&
+        result.total_query_junctions < result.total_ref_junctions) {
+        result.category = structural_category::ISM;
+        result.subcat.ism = classify_ism(cluster, best_chain);
+        return;
+    }
+
+    // Check if all splice sites are known (for NIC vs NNC)
+    bool all_sites_known = (result.novel_donors == 0 && result.novel_acceptors == 0);
+
+    if (all_sites_known) {
+        // NIC: Novel combination of known splice sites
+        result.category = structural_category::NIC;
+        result.subcat.nic = classify_nic(cluster, best_chain);
     } else {
-        // Update stats based on type
-        switch (result.type) {
-            case match_result::match_type::EXACT:
-                stats_.exact_matches++;
-                break;
-            case match_result::match_type::COMPATIBLE:
-                stats_.compatible_matches++;
-                break;
-            case match_result::match_type::NOVEL_JUNCTION:
-                stats_.novel_junction_matches++;
-                break;
-            case match_result::match_type::NOVEL_EXON:
-                stats_.novel_exon_matches++;
-                break;
-            default:
-                break;
+        // NNC: At least one novel splice site
+        result.category = structural_category::NNC;
+        result.subcat.nnc = classify_nnc(result);
+    }
+}
+
+ism_subcategory transcript_matcher::classify_ism(const read_cluster& cluster,
+                                                   const std::vector<key_ptr>& ref_chain) {
+    if (cluster.consensus_junctions.empty()) {
+        return ism_subcategory::MONO_EXON;
+    }
+
+    auto ref_junctions = extract_reference_junctions(ref_chain);
+    if (ref_junctions.empty()) {
+        return ism_subcategory::NONE;
+    }
+
+    // Find which reference junctions are matched
+    bool matches_first = false;
+    bool matches_last = false;
+
+    for (const auto& read_junc : cluster.consensus_junctions) {
+        if (read_junc.matches(ref_junctions.front(), cfg_.junction_tolerance)) {
+            matches_first = true;
+        }
+        if (read_junc.matches(ref_junctions.back(), cfg_.junction_tolerance)) {
+            matches_last = true;
         }
     }
 
-    return result;
+    if (matches_first && !matches_last) {
+        return ism_subcategory::PREFIX;  // 5' fragment (missing 3' end)
+    } else if (!matches_first && matches_last) {
+        return ism_subcategory::SUFFIX;  // 3' fragment (missing 5' end)
+    } else if (!matches_first && !matches_last) {
+        return ism_subcategory::INTERNAL;
+    }
+
+    return ism_subcategory::NONE;
+}
+
+nic_subcategory transcript_matcher::classify_nic(const read_cluster& cluster,
+                                                   const std::vector<key_ptr>& ref_chain) {
+    // Check for intron retention
+    if (has_intron_retention(cluster, ref_chain)) {
+        return nic_subcategory::INTRON_RETENTION;
+    }
+
+    auto ref_junctions = extract_reference_junctions(ref_chain);
+    int query_junctions = static_cast<int>(cluster.consensus_junctions.size());
+    int ref_junction_count = static_cast<int>(ref_junctions.size());
+
+    // Check for exon skipping (query has fewer junctions but spans same region)
+    if (query_junctions < ref_junction_count && query_junctions > 0) {
+        // Could be exon skipping - check if query junctions skip reference junctions
+        return nic_subcategory::EXON_SKIPPING;
+    }
+
+    // Default: novel combination of known splice sites
+    return nic_subcategory::COMBINATION;
+}
+
+nnc_subcategory transcript_matcher::classify_nnc(const match_result& result) {
+    if (result.novel_donors > 0 && result.novel_acceptors > 0) {
+        return nnc_subcategory::NOVEL_BOTH;
+    } else if (result.novel_donors > 0) {
+        return nnc_subcategory::NOVEL_DONOR;
+    } else if (result.novel_acceptors > 0) {
+        return nnc_subcategory::NOVEL_ACCEPTOR;
+    }
+    return nnc_subcategory::NONE;
+}
+
+void transcript_matcher::analyze_splice_sites(match_result& result,
+                                               const read_cluster& cluster) {
+    result.known_donors = 0;
+    result.known_acceptors = 0;
+    result.novel_donors = 0;
+    result.novel_acceptors = 0;
+
+    for (const auto& junction : cluster.consensus_junctions) {
+        // Donor = 5' end of intron (end of exon)
+        if (is_known_donor(cluster.seqid, junction.donor)) {
+            result.known_donors++;
+        } else {
+            result.novel_donors++;
+        }
+
+        // Acceptor = 3' end of intron (start of next exon)
+        if (is_known_acceptor(cluster.seqid, junction.acceptor)) {
+            result.known_acceptors++;
+        } else {
+            result.novel_acceptors++;
+        }
+    }
+}
+
+bool transcript_matcher::has_intron_retention(const read_cluster& cluster,
+                                               const std::vector<key_ptr>& ref_chain) {
+    // Intron retention: query spans an intron without the junction
+    auto ref_junctions = extract_reference_junctions(ref_chain);
+
+    for (const auto& ref_junc : ref_junctions) {
+        // Check if query spans this intron
+        if (cluster.start < ref_junc.donor && cluster.end > ref_junc.acceptor) {
+            // Query spans the intron region - check if junction is present
+            bool has_junction = false;
+            for (const auto& query_junc : cluster.consensus_junctions) {
+                if (query_junc.matches(ref_junc, cfg_.junction_tolerance)) {
+                    has_junction = true;
+                    break;
+                }
+            }
+            if (!has_junction) {
+                return true;  // Intron retention detected
+            }
+        }
+    }
+    return false;
 }
 
 std::vector<match_result> transcript_matcher::match_batch(
@@ -145,27 +415,81 @@ std::vector<match_result> transcript_matcher::match_batch(
 }
 
 void transcript_matcher::update_grove(const read_cluster& cluster,
-                                       const match_result& result) {
+                                       const match_result& result,
+                                       bool add_novel) {
     if (result.has_match()) {
         // Add read support to matched segments
         for (key_ptr seg_key : result.matched_segments) {
             if (is_segment(seg_key->get_data())) {
                 auto& seg = get_segment(seg_key->get_data());
-                // Add representative read ID
                 if (const auto* rep = cluster.get_representative()) {
                     seg.add_read_support(rep->read_id);
                 }
-                // Or add cluster ID
-                // seg.add_read_support(cluster.cluster_id);
                 stats_.segments_updated++;
             }
         }
-    } else if (result.is_novel()) {
-        // Create discovered segment for novel patterns
+    }
+
+    // Create discovered segment for novel patterns if requested
+    if (add_novel && result.is_novel()) {
         key_ptr new_seg = create_discovered_segment(cluster);
         if (new_seg != nullptr) {
             stats_.segments_created++;
         }
+    }
+}
+
+void transcript_matcher::update_stats(const match_result& result) {
+    switch (result.category) {
+        case structural_category::FSM:
+            stats_.fsm_matches++;
+            break;
+        case structural_category::ISM:
+            stats_.ism_matches++;
+            switch (result.subcat.ism) {
+                case ism_subcategory::PREFIX: stats_.ism_prefix++; break;
+                case ism_subcategory::SUFFIX: stats_.ism_suffix++; break;
+                case ism_subcategory::INTERNAL: stats_.ism_internal++; break;
+                case ism_subcategory::MONO_EXON: stats_.ism_mono_exon++; break;
+                default: break;
+            }
+            break;
+        case structural_category::NIC:
+            stats_.nic_matches++;
+            switch (result.subcat.nic) {
+                case nic_subcategory::COMBINATION: stats_.nic_combination++; break;
+                case nic_subcategory::INTRON_RETENTION: stats_.nic_intron_retention++; break;
+                case nic_subcategory::ALT_3PRIME: stats_.nic_alt_3prime++; break;
+                case nic_subcategory::ALT_5PRIME: stats_.nic_alt_5prime++; break;
+                case nic_subcategory::EXON_SKIPPING: stats_.nic_exon_skipping++; break;
+                default: break;
+            }
+            break;
+        case structural_category::NNC:
+            stats_.nnc_matches++;
+            switch (result.subcat.nnc) {
+                case nnc_subcategory::NOVEL_DONOR: stats_.nnc_novel_donor++; break;
+                case nnc_subcategory::NOVEL_ACCEPTOR: stats_.nnc_novel_acceptor++; break;
+                case nnc_subcategory::NOVEL_BOTH: stats_.nnc_novel_both++; break;
+                case nnc_subcategory::NOVEL_EXON: stats_.nnc_novel_exon++; break;
+                default: break;
+            }
+            break;
+        case structural_category::GENIC_INTRON:
+            stats_.genic_intron_matches++;
+            break;
+        case structural_category::GENIC_GENOMIC:
+            stats_.genic_genomic_matches++;
+            break;
+        case structural_category::ANTISENSE:
+            stats_.antisense_matches++;
+            break;
+        case structural_category::INTERGENIC:
+            stats_.intergenic_matches++;
+            break;
+        case structural_category::AMBIGUOUS:
+            stats_.ambiguous_matches++;
+            break;
     }
 }
 
@@ -233,7 +557,6 @@ double transcript_matcher::score_junction_match(
 
     if (cluster.consensus_junctions.empty()) {
         // Single-exon read - check if it fits within one exon
-        // or spans appropriately
         return exon_chain.size() >= 1 ? 1.0 : 0.0;
     }
 
@@ -257,43 +580,6 @@ double transcript_matcher::score_junction_match(
 
     return static_cast<double>(matches) /
            static_cast<double>(cluster.consensus_junctions.size());
-}
-
-match_result::match_type transcript_matcher::classify_match(
-    const read_cluster& cluster,
-    const std::vector<key_ptr>& best_chain,
-    double best_score) {
-
-    // Perfect junction match
-    if (best_score >= 0.999) {
-        return match_result::match_type::EXACT;
-    }
-
-    // Good but not perfect - check for novel junctions
-    if (best_score >= cfg_.min_junction_score) {
-        auto novel = find_novel_junctions(cluster, best_chain);
-        if (!novel.empty()) {
-            return match_result::match_type::NOVEL_JUNCTION;
-        }
-        return match_result::match_type::COMPATIBLE;
-    }
-
-    // Lower score - check if boundaries extend beyond known exons
-    if (best_score > 0.0) {
-        // Check if cluster extends beyond exon boundaries
-        if (!best_chain.empty()) {
-            const auto& first_exon = best_chain.front()->get_value();
-            const auto& last_exon = best_chain.back()->get_value();
-
-            if (cluster.start < first_exon.get_start() ||
-                cluster.end > last_exon.get_end()) {
-                return match_result::match_type::NOVEL_EXON;
-            }
-        }
-        return match_result::match_type::COMPATIBLE;
-    }
-
-    return match_result::match_type::INTERGENIC;
 }
 
 std::vector<splice_junction> transcript_matcher::find_novel_junctions(
@@ -370,20 +656,8 @@ std::vector<splice_junction> transcript_matcher::extract_reference_junctions(
 // ============================================================================
 
 namespace {
-    std::string match_type_to_string(match_result::match_type type) {
-        switch (type) {
-            case match_result::match_type::EXACT: return "EXACT";
-            case match_result::match_type::COMPATIBLE: return "COMPATIBLE";
-            case match_result::match_type::NOVEL_JUNCTION: return "NOVEL_JUNCTION";
-            case match_result::match_type::NOVEL_EXON: return "NOVEL_EXON";
-            case match_result::match_type::INTERGENIC: return "INTERGENIC";
-            case match_result::match_type::AMBIGUOUS: return "AMBIGUOUS";
-            default: return "UNKNOWN";
-        }
-    }
-
     std::string join_strings(const std::vector<std::string>& strs, const std::string& sep) {
-        if (strs.empty()) return "";
+        if (strs.empty()) return ".";
         std::ostringstream ss;
         for (size_t i = 0; i < strs.size(); ++i) {
             if (i > 0) ss << sep;
@@ -393,7 +667,7 @@ namespace {
     }
 
     std::string junctions_to_string(const std::vector<splice_junction>& junctions) {
-        if (junctions.empty()) return "";
+        if (junctions.empty()) return ".";
         std::ostringstream ss;
         for (size_t i = 0; i < junctions.size(); ++i) {
             if (i > 0) ss << ",";
@@ -412,21 +686,29 @@ void transcript_matcher::write_results(const std::string& filepath,
         return;
     }
 
-    // Header
-    out << "cluster_id\t"
-        << "seqid\t"
+    // SQANTI-like header
+    out << "isoform\t"
+        << "chrom\t"
         << "strand\t"
-        << "start\t"
-        << "end\t"
-        << "read_count\t"
-        << "exon_count\t"
+        << "length\t"
+        << "exons\t"
+        << "structural_category\t"
+        << "subcategory\t"
+        << "associated_gene\t"
+        << "associated_transcript\t"
+        << "ref_length\t"
+        << "ref_exons\t"
         << "junctions\t"
-        << "match_type\t"
-        << "junction_score\t"
+        << "junction_match_score\t"
         << "matching_junctions\t"
-        << "total_junctions\t"
-        << "transcript_ids\t"
+        << "query_junctions\t"
+        << "ref_junctions\t"
+        << "known_donors\t"
+        << "known_acceptors\t"
+        << "novel_donors\t"
+        << "novel_acceptors\t"
         << "novel_junctions\t"
+        << "read_count\t"
         << "representative_read\n";
 
     for (size_t i = 0; i < clusters.size(); ++i) {
@@ -434,22 +716,31 @@ void transcript_matcher::write_results(const std::string& filepath,
         const auto& result = results[i];
 
         const auto* rep = cluster.get_representative();
-        std::string rep_id = rep ? rep->read_id : "";
+        std::string rep_id = rep ? rep->read_id : ".";
+        size_t length = cluster.end - cluster.start;
 
         out << cluster.cluster_id << "\t"
             << cluster.seqid << "\t"
             << cluster.strand << "\t"
-            << cluster.start << "\t"
-            << cluster.end << "\t"
-            << cluster.read_count() << "\t"
+            << length << "\t"
             << (cluster.consensus_junctions.size() + 1) << "\t"
+            << to_string(result.category) << "\t"
+            << result.subcat.to_string() << "\t"
+            << result.reference_gene.value_or(".") << "\t"
+            << result.reference_transcript.value_or(".") << "\t"
+            << ".\t"  // ref_length - would need lookup
+            << (result.total_ref_junctions + 1) << "\t"
             << junctions_to_string(cluster.consensus_junctions) << "\t"
-            << match_type_to_string(result.type) << "\t"
             << result.junction_match_score << "\t"
             << result.matching_junctions << "\t"
-            << result.total_junctions << "\t"
-            << join_strings(result.matched_transcript_ids, ",") << "\t"
+            << result.total_query_junctions << "\t"
+            << result.total_ref_junctions << "\t"
+            << result.known_donors << "\t"
+            << result.known_acceptors << "\t"
+            << result.novel_donors << "\t"
+            << result.novel_acceptors << "\t"
             << junctions_to_string(result.novel_junctions) << "\t"
+            << cluster.read_count() << "\t"
             << rep_id << "\n";
     }
 
@@ -464,35 +755,57 @@ void transcript_matcher::write_summary(const std::string& filepath) const {
         return;
     }
 
-    out << "# Atroplex Transcript Matching Summary\n\n";
+    out << "# Atroplex Transcript Classification Summary (SQANTI-like)\n\n";
 
-    out << "## Match Statistics\n";
-    out << "Total clusters matched: " << stats_.total_matches << "\n";
-    out << "Exact matches: " << stats_.exact_matches << "\n";
-    out << "Compatible matches: " << stats_.compatible_matches << "\n";
-    out << "Novel junction: " << stats_.novel_junction_matches << "\n";
-    out << "Novel exon: " << stats_.novel_exon_matches << "\n";
-    out << "Intergenic: " << stats_.intergenic_matches << "\n";
-    out << "Ambiguous: " << stats_.ambiguous_matches << "\n";
-    out << "\n";
+    out << "## Structural Categories\n";
+    out << "Total clusters: " << stats_.total_matches << "\n\n";
 
-    out << "## Grove Updates\n";
+    auto pct = [this](size_t count) {
+        if (stats_.total_matches == 0) return 0.0;
+        return 100.0 * static_cast<double>(count) / static_cast<double>(stats_.total_matches);
+    };
+
+    out << "FSM (Full Splice Match): " << stats_.fsm_matches
+        << " (" << pct(stats_.fsm_matches) << "%)\n";
+    out << "ISM (Incomplete Splice Match): " << stats_.ism_matches
+        << " (" << pct(stats_.ism_matches) << "%)\n";
+    out << "NIC (Novel In Catalog): " << stats_.nic_matches
+        << " (" << pct(stats_.nic_matches) << "%)\n";
+    out << "NNC (Novel Not in Catalog): " << stats_.nnc_matches
+        << " (" << pct(stats_.nnc_matches) << "%)\n";
+    out << "Genic Intron: " << stats_.genic_intron_matches
+        << " (" << pct(stats_.genic_intron_matches) << "%)\n";
+    out << "Genic Genomic: " << stats_.genic_genomic_matches
+        << " (" << pct(stats_.genic_genomic_matches) << "%)\n";
+    out << "Antisense: " << stats_.antisense_matches
+        << " (" << pct(stats_.antisense_matches) << "%)\n";
+    out << "Intergenic: " << stats_.intergenic_matches
+        << " (" << pct(stats_.intergenic_matches) << "%)\n";
+    out << "Ambiguous: " << stats_.ambiguous_matches
+        << " (" << pct(stats_.ambiguous_matches) << "%)\n";
+
+    out << "\n## ISM Subcategories\n";
+    out << "5' fragment (prefix): " << stats_.ism_prefix << "\n";
+    out << "3' fragment (suffix): " << stats_.ism_suffix << "\n";
+    out << "Internal fragment: " << stats_.ism_internal << "\n";
+    out << "Mono-exon: " << stats_.ism_mono_exon << "\n";
+
+    out << "\n## NIC Subcategories\n";
+    out << "Combination: " << stats_.nic_combination << "\n";
+    out << "Intron retention: " << stats_.nic_intron_retention << "\n";
+    out << "Alternative 3' end: " << stats_.nic_alt_3prime << "\n";
+    out << "Alternative 5' end: " << stats_.nic_alt_5prime << "\n";
+    out << "Exon skipping: " << stats_.nic_exon_skipping << "\n";
+
+    out << "\n## NNC Subcategories\n";
+    out << "Novel donor: " << stats_.nnc_novel_donor << "\n";
+    out << "Novel acceptor: " << stats_.nnc_novel_acceptor << "\n";
+    out << "Novel donor + acceptor: " << stats_.nnc_novel_both << "\n";
+    out << "Novel exon: " << stats_.nnc_novel_exon << "\n";
+
+    out << "\n## Grove Updates\n";
     out << "Segments updated with read support: " << stats_.segments_updated << "\n";
     out << "Novel segments created: " << stats_.segments_created << "\n";
-
-    // Calculate percentages
-    if (stats_.total_matches > 0) {
-        out << "\n## Match Type Distribution\n";
-        auto pct = [this](size_t count) {
-            return 100.0 * static_cast<double>(count) / static_cast<double>(stats_.total_matches);
-        };
-        out << "Exact: " << pct(stats_.exact_matches) << "%\n";
-        out << "Compatible: " << pct(stats_.compatible_matches) << "%\n";
-        out << "Novel junction: " << pct(stats_.novel_junction_matches) << "%\n";
-        out << "Novel exon: " << pct(stats_.novel_exon_matches) << "%\n";
-        out << "Intergenic: " << pct(stats_.intergenic_matches) << "%\n";
-        out << "Ambiguous: " << pct(stats_.ambiguous_matches) << "%\n";
-    }
 
     out.close();
     logging::info("Wrote summary to: " + filepath);
