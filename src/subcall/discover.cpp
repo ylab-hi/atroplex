@@ -13,7 +13,6 @@
 #include <filesystem>
 
 #include "utility.hpp"
-#include "builder.hpp"
 
 namespace gio = genogrove::io;
 
@@ -26,17 +25,6 @@ cxxopts::Options discover::parse_args(int argc, char** argv) {
     options.add_options("Input/Output")
         ("i,input", "Input BAM/SAM file with aligned reads",
             cxxopts::value<std::string>())
-        ("g,genogrove", "Pre-built genogrove index (.gg)",
-            cxxopts::value<std::string>())
-        ("b,build-from", "Build grove from annotation file(s) (GFF/GTF)",
-            cxxopts::value<std::vector<std::string>>())
-        ("o,output", "Output prefix (default: input basename)",
-            cxxopts::value<std::string>())
-        ;
-
-    options.add_options("Grove")
-        ("k,order", "Genogrove tree order",
-            cxxopts::value<int>()->default_value("3"))
         ;
 
     options.add_options("Pan-transcriptome")
@@ -105,22 +93,7 @@ void discover::validate(const cxxopts::ParseResult& args) {
 }
 
 void discover::execute(const cxxopts::ParseResult& args) {
-    apply_common_options(args);
-    logging::info("Starting transcript discovery pipeline...");
-
-    // Load or build grove
-    if (args.count("genogrove")) {
-        std::string gg_path = args["genogrove"].as<std::string>();
-        logging::info("Loading grove from: " + gg_path);
-        load_grove(gg_path);
-    }
-
-    if (args.count("build-from")) {
-        auto build_files = args["build-from"].as<std::vector<std::string>>();
-        int order = args["order"].as<int>();
-        uint32_t threads = args["threads"].as<uint32_t>();
-        build_grove(build_files, order, threads);
-    }
+    logging::info("Starting transcript discovery...");
 
     // Process reads if input provided
     if (args.count("input")) {
@@ -218,18 +191,10 @@ void discover::process_reads(const cxxopts::ParseResult& args) {
     logging::info("  Segments created: " + std::to_string(match_stats.segments_created));
 
     // Step 4: Write output files
-    std::string output_prefix;
-    if (args.count("output")) {
-        output_prefix = args["output"].as<std::string>();
-    } else {
-        std::filesystem::path p(input_path);
-        output_prefix = p.parent_path().string();
-        if (!output_prefix.empty()) output_prefix += "/";
-        output_prefix += p.stem().string();
-    }
-
-    std::string results_path = output_prefix + ".atroplex.tsv";
-    std::string summary_path = output_prefix + ".atroplex.summary.txt";
+    auto out_dir = resolve_output_dir(args, input_path);
+    std::string basename = std::filesystem::path(input_path).stem().string();
+    std::string results_path = (out_dir / (basename + ".atroplex.tsv")).string();
+    std::string summary_path = (out_dir / (basename + ".atroplex.summary.txt")).string();
 
     transcript_matcher::write_results(results_path, clusters, results);
     matcher.write_summary(summary_path);

@@ -1,13 +1,3 @@
-/*
- * SPDX-License-Identifier: GPLv3
- *
- * Copyright (c) 2025 Richard A. Schäfer
- *
- * This file is part of atroplex and is licensed under the terms of the GPLv3
- * license. See the LICENSE file in the root of the repository for more
- * information.
- */
-
 #include "read_cluster.hpp"
 
 #include <algorithm>

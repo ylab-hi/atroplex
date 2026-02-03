@@ -37,22 +37,21 @@ void showVersion(std::ostream& out) {
     out << "atroplex v" << atroplex_VERSION_MAJOR;
     out << "." << atroplex_VERSION_MINOR << ".";
     out << atroplex_VERSION_PATCH << " - ";
-    out << "Detect full-length transcripts from long-read ";
-    out << "sequencing data" << std::endl;
+    out << "Pan-transcriptome indexing and analysis toolkit" << std::endl;
 }
 
 void print_general_help(cxxopts::Options& options) {
     std::cout << options.help() << "\n";
     std::cout << "Subcommands:\n";
-    std::cout << "\tdiscover\tDetect transcripts from long-read sequencing data\n";
-    std::cout << "\tbuild\t\tBuild the genogrove index\n";
+    std::cout << "\tbuild\t\tBuild pan-transcriptome index from annotation sources\n";
     std::cout << "\tdtu\t\tDifferential transcript usage analysis\n";
+    std::cout << "\tdiscover\tDiscover novel transcripts from long-read data\n";
     std::cout << "\nFor subcommand help: atroplex <subcommand> --help\n";
 }
 
 int main(int argc, char** argv) {
     cxxopts::Options options("atroplex",
-            "Detect full-length transcripts from long-read sequencing data");
+            "Pan-transcriptome indexing and analysis toolkit");
 
     options.add_options()
         ("subcall", "The subcommand to run", cxxopts::value<std::string>())
@@ -104,8 +103,7 @@ int main(int argc, char** argv) {
             return 0;
         }
 
-        command->validate(subcall_args);
-        command->execute(subcall_args);
+        command->run(subcall_args);
 
     } catch (const cxxopts::exceptions::exception& e) {
         std::cerr << "Error: " << e.what() << std::endl;

@@ -46,8 +46,6 @@ cxxopts::Options dtu::parse_args(int argc, char** argv) {
             cxxopts::value<std::string>())
         ("q,quantifications", "Directory with pre-computed quantification files",
             cxxopts::value<std::string>())
-        ("o,output", "Output prefix for results",
-            cxxopts::value<std::string>()->default_value("dtu_results"))
         ;
 
     options.add_options("Analysis")
@@ -66,15 +64,6 @@ cxxopts::Options dtu::parse_args(int argc, char** argv) {
             cxxopts::value<uint32_t>()->default_value("2"))
         ("fdr", "FDR threshold for significance",
             cxxopts::value<double>()->default_value("0.05"))
-        ;
-
-    options.add_options("Grove (for quantification)")
-        ("g,genogrove", "Pre-built genogrove index (.gg)",
-            cxxopts::value<std::string>())
-        ("b,build-from", "Build grove from annotation (GFF/GTF)",
-            cxxopts::value<std::vector<std::string>>())
-        ("k,order", "Genogrove tree order",
-            cxxopts::value<int>()->default_value("3"))
         ;
 
     add_common_options(options);
@@ -98,11 +87,11 @@ void dtu::validate(const cxxopts::ParseResult& args) {
 }
 
 void dtu::execute(const cxxopts::ParseResult& args) {
-    apply_common_options(args);
     logging::info("Starting DTU analysis...");
 
     std::string manifest_path = args["manifest"].as<std::string>();
-    std::string output_prefix = args["output"].as<std::string>();
+    auto out_dir = resolve_output_dir(args, manifest_path);
+    std::string output_prefix = (out_dir / "dtu_results").string();
     double fdr_threshold = args["fdr"].as<double>();
 
     // Parse contrasts
@@ -236,20 +225,9 @@ std::vector<dtu_sample> dtu::load_manifest(const std::string& path) {
 }
 
 void dtu::quantify_samples(const cxxopts::ParseResult& args) {
-    // Load grove if needed
     if (!grove) {
-        if (args.count("genogrove")) {
-            std::string gg_path = args["genogrove"].as<std::string>();
-            load_grove(gg_path);
-        } else if (args.count("build-from")) {
-            auto build_files = args["build-from"].as<std::vector<std::string>>();
-            int order = args["order"].as<int>();
-            uint32_t threads = args["threads"].as<uint32_t>();
-            build_grove(build_files, order, threads);
-        } else {
-            throw std::runtime_error("Grove required for quantification. "
-                                     "Use --genogrove or --build-from");
-        }
+        throw std::runtime_error("Grove required for quantification. "
+                                 "Use --genogrove or --build-from");
     }
 
     // TODO: Implement per-sample quantification using transcript_matcher
