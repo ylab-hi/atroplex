@@ -31,8 +31,7 @@ namespace gio = genogrove::io;
  * Stateless builder that operates on grove references.
  * Supports:
  * - Initial construction from GFF/GTF annotation files
- * - Automatic metadata extraction from file headers (GENCODE, Ensembl)
- * - Pan-transcriptome builds with sample tracking
+ * - Pan-transcriptome builds with sample tracking via manifest
  * - Extension with discovered transcripts (Phase 3)
  * - Addition of fusion segments (Phase 3)
  * - Future: BED, BAM, or other interval-based formats
@@ -40,11 +39,23 @@ namespace gio = genogrove::io;
 class builder {
 public:
     /**
-     * Build genogrove from multiple input files
-     * Automatically:
-     * - Detects file types and dispatches to appropriate builders
-     * - Parses file headers to extract metadata (GENCODE version, genome build, etc.)
-     * - Registers sample_info in the registry for provenance tracking
+     * Build genogrove from sample_info entries (primary entry point)
+     * Use this with sample_manifest for full metadata support.
+     *
+     * @param grove Reference to grove to populate
+     * @param samples Vector of sample_info with metadata (from manifest or programmatic)
+     * @param threads Number of threads (reserved for future use, currently ignored)
+     */
+    static void build_from_samples(
+        grove_type& grove,
+        const std::vector<sample_info>& samples,
+        uint32_t threads = 1
+    );
+
+    /**
+     * Build genogrove from file paths (convenience wrapper)
+     * Creates minimal sample_info with just source_file and auto-generated ID.
+     * For full metadata support, use build_from_samples() with a manifest.
      *
      * @param grove Reference to grove to populate
      * @param files Vector of file paths to process

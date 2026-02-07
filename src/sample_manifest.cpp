@@ -127,6 +127,15 @@ sample_info sample_manifest::parse_row(
         info.id = info.source_file.stem().string();
     }
 
+    // Type (default: "sample")
+    std::string type_val = get_field("type");
+    if (!type_val.empty()) {
+        info.type = to_lower(type_val);
+    }
+
+    // Description
+    info.description = get_field("description");
+
     // Biological metadata
     info.assay = get_field("assay");
     info.biosample_type = get_field("biosample_type");
@@ -179,27 +188,28 @@ void sample_manifest::write_template(const std::filesystem::path& output_path,
     }
 
     // Write header with all supported columns
-    file << "file\tid\tassay\tbiosample_type\tbiosample\tcondition\ttreatment\t"
+    file << "file\tid\ttype\tassay\tbiosample_type\tbiosample\tcondition\ttreatment\t"
          << "species\treplication_type\tplatform\tpipeline\tpipeline_version\t"
-         << "annotation_source\tannotation_version\tsource_url\tpublication\n";
+         << "annotation_source\tannotation_version\tsource_url\tpublication\tdescription\n";
 
     if (include_examples) {
         // Reference annotation example
-        file << "gencode.v44.gtf\tGENCODE_v44\t.\t.\t.\t.\t.\t"
+        file << "gencode.v44.gtf\tGENCODE_v44\tannotation\t.\t.\t.\t.\t.\t"
              << "Homo sapiens\t.\t.\t.\t.\t"
-             << "GENCODE\tv44\thttps://www.gencodegenes.org\t.\n";
+             << "GENCODE\tv44\thttps://www.gencodegenes.org\t.\t"
+             << "Evidence-based annotation of the human genome (GRCh38)\n";
 
         // Sample assembly examples
-        file << "brain_tumor_rep1.gtf\tBT_rep1\tRNA-seq\ttissue\tbrain\ttumor\t.\t"
+        file << "brain_tumor_rep1.gtf\tBT_rep1\tsample\tRNA-seq\ttissue\tbrain\ttumor\t.\t"
              << "Homo sapiens\tbiological\tPacBio Sequel II\tStringTie\tv2.2.1\t"
-             << ".\t.\t.\t.\n";
+             << ".\t.\t.\t.\t.\n";
 
-        file << "brain_normal_rep1.gtf\tBN_rep1\tRNA-seq\ttissue\tbrain\thealthy\t.\t"
+        file << "brain_normal_rep1.gtf\tBN_rep1\tsample\tRNA-seq\ttissue\tbrain\thealthy\t.\t"
              << "Homo sapiens\tbiological\tPacBio Sequel II\tStringTie\tv2.2.1\t"
-             << ".\t.\t.\t.\n";
+             << ".\t.\t.\t.\t.\n";
 
-        file << "hela_treated.gtf\tHeLa_dex\tRNA-seq\tcell line\tHeLa\ttreated\tdexamethasone 100nM 1h\t"
+        file << "hela_treated.gtf\tHeLa_dex\tsample\tRNA-seq\tcell line\tHeLa\ttreated\tdexamethasone 100nM 1h\t"
              << "Homo sapiens\t.\tONT PromethION\tFLAIR\tv2.0\t"
-             << ".\t.\t.\t.\n";
+             << ".\t.\t.\t.\t.\n";
     }
 }

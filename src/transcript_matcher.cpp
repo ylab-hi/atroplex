@@ -607,7 +607,8 @@ std::vector<splice_junction> transcript_matcher::find_novel_junctions(
 
 key_ptr transcript_matcher::create_discovered_segment(const read_cluster& cluster) {
     // Build segment feature for discovered pattern
-    segment_feature new_segment(segment_feature::source_type::DISCOVERED);
+    segment_feature new_segment;
+    new_segment.add_source("atroplex");  // Mark as discovered by atroplex
 
     std::ostringstream id_ss;
     id_ss << "DISC_" << cluster.seqid << "_" << cluster.start << "_" << cluster.end;

@@ -27,17 +27,6 @@ cxxopts::Options discover::parse_args(int argc, char** argv) {
             cxxopts::value<std::string>())
         ;
 
-    options.add_options("Pan-transcriptome")
-        ("sample-manifest", "TSV file with sample metadata (sample_id, file, tissue, condition, ...)",
-            cxxopts::value<std::string>())
-        ("sample-id", "Sample identifier for single-sample analysis",
-            cxxopts::value<std::string>())
-        ("tissue", "Tissue type for single-sample analysis",
-            cxxopts::value<std::string>())
-        ("condition", "Condition for single-sample analysis",
-            cxxopts::value<std::string>())
-        ;
-
     options.add_options("Clustering")
         ("junction-bin", "Bin size for fuzzy junction clustering (bp)",
             cxxopts::value<int>()->default_value("10"))
@@ -68,9 +57,9 @@ cxxopts::Options discover::parse_args(int argc, char** argv) {
 }
 
 void discover::validate(const cxxopts::ParseResult& args) {
-    // Must have either genogrove or build-from
-    if (!args.count("genogrove") && !args.count("build-from")) {
-        throw std::runtime_error("Must provide --genogrove or --build-from");
+    // Must have a grove source
+    if (!args.count("genogrove") && !args.count("build-from") && !args.count("manifest")) {
+        throw std::runtime_error("Must provide -g/--genogrove, -m/--manifest, or -b/--build-from");
     }
 
     // If input provided, check it exists
@@ -78,6 +67,14 @@ void discover::validate(const cxxopts::ParseResult& args) {
         std::string input = args["input"].as<std::string>();
         if (!std::filesystem::exists(input)) {
             throw std::runtime_error("Input file not found: " + input);
+        }
+    }
+
+    // Check manifest file exists
+    if (args.count("manifest")) {
+        std::string manifest_path = args["manifest"].as<std::string>();
+        if (!std::filesystem::exists(manifest_path)) {
+            throw std::runtime_error("Manifest file not found: " + manifest_path);
         }
     }
 

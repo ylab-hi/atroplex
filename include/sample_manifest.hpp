@@ -36,6 +36,7 @@
  *
  *   IDENTIFIERS:
  *     id                Sample identifier (auto-generated from filename if empty)
+ *     description       Free-text description of the sample/annotation
  *
  *   BIOLOGICAL (ENCODE-aligned):
  *     assay             Experimental assay (RNA-seq, CAGE, polyA RNA-seq, etc.)

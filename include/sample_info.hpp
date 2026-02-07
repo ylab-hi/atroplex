@@ -26,8 +26,48 @@ namespace gdt = genogrove::data_type;
 /**
  * Sample metadata for pan-transcriptome tracking
  *
- * Stores information about each sample/annotation source.
+ * Stores information about each input file (annotation or biological sample).
+ * In the pan-transcriptome context, both reference annotations and sample
+ * assemblies are treated as "samples" of the transcriptome.
+ *
  * Designed to be stored in genogrove's data_registry.
+ *
+ * Field descriptions aligned with ENCODE standards:
+ * https://www.encodeproject.org/data-standards/
+ *
+ * Core fields:
+ *   - id: Unique identifier (auto-generated from file metadata or user-provided)
+ *   - description: Free-text description of the sample/annotation
+ *   - source_file: Path to the input file
+ *
+ * Biological metadata (ENCODE-aligned):
+ *   - assay: Experimental assay (e.g., "RNA-seq", "CAGE", "polyA RNA-seq")
+ *   - biosample_type: Type of sample (e.g., "tissue", "cell line", "primary cell")
+ *   - biosample: Specific biosample (e.g., "brain", "HeLa", "GM12878")
+ *   - condition: Experimental condition (e.g., "tumor", "healthy", "treated")
+ *   - treatment: Treatment applied (e.g., "dexamethasone 100nM 1h")
+ *   - species: Species (e.g., "Homo sapiens", "Mus musculus")
+ *   - replication_type: Replicate type (e.g., "biological", "technical", "isogenic")
+ *
+ * Technical/processing metadata:
+ *   - platform: Sequencing platform (e.g., "Illumina NovaSeq", "PacBio Sequel II")
+ *   - pipeline: Analysis pipeline (e.g., "GENCODE", "StringTie", "ENCODE long-read")
+ *   - pipeline_version: Pipeline version (e.g., "v3.2.1")
+ *
+ * Annotation metadata (for reference annotations):
+ *   - annotation_source: Source database (e.g., "GENCODE", "Ensembl", "RefSeq")
+ *   - annotation_version: Version string (e.g., "v44", "release 110")
+ *
+ * Links:
+ *   - source_url: URL to original data (e.g., ENCODE portal, GEO accession)
+ *   - publication: Publication DOI or reference
+ *
+ * Expression (optional override for GFF attribute parsing):
+ *   - expr_type: Which expression attribute to parse from GFF (TPM, FPKM, etc.)
+ *                If UNKNOWN, auto-detects from available GFF attributes
+ *
+ * Flexible key-value storage:
+ *   - attributes: Map for any additional metadata
  */
 struct sample_info {
     // Expression quantification types
@@ -41,21 +81,37 @@ struct sample_info {
     };
 
     // Core identifiers
-    std::string id;                     // Unique sample identifier
-    std::filesystem::path source_file;  // Original annotation file path
+    std::string id;                     // Unique identifier
+    std::string type = "sample";        // Entry type: "sample" or "annotation"
+    std::string description;            // Free-text description
+    std::filesystem::path source_file;  // Original input file path
 
-    // Biological metadata
-    std::string tissue;                 // e.g., "brain", "liver", "heart"
+    // Biological metadata (ENCODE-aligned)
+    std::string assay;                  // e.g., "RNA-seq", "CAGE", "polyA RNA-seq"
+    std::string biosample_type;         // e.g., "tissue", "cell line", "primary cell"
+    std::string biosample;              // e.g., "brain", "HeLa", "GM12878"
     std::string condition;              // e.g., "tumor", "healthy", "treated"
-    std::string species;                // e.g., "human", "mouse"
+    std::string treatment;              // e.g., "dexamethasone 100nM 1h"
+    std::string species;                // e.g., "Homo sapiens", "Mus musculus"
+    std::string replication_type;       // e.g., "biological", "technical", "isogenic"
 
-    // Technical metadata
+    // Technical/processing metadata
+    std::string platform;               // e.g., "Illumina NovaSeq", "PacBio Sequel II"
+    std::string pipeline;               // e.g., "GENCODE", "StringTie", "ENCODE long-read"
+    std::string pipeline_version;       // e.g., "v3.2.1"
+
+    // Annotation metadata (for reference annotations)
     std::string annotation_source;      // e.g., "GENCODE", "Ensembl", "RefSeq"
     std::string annotation_version;     // e.g., "v44", "release 110"
 
-    // Expression metadata
-    std::filesystem::path expression_file;  // TSV with feature_id -> expression
-    expression_type expr_type = expression_type::UNKNOWN;  // Quantification unit
+    // Links
+    std::string source_url;             // URL to original data
+    std::string publication;            // Publication DOI or reference
+
+    // Expression type override (optional)
+    // If UNKNOWN, auto-detect from GFF attributes (TPM, FPKM, cov, etc.)
+    // If set, only parse that specific attribute from GFF
+    expression_type expr_type = expression_type::UNKNOWN;
 
     // Extensible key-value attributes
     std::unordered_map<std::string, std::string> attributes;
@@ -70,8 +126,23 @@ struct sample_info {
         : id(std::move(sample_id)), source_file(std::move(file)) {}
 
     // Builder-style setters for fluent API
-    sample_info& with_tissue(std::string t) {
-        tissue = std::move(t);
+    sample_info& with_description(std::string d) {
+        description = std::move(d);
+        return *this;
+    }
+
+    sample_info& with_assay(std::string a) {
+        assay = std::move(a);
+        return *this;
+    }
+
+    sample_info& with_biosample_type(std::string bt) {
+        biosample_type = std::move(bt);
+        return *this;
+    }
+
+    sample_info& with_biosample(std::string b) {
+        biosample = std::move(b);
         return *this;
     }
 
@@ -80,8 +151,33 @@ struct sample_info {
         return *this;
     }
 
+    sample_info& with_treatment(std::string t) {
+        treatment = std::move(t);
+        return *this;
+    }
+
     sample_info& with_species(std::string s) {
         species = std::move(s);
+        return *this;
+    }
+
+    sample_info& with_replication_type(std::string rt) {
+        replication_type = std::move(rt);
+        return *this;
+    }
+
+    sample_info& with_platform(std::string p) {
+        platform = std::move(p);
+        return *this;
+    }
+
+    sample_info& with_pipeline(std::string p) {
+        pipeline = std::move(p);
+        return *this;
+    }
+
+    sample_info& with_pipeline_version(std::string pv) {
+        pipeline_version = std::move(pv);
         return *this;
     }
 
@@ -95,8 +191,13 @@ struct sample_info {
         return *this;
     }
 
-    sample_info& with_expression_file(std::filesystem::path path) {
-        expression_file = std::move(path);
+    sample_info& with_source_url(std::string url) {
+        source_url = std::move(url);
+        return *this;
+    }
+
+    sample_info& with_publication(std::string pub) {
+        publication = std::move(pub);
         return *this;
     }
 
@@ -111,8 +212,16 @@ struct sample_info {
     }
 
     // Accessors
-    bool has_expression_data() const {
-        return !expression_file.empty();
+    bool has_expression_type() const {
+        return expr_type != expression_type::UNKNOWN;
+    }
+
+    bool is_annotation() const {
+        return !annotation_source.empty() || !annotation_version.empty();
+    }
+
+    bool is_sample() const {
+        return !biosample.empty() || !assay.empty();
     }
 
     std::string get_attribute(const std::string& key,
@@ -124,27 +233,45 @@ struct sample_info {
     // --- Serialization for data_registry ---
 
     void serialize(std::ostream& os) const {
-        // Helper to write strings
         auto write_string = [&os](const std::string& s) {
             size_t len = s.size();
             os.write(reinterpret_cast<const char*>(&len), sizeof(len));
-            os.write(s.data(), len);
+            os.write(s.data(), static_cast<std::streamsize>(len));
         };
 
-        auto write_path = [&os, &write_string](const std::filesystem::path& p) {
+        auto write_path = [&write_string](const std::filesystem::path& p) {
             write_string(p.string());
         };
 
+        // Core
         write_string(id);
+        write_string(type);
+        write_string(description);
         write_path(source_file);
-        write_string(tissue);
+
+        // Biological
+        write_string(assay);
+        write_string(biosample_type);
+        write_string(biosample);
         write_string(condition);
+        write_string(treatment);
         write_string(species);
+        write_string(replication_type);
+
+        // Technical
+        write_string(platform);
+        write_string(pipeline);
+        write_string(pipeline_version);
+
+        // Annotation
         write_string(annotation_source);
         write_string(annotation_version);
-        write_path(expression_file);
 
-        // Expression type (as underlying int)
+        // Links
+        write_string(source_url);
+        write_string(publication);
+
+        // Expression type
         auto expr_int = static_cast<std::underlying_type_t<expression_type>>(expr_type);
         os.write(reinterpret_cast<const char*>(&expr_int), sizeof(expr_int));
 
@@ -158,12 +285,11 @@ struct sample_info {
     }
 
     static sample_info deserialize(std::istream& is) {
-        // Helper to read strings
         auto read_string = [&is]() -> std::string {
             size_t len;
             is.read(reinterpret_cast<char*>(&len), sizeof(len));
             std::string s(len, '\0');
-            is.read(s.data(), len);
+            is.read(s.data(), static_cast<std::streamsize>(len));
             return s;
         };
 
@@ -172,14 +298,34 @@ struct sample_info {
         };
 
         sample_info info;
+
+        // Core
         info.id = read_string();
+        info.type = read_string();
+        info.description = read_string();
         info.source_file = read_path();
-        info.tissue = read_string();
+
+        // Biological
+        info.assay = read_string();
+        info.biosample_type = read_string();
+        info.biosample = read_string();
         info.condition = read_string();
+        info.treatment = read_string();
         info.species = read_string();
+        info.replication_type = read_string();
+
+        // Technical
+        info.platform = read_string();
+        info.pipeline = read_string();
+        info.pipeline_version = read_string();
+
+        // Annotation
         info.annotation_source = read_string();
         info.annotation_version = read_string();
-        info.expression_file = read_path();
+
+        // Links
+        info.source_url = read_string();
+        info.publication = read_string();
 
         // Expression type
         std::underlying_type_t<expression_type> expr_int;

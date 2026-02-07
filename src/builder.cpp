@@ -41,11 +41,11 @@ static bool chromosome_compare(const std::string& a, const std::string& b) {
     return str_a < str_b;
 }
 
-void builder::build_from_files(grove_type& grove,
-                                const std::vector<std::string>& files,
-                                uint32_t threads) {
-    if (files.empty()) {
-        logging::warning("No files provided to build genogrove");
+void builder::build_from_samples(grove_type& grove,
+                                  const std::vector<sample_info>& samples,
+                                  uint32_t threads) {
+    if (samples.empty()) {
+        logging::warning("No samples provided to build genogrove");
         return;
     }
 
@@ -53,17 +53,19 @@ void builder::build_from_files(grove_type& grove,
         logging::info("Note: Multi-threading for build not yet optimized, using single thread");
     }
 
-    logging::info("Populating grove from " + std::to_string(files.size()) + " file(s)");
+    logging::info("Populating grove from " + std::to_string(samples.size()) + " sample(s)");
 
     // Chromosome-level caches for deduplication across files
     chromosome_exon_caches exon_caches;
     chromosome_segment_caches segment_caches;
     size_t segment_count = 0;
 
-    // Process each file sequentially
-    for (const auto& filepath : files) {
+    // Process each sample sequentially
+    for (const auto& info : samples) {
+        const auto& filepath = info.source_file;
+
         if (!std::filesystem::exists(filepath)) {
-            logging::error("File not found: " + filepath);
+            logging::error("File not found: " + filepath.string());
             continue;
         }
 
@@ -73,18 +75,16 @@ void builder::build_from_files(grove_type& grove,
 
         // Dispatch to appropriate builder based on file type
         if (ftype == gio::filetype::GFF || ftype == gio::filetype::GTF) {
-            logging::info("Processing GFF/GTF file: " + filepath);
+            logging::info("Processing GFF/GTF file: " + filepath.string() +
+                         (info.id.empty() ? "" : " (id: " + info.id + ")"));
 
-            // Parse header to extract metadata and create sample_info
-            sample_info info = build_gff::parse_header(filepath);
-
-            // Register in the registry to get uint32_t ID
-            uint32_t registry_id = sample_registry::instance().register_data(std::move(info));
+            // Register sample_info in the registry to get uint32_t ID
+            uint32_t registry_id = sample_registry::instance().register_data(info);
 
             // Build with persistent caches for cross-file deduplication
             build_gff::build(grove, filepath, registry_id, exon_caches, segment_caches, segment_count, threads);
         } else {
-            logging::warning("Unsupported file type for: " + filepath);
+            logging::warning("Unsupported file type for: " + filepath.string());
         }
     }
 
@@ -106,4 +106,20 @@ void builder::build_from_files(grove_type& grove,
             std::to_string(exon_count) + " exons, " +
             std::to_string(seg_count) + " segments");
     }
+}
+
+void builder::build_from_files(grove_type& grove,
+                                const std::vector<std::string>& files,
+                                uint32_t threads) {
+    // Parse headers to extract metadata from each file
+    std::vector<sample_info> samples;
+    samples.reserve(files.size());
+
+    for (const auto& filepath : files) {
+        // Parse metadata from GFF/GTF header (#property: value format)
+        sample_info info = build_gff::parse_header(filepath);
+        samples.push_back(std::move(info));
+    }
+
+    build_from_samples(grove, samples, threads);
 }

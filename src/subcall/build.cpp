@@ -26,23 +26,40 @@ cxxopts::Options build::parse_args(int argc, char** argv) {
 }
 
 void build::validate(const cxxopts::ParseResult& args) {
-    if (!args.count("build-from")) {
-        throw std::runtime_error("No annotation files specified. Use -b/--build-from");
+    if (!args.count("build-from") && !args.count("manifest")) {
+        throw std::runtime_error("No input specified. Use -m/--manifest or -b/--build-from");
+    }
+
+    // Check manifest file exists
+    if (args.count("manifest")) {
+        std::string manifest_path = args["manifest"].as<std::string>();
+        if (!std::filesystem::exists(manifest_path)) {
+            throw std::runtime_error("Manifest file not found: " + manifest_path);
+        }
     }
 
     // Check build-from files exist
-    auto files = args["build-from"].as<std::vector<std::string>>();
-    for (const auto& f : files) {
-        if (!std::filesystem::exists(f)) {
-            throw std::runtime_error("Annotation file not found: " + f);
+    if (args.count("build-from")) {
+        auto files = args["build-from"].as<std::vector<std::string>>();
+        for (const auto& f : files) {
+            if (!std::filesystem::exists(f)) {
+                throw std::runtime_error("Annotation file not found: " + f);
+            }
         }
     }
 }
 
 void build::execute(const cxxopts::ParseResult& args) {
-    auto build_files = args["build-from"].as<std::vector<std::string>>();
-    auto out_dir = resolve_output_dir(args, build_files.front());
-    std::string basename = std::filesystem::path(build_files.front()).stem().string();
+    // Determine output path from first input source
+    std::string first_input;
+    if (args.count("manifest")) {
+        first_input = args["manifest"].as<std::string>();
+    } else if (args.count("build-from")) {
+        first_input = args["build-from"].as<std::vector<std::string>>().front();
+    }
+
+    auto out_dir = resolve_output_dir(args, first_input);
+    std::string basename = std::filesystem::path(first_input).stem().string();
     std::string output_path = (out_dir / (basename + ".gg")).string();
 
     // Grove already built by setup_grove()

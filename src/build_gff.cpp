@@ -14,7 +14,6 @@
 #include <map>
 #include <unordered_map>
 #include <algorithm>
-#include <regex>
 #include <mutex>
 
 // class
@@ -128,13 +127,34 @@ void build_gff::process_transcript(
         return;
     }
 
+    // Extract expression from transcript-level entry (counts, TPM, FPKM)
+    float expression_value = -1.0f;
+    for (const auto& entry : transcript_entries) {
+        if (entry.type == "transcript") {
+            // Auto-detect expression attribute (priority order)
+            for (const auto& attr_name : {"counts", "TPM", "FPKM", "RPKM", "cov"}) {
+                auto it = entry.attributes.find(attr_name);
+                if (it != entry.attributes.end()) {
+                    try {
+                        expression_value = std::stof(it->second);
+                    } catch (...) {}
+                    break;
+                }
+            }
+            break;
+        }
+    }
+
     // Step 2: Insert or reuse exons, collecting keys and coordinates
     std::vector<key_ptr> exon_chain;
     std::vector<gdt::genomic_coordinate> exon_coords;
 
+    // Extract GFF source from first exon (column 2 - e.g., HAVANA, ENSEMBL, StringTie)
+    std::string gff_source = sorted_exons.front().source;
+
     for (const auto& exon_entry : sorted_exons) {
         key_ptr exon_key = insert_exon(
-            grove, grove_mutex, exon_entry, transcript_id, exon_cache, sample_id
+            grove, grove_mutex, exon_entry, transcript_id, exon_cache, sample_id, gff_source
         );
         exon_chain.push_back(exon_key);
 
@@ -151,7 +171,8 @@ void build_gff::process_transcript(
     // Step 4: Create or reuse segment
     create_segment(
         grove, grove_mutex, transcript_id, sorted_exons, exon_coords,
-        exon_chain, segment_cache, sample_id, segment_count
+        exon_chain, segment_cache, sample_id, gff_source, segment_count,
+        expression_value
     );
 }
 
@@ -189,7 +210,8 @@ key_ptr build_gff::insert_exon(
     const gio::gff_entry& exon_entry,
     const std::string& transcript_id,
     std::map<gdt::genomic_coordinate, key_ptr>& exon_cache,
-    std::optional<uint32_t> sample_id
+    std::optional<uint32_t> sample_id,
+    const std::string& gff_source
 ) {
     char strand = exon_entry.strand.value_or('+');
     gdt::genomic_coordinate coord(
@@ -200,12 +222,15 @@ key_ptr build_gff::insert_exon(
 
     auto cached = exon_cache.find(coord);
     if (cached != exon_cache.end()) {
-        // Reuse existing exon
+        // Reuse existing exon - add transcript, sample, and source
         key_ptr exon_key = cached->second;
         auto& exon = get_exon(exon_key->get_data());
         exon.transcript_ids.insert(transcript_id);
         if (sample_id.has_value()) {
             exon.add_sample(*sample_id);
+        }
+        if (!gff_source.empty()) {
+            exon.add_source(gff_source);
         }
         return exon_key;
     }
@@ -221,6 +246,9 @@ key_ptr build_gff::insert_exon(
     new_exon.transcript_ids.insert(transcript_id);
     if (sample_id.has_value()) {
         new_exon.add_sample(*sample_id);
+    }
+    if (!gff_source.empty()) {
+        new_exon.add_source(gff_source);
     }
 
     genomic_feature feature = new_exon;
@@ -256,19 +284,27 @@ void build_gff::create_segment(
     const std::vector<key_ptr>& exon_chain,
     std::unordered_map<std::string, key_ptr>& segment_cache,
     std::optional<uint32_t> sample_id,
-    size_t& segment_count
+    const std::string& gff_source,
+    size_t& segment_count,
+    float expression_value
 ) {
     std::string seqid = normalize_chromosome(sorted_exons.front().seqid);
     std::string structure_key = make_exon_structure_key(seqid, exon_coords);
 
     auto cached = segment_cache.find(structure_key);
     if (cached != segment_cache.end()) {
-        // Reuse existing segment
+        // Reuse existing segment - add transcript, sample, and source
         key_ptr seg_key = cached->second;
         auto& seg = get_segment(seg_key->get_data());
         seg.transcript_ids.insert(transcript_id);
         if (sample_id.has_value()) {
             seg.add_sample(*sample_id);
+            if (expression_value >= 0.0f) {
+                seg.set_expression(*sample_id, expression_value);
+            }
+        }
+        if (!gff_source.empty()) {
+            seg.add_source(gff_source);
         }
 
         std::lock_guard<std::mutex> lock(grove_mutex);
@@ -295,7 +331,7 @@ void build_gff::create_segment(
         std::to_string(segment_coord.get_end());
 
     // Build segment feature
-    segment_feature new_segment(segment_feature::source_type::REFERENCE);
+    segment_feature new_segment;
     new_segment.id = structure_key;
     new_segment.transcript_ids.insert(transcript_id);
     new_segment.exon_count = static_cast<int>(sorted_exons.size());
@@ -309,6 +345,12 @@ void build_gff::create_segment(
 
     if (sample_id.has_value()) {
         new_segment.add_sample(*sample_id);
+        if (expression_value >= 0.0f) {
+            new_segment.set_expression(*sample_id, expression_value);
+        }
+    }
+    if (!gff_source.empty()) {
+        new_segment.add_source(gff_source);
     }
 
     // Insert into grove (protected by mutex)
@@ -422,125 +464,90 @@ sample_info build_gff::parse_header(const std::filesystem::path& filepath) {
         return info;
     }
 
-    std::string line;
-    bool found_provider = false;
+    // Helper to convert string to lowercase
+    auto to_lower = [](std::string s) {
+        std::transform(s.begin(), s.end(), s.begin(),
+            [](unsigned char c) { return std::tolower(c); });
+        return s;
+    };
 
-    // Read header lines (start with #)
+    // Helper to trim whitespace
+    auto trim = [](const std::string& s) -> std::string {
+        size_t start = s.find_first_not_of(" \t\r\n");
+        if (start == std::string::npos) return "";
+        size_t end = s.find_last_not_of(" \t\r\n");
+        return s.substr(start, end - start + 1);
+    };
+
+    std::string line;
     while (std::getline(file, line)) {
-        // Stop at first non-header line
+        // Stop at first non-comment line
         if (line.empty() || line[0] != '#') {
             break;
         }
 
-        // Skip ##gff-version and ##sequence-region directives
-        if (line.starts_with("##gff-version") || line.starts_with("##sequence-region")) {
+        // Must be ## directive (GFF convention)
+        if (line.size() < 2 || line[1] != '#') {
             continue;
         }
 
-        // GENCODE format: #key: value (single #)
-        // Example:
-        //   #description: evidence-based annotation of the human genome (GRCh38), version 49
-        //   #provider: GENCODE
-        //   #date: 2025-07-08
-        if (line.starts_with("#") && !line.starts_with("##") && !line.starts_with("#!")) {
-            // Remove leading #
-            std::string content = line.substr(1);
-
-            // Find colon separator
-            size_t colon_pos = content.find(':');
-            if (colon_pos != std::string::npos) {
-                std::string key = content.substr(0, colon_pos);
-                std::string value = content.substr(colon_pos + 1);
-
-                // Trim whitespace from value
-                size_t start = value.find_first_not_of(" \t");
-                if (start != std::string::npos) {
-                    value = value.substr(start);
-                }
-
-                if (key == "provider") {
-                    info.annotation_source = value;
-                    found_provider = true;
-                } else if (key == "description") {
-                    // Parse version from description
-                    // "evidence-based annotation of the human genome (GRCh38), version 49 (Ensembl 115)"
-                    std::regex version_regex(R"(version\s+(\d+))");
-                    std::smatch match;
-                    if (std::regex_search(value, match, version_regex)) {
-                        info.annotation_version = "v" + match[1].str();
-                    }
-
-                    // Parse genome build from description (first parenthetical)
-                    std::regex genome_regex(R"(\(([^)]+)\))");
-                    if (std::regex_search(value, match, genome_regex)) {
-                        info.with_attribute("genome_build", match[1].str());
-                    }
-
-                    // Store full description
-                    info.with_attribute("description", value);
-                } else if (key == "date") {
-                    info.with_attribute("date", value);
-                } else if (key == "format") {
-                    info.with_attribute("format", value);
-                } else if (key == "contact") {
-                    info.with_attribute("contact", value);
-                }
-            }
+        // Parse ##property: value format
+        std::string content = line.substr(2);  // Remove leading ##
+        size_t colon_pos = content.find(':');
+        if (colon_pos == std::string::npos) {
+            continue;
         }
-        // Ensembl format: #!key value
-        else if (line.starts_with("#!")) {
-            std::string content = line.substr(2);
 
-            // Find first space separator
-            size_t space_pos = content.find(' ');
-            if (space_pos != std::string::npos) {
-                std::string key = content.substr(0, space_pos);
-                std::string value = content.substr(space_pos + 1);
+        std::string key = to_lower(trim(content.substr(0, colon_pos)));
+        std::string value = trim(content.substr(colon_pos + 1));
 
-                // Trim whitespace from value
-                size_t start = value.find_first_not_of(" \t");
-                if (start != std::string::npos) {
-                    value = value.substr(start);
-                }
+        if (value.empty()) {
+            continue;
+        }
 
-                if (key == "genome-build") {
-                    info.with_attribute("genome_build", value);
-                } else if (key == "genome-version") {
-                    info.with_attribute("genome_version", value);
-                } else if (key == "genebuild-last-updated") {
-                    info.with_attribute("date", value);
-                } else if (key == "genome-build-accession") {
-                    info.with_attribute("genome_accession", value);
-                }
-
-                // If we see Ensembl-style headers, set provider
-                if (!found_provider) {
-                    info.annotation_source = "Ensembl";
-                    found_provider = true;
-                }
-            }
+        // Map to sample_info fields
+        if (key == "id") {
+            info.id = value;
+        } else if (key == "description") {
+            info.description = value;
+        } else if (key == "assay") {
+            info.assay = value;
+        } else if (key == "biosample_type") {
+            info.biosample_type = value;
+        } else if (key == "biosample") {
+            info.biosample = value;
+        } else if (key == "condition") {
+            info.condition = value;
+        } else if (key == "treatment") {
+            info.treatment = value;
+        } else if (key == "species") {
+            info.species = value;
+        } else if (key == "replication_type") {
+            info.replication_type = value;
+        } else if (key == "platform") {
+            info.platform = value;
+        } else if (key == "pipeline") {
+            info.pipeline = value;
+        } else if (key == "pipeline_version") {
+            info.pipeline_version = value;
+        } else if (key == "annotation_source") {
+            info.annotation_source = value;
+        } else if (key == "annotation_version") {
+            info.annotation_version = value;
+        } else if (key == "source_url") {
+            info.source_url = value;
+        } else if (key == "publication") {
+            info.publication = value;
+        } else {
+            // Unknown properties go to attributes
+            info.attributes[key] = value;
         }
     }
 
-    // Build sample ID from metadata
-    if (!info.annotation_source.empty()) {
-        info.id = info.annotation_source;
-        if (!info.annotation_version.empty()) {
-            info.id += "_" + info.annotation_version;
-        }
-        // Add genome build if available
-        std::string genome_build = info.get_attribute("genome_build");
-        if (!genome_build.empty()) {
-            info.id += "_" + genome_build;
-        }
-    } else {
-        // Fallback to filename
+    // Default ID to filename if not provided
+    if (info.id.empty()) {
         info.id = filepath.stem().string();
     }
-
-    logging::info("Parsed header metadata: id=" + info.id +
-                  ", source=" + info.annotation_source +
-                  ", version=" + info.annotation_version);
 
     return info;
 }

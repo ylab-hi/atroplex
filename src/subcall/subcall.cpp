@@ -14,7 +14,9 @@
 
 #include "utility.hpp"
 #include "builder.hpp"
+#include "build_gff.hpp"
 #include "index_stats.hpp"
+#include "sample_manifest.hpp"
 
 namespace subcall {
 
@@ -32,7 +34,9 @@ void subcall::add_common_options(cxxopts::Options& options) {
     options.add_options("Grove")
         ("g,genogrove", "Pre-built genogrove index (.gg)",
             cxxopts::value<std::string>())
-        ("b,build-from", "Build grove from annotation file(s) (GFF/GTF)",
+        ("m,manifest", "Sample manifest file (TSV with metadata)",
+            cxxopts::value<std::string>())
+        ("b,build-from", "Build grove from file(s) without metadata (GFF/GTF)",
             cxxopts::value<std::vector<std::string>>())
         ("k,order", "Genogrove tree order",
             cxxopts::value<int>()->default_value("3"))
@@ -67,8 +71,8 @@ void subcall::run(const cxxopts::ParseResult& args) {
     validate(args);
     apply_common_options(args);
     setup_grove(args);
-    execute(args);
     write_index_stats(args);
+    execute(args);
 }
 
 void subcall::setup_grove(const cxxopts::ParseResult& args) {
@@ -78,31 +82,59 @@ void subcall::setup_grove(const cxxopts::ParseResult& args) {
         load_grove(gg_path);
     }
 
+    int order = args["order"].as<int>();
+    uint32_t threads = args["threads"].as<uint32_t>();
+
+    // Collect samples from both sources
+    std::vector<sample_info> all_samples;
+
+    // From manifest (metadata in TSV)
+    if (args.count("manifest")) {
+        std::string manifest_path = args["manifest"].as<std::string>();
+        logging::info("Loading manifest: " + manifest_path);
+        sample_manifest manifest(manifest_path);
+        logging::info("Found " + std::to_string(manifest.size()) + " sample(s) in manifest");
+
+        for (const auto& info : manifest) {
+            all_samples.push_back(info);
+        }
+    }
+
+    // From build-from (metadata parsed from GFF headers)
     if (args.count("build-from")) {
         auto build_files = args["build-from"].as<std::vector<std::string>>();
-        int order = args["order"].as<int>();
-        uint32_t threads = args["threads"].as<uint32_t>();
-        build_grove(build_files, order, threads);
+        logging::info("Parsing headers from " + std::to_string(build_files.size()) + " file(s)");
+
+        for (const auto& filepath : build_files) {
+            sample_info info = build_gff::parse_header(filepath);
+            all_samples.push_back(std::move(info));
+        }
+    }
+
+    // Build grove if we have samples
+    if (!all_samples.empty()) {
+        logging::info("Creating grove with order: " + std::to_string(order));
+        grove = std::make_unique<grove_type>(order);
+        builder::build_from_samples(*grove, all_samples, threads);
+        logging::info("Grove ready with spatial index and graph structure");
     }
 }
 
 void subcall::load_grove(const std::string& path) {
     // TODO: Implement genogrove deserialization
-    logging::error("Genogrove loading not yet implemented: " + path);
-    throw std::runtime_error("Genogrove deserialization not implemented");
+    throw std::runtime_error("Genogrove deserialization not yet implemented: " + path);
 }
 
 void subcall::build_grove(const std::vector<std::string>& files, int order, uint32_t threads) {
     logging::info("Creating grove with order: " + std::to_string(order));
     grove = std::make_unique<grove_type>(order);
-    builder::build_from_files(*grove, files, threads);
+    builder::build_from_files(*grove, files, threads);  // Parses headers for metadata
     logging::info("Grove ready with spatial index and graph structure");
 }
 
 void subcall::save_grove(const std::string& path) {
     // TODO: Implement genogrove serialization
-    logging::error("Genogrove saving not yet implemented: " + path);
-    throw std::runtime_error("Genogrove serialization not implemented");
+    logging::warning("Genogrove serialization not yet implemented, skipping save to: " + path);
 }
 
 void subcall::write_index_stats(const cxxopts::ParseResult& args) {
@@ -122,12 +154,26 @@ void subcall::write_index_stats(const cxxopts::ParseResult& args) {
     }
 
     auto out_dir = resolve_output_dir(args, fallback);
+    auto stats_dir = out_dir / "stats";
+    std::filesystem::create_directories(stats_dir);
+
     std::string basename = fallback.empty()
         ? "atroplex"
         : std::filesystem::path(fallback).stem().string();
 
-    std::string stats_path = (out_dir / (basename + ".index_stats.txt")).string();
+    // Always write both text and CSV formats
+    std::string stats_path = (stats_dir / (basename + ".index_stats.txt")).string();
     stats.write(stats_path);
+
+    if (!stats.per_sample.empty()) {
+        std::string csv_path = (stats_dir / (basename + ".sample_stats.csv")).string();
+        stats.write_sample_csv(csv_path);
+    }
+
+    if (!stats.per_source.empty()) {
+        std::string csv_path = (stats_dir / (basename + ".source_stats.csv")).string();
+        stats.write_source_csv(csv_path);
+    }
 }
 
 } // namespace subcall

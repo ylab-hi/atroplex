@@ -74,18 +74,29 @@ public:
     );
 
     /**
-     * Parse GTF/GFF header to extract annotation metadata
-     * Supports GENCODE, Ensembl, and generic GTF headers
+     * Parse GTF/GFF header to extract sample metadata
+     * Looks for ##property: value lines (GFF comment convention)
      *
-     * GENCODE headers:
-     *   ##description: evidence-based annotation of the human genome (GRCh38), version 44
-     *   ##provider: GENCODE
-     *   ##date: 2023-09-07
+     * Supported header properties (case-insensitive):
+     *   ##id: sample_001
+     *   ##description: Evidence-based annotation of the human genome
+     *   ##assay: RNA-seq
+     *   ##biosample: brain
+     *   ##biosample_type: tissue
+     *   ##condition: tumor
+     *   ##treatment: dexamethasone 100nM
+     *   ##species: Homo sapiens
+     *   ##replication_type: biological
+     *   ##platform: PacBio Sequel II
+     *   ##pipeline: StringTie
+     *   ##pipeline_version: v2.2.1
+     *   ##annotation_source: GENCODE
+     *   ##annotation_version: v44
+     *   ##source_url: https://...
+     *   ##publication: DOI:...
      *
-     * Ensembl headers:
-     *   #!genome-build GRCh38.p14
-     *   #!genome-version GRCh38
-     *   #!genebuild-last-updated 2023-09
+     * Unknown properties are stored in sample_info.attributes.
+     * If no id is provided, defaults to filename stem.
      *
      * @param filepath Path to GFF/GTF file
      * @return sample_info populated with extracted metadata
@@ -160,6 +171,7 @@ private:
 
     /**
      * Insert new exon or reuse existing one with same coordinates
+     * @param gff_source GFF column 2 value (e.g., HAVANA, ENSEMBL, StringTie)
      * @return Key pointer to the exon (new or existing)
      */
     static key_ptr insert_exon(
@@ -168,7 +180,8 @@ private:
         const gio::gff_entry& exon_entry,
         const std::string& transcript_id,
         std::map<gdt::genomic_coordinate, key_ptr>& exon_cache,
-        std::optional<uint32_t> sample_id
+        std::optional<uint32_t> sample_id,
+        const std::string& gff_source = ""
     );
 
     /**
@@ -183,6 +196,8 @@ private:
 
     /**
      * Create new segment or reuse existing one with same exon structure
+     * @param gff_source GFF column 2 value (e.g., HAVANA, ENSEMBL, StringTie)
+     * @param expression_value Expression value from transcript entry (-1 if not available)
      */
     static void create_segment(
         grove_type& grove,
@@ -193,7 +208,9 @@ private:
         const std::vector<key_ptr>& exon_chain,
         std::unordered_map<std::string, key_ptr>& segment_cache,
         std::optional<uint32_t> sample_id,
-        size_t& segment_count
+        const std::string& gff_source,
+        size_t& segment_count,
+        float expression_value = -1.0f
     );
 
     // ========== Attribute extraction helpers ==========

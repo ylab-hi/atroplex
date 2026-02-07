@@ -54,8 +54,7 @@ exon_feature exon_feature::from_gff_entry(
         feature.transcript_ids.insert(transcript_id);
     }
 
-    // Source
-    feature.source = get_attribute(attributes, "source");
+    // Note: GFF source (column 2) is added separately via add_source() in build_gff
 
     // Exon number
     std::string exon_num_str = get_attribute(attributes, "exon_number");
