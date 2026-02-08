@@ -21,6 +21,7 @@
 
 // class
 #include "genomic_feature.hpp"
+#include "index_stats.hpp"
 #include "sample_info.hpp"
 
 namespace gio = genogrove::io;
@@ -46,7 +47,7 @@ public:
      * @param samples Vector of sample_info with metadata (from manifest or programmatic)
      * @param threads Number of threads (reserved for future use, currently ignored)
      */
-    static void build_from_samples(
+    static index_stats build_from_samples(
         grove_type& grove,
         const std::vector<sample_info>& samples,
         uint32_t threads = 1
@@ -61,7 +62,7 @@ public:
      * @param files Vector of file paths to process
      * @param threads Number of threads (reserved for future use, currently ignored)
      */
-    static void build_from_files(
+    static index_stats build_from_files(
         grove_type& grove,
         const std::vector<std::string>& files,
         uint32_t threads = 1

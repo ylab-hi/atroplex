@@ -73,16 +73,20 @@ struct index_stats {
     // Graph structure
     size_t branching_exons = 0;       // exons with >1 unique downstream exon
 
-    // Top branching exons (splicing hubs)
+    // Splicing hubs (branching exons with >MIN_HUB_BRANCHES downstream targets)
     struct branching_exon_info {
         std::string gene_name;
         std::string gene_id;
+        std::string exon_id;
         std::string coordinate;
-        size_t branches = 0;          // number of unique downstream exons
+        size_t branches = 0;          // total unique downstream exons
         size_t transcripts = 0;       // transcripts using this exon
+        std::unordered_set<uint32_t> sample_idx;              // samples containing this exon
+        std::unordered_map<uint32_t, size_t> sample_branches; // per-sample downstream branch count
     };
-    std::vector<branching_exon_info> top_branching_exons;
-    static constexpr size_t MAX_TOP_BRANCHING = 20;
+    std::vector<branching_exon_info> splicing_hubs;
+    static constexpr size_t MIN_HUB_BRANCHES = 10;
+    static constexpr size_t MAX_DISPLAY_HUBS = 20;
 
     // Per-chromosome summary
     struct chromosome_stats {
@@ -119,13 +123,21 @@ struct index_stats {
 
     /**
      * Collect statistics by traversing a built grove.
+     * @param detailed  If true, run expensive Phase 4b (Jaccard diversity).
      */
-    static index_stats collect(grove_type& grove);
+    static index_stats collect(grove_type& grove, bool detailed = true);
 
     /**
-     * Write statistics to a text file.
+     * Write full analysis report to a text file.
+     * Includes all sections: per-sample, per-source, exon sharing, etc.
      */
     void write(const std::string& path) const;
+
+    /**
+     * Write compact summary (for --stats flag).
+     * Includes: overview, biotype, per-chromosome. No per-sample analysis.
+     */
+    void write_summary(const std::string& path) const;
 
     /**
      * Write per-sample statistics as CSV.
@@ -139,6 +151,11 @@ struct index_stats {
      * Sources (GFF column 2) are columns, metrics are rows.
      */
     void write_source_csv(const std::string& path) const;
+
+    /**
+     * Write splicing hubs as TSV (exons with >MIN_HUB_BRANCHES downstream targets).
+     */
+    void write_splicing_hubs_tsv(const std::string& path) const;
 };
 
 #endif // ATROPLEX_INDEX_STATS_HPP

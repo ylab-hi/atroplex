@@ -15,7 +15,6 @@
 #include "utility.hpp"
 #include "builder.hpp"
 #include "build_gff.hpp"
-#include "index_stats.hpp"
 #include "sample_manifest.hpp"
 
 namespace subcall {
@@ -115,7 +114,7 @@ void subcall::setup_grove(const cxxopts::ParseResult& args) {
     if (!all_samples.empty()) {
         logging::info("Creating grove with order: " + std::to_string(order));
         grove = std::make_unique<grove_type>(order);
-        builder::build_from_samples(*grove, all_samples, threads);
+        build_stats = builder::build_from_samples(*grove, all_samples, threads);
         logging::info("Grove ready with spatial index and graph structure");
     }
 }
@@ -128,7 +127,7 @@ void subcall::load_grove(const std::string& path) {
 void subcall::build_grove(const std::vector<std::string>& files, int order, uint32_t threads) {
     logging::info("Creating grove with order: " + std::to_string(order));
     grove = std::make_unique<grove_type>(order);
-    builder::build_from_files(*grove, files, threads);  // Parses headers for metadata
+    build_stats = builder::build_from_files(*grove, files, threads);
     logging::info("Grove ready with spatial index and graph structure");
 }
 
@@ -138,12 +137,9 @@ void subcall::save_grove(const std::string& path) {
 }
 
 void subcall::write_index_stats(const cxxopts::ParseResult& args) {
-    if (!args.count("stats") || !grove) return;
+    if (!args.count("stats") || !build_stats) return;
 
-    logging::info("Collecting index statistics...");
-    auto stats = index_stats::collect(*grove);
-
-    // Determine output path: use a fallback from available args
+    // Determine output path
     std::string fallback;
     if (args.count("input")) {
         fallback = args["input"].as<std::string>();
@@ -154,26 +150,14 @@ void subcall::write_index_stats(const cxxopts::ParseResult& args) {
     }
 
     auto out_dir = resolve_output_dir(args, fallback);
-    auto stats_dir = out_dir / "stats";
-    std::filesystem::create_directories(stats_dir);
 
     std::string basename = fallback.empty()
         ? "atroplex"
         : std::filesystem::path(fallback).stem().string();
 
-    // Always write both text and CSV formats
-    std::string stats_path = (stats_dir / (basename + ".index_stats.txt")).string();
-    stats.write(stats_path);
-
-    if (!stats.per_sample.empty()) {
-        std::string csv_path = (stats_dir / (basename + ".sample_stats.csv")).string();
-        stats.write_sample_csv(csv_path);
-    }
-
-    if (!stats.per_source.empty()) {
-        std::string csv_path = (stats_dir / (basename + ".source_stats.csv")).string();
-        stats.write_source_csv(csv_path);
-    }
+    // Write compact summary (no CSVs — those are produced by analyze subcommand)
+    std::string summary_path = (out_dir / (basename + ".index_stats.txt")).string();
+    build_stats->write_summary(summary_path);
 }
 
 } // namespace subcall

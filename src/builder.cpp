@@ -9,8 +9,11 @@
  */
 
 // standard
-#include <filesystem>
 #include <algorithm>
+#include <filesystem>
+#include <numeric>
+#include <unordered_map>
+#include <unordered_set>
 
 // class
 #include "utility.hpp"
@@ -41,12 +44,26 @@ static bool chromosome_compare(const std::string& a, const std::string& b) {
     return str_a < str_b;
 }
 
-void builder::build_from_samples(grove_type& grove,
+namespace {
+double compute_median(std::vector<size_t>& values) {
+    if (values.empty()) return 0;
+    size_t n = values.size();
+    auto mid = values.begin() + static_cast<long>(n / 2);
+    std::nth_element(values.begin(), mid, values.end());
+    if (n % 2 == 0) {
+        auto max_lower = *std::max_element(values.begin(), mid);
+        return (static_cast<double>(max_lower) + static_cast<double>(*mid)) / 2.0;
+    }
+    return static_cast<double>(*mid);
+}
+} // anonymous namespace
+
+index_stats builder::build_from_samples(grove_type& grove,
                                   const std::vector<sample_info>& samples,
                                   uint32_t threads) {
     if (samples.empty()) {
         logging::warning("No samples provided to build genogrove");
-        return;
+        return {};
     }
 
     if (threads > 1) {
@@ -90,25 +107,138 @@ void builder::build_from_samples(grove_type& grove,
 
     logging::info("Grove construction complete: " + std::to_string(segment_count) + " segments");
 
-    // Collect and sort chromosome names naturally
+    // --- Compute basic index statistics from caches ---
+    index_stats stats;
+
+    // Annotation sources and sample count from registry
+    auto& registry = sample_registry::instance();
+    for (size_t i = 0; i < registry.size(); ++i) {
+        const auto* info = registry.get(static_cast<uint32_t>(i));
+        if (info && !info->id.empty()) {
+            stats.annotation_sources.push_back(info->id);
+        }
+        if (info && info->type == "sample") {
+            stats.total_samples++;
+        }
+    }
+
+    stats.total_chromosomes = segment_caches.size();
+    stats.total_segments = segment_count;
+
+    // Gene info from segment features
+    struct gene_info {
+        std::unordered_set<std::string> transcript_ids;
+        std::string biotype;
+    };
+    std::unordered_map<std::string, gene_info> genes;
+    std::unordered_map<std::string, std::unordered_set<std::string>> chr_gene_ids;
+    std::vector<size_t> exons_per_segment;
+
+    for (const auto& [seqid, seg_cache] : segment_caches) {
+        stats.per_chromosome[seqid].segments = seg_cache.size();
+
+        for (const auto& [key, seg_ptr] : seg_cache) {
+            auto& feature = seg_ptr->get_data();
+            if (!is_segment(feature)) continue;
+
+            auto& seg = get_segment(feature);
+
+            auto& gi = genes[seg.gene_id];
+            gi.biotype = seg.gene_biotype;
+            for (const auto& tx : seg.transcript_ids) {
+                gi.transcript_ids.insert(tx);
+            }
+            chr_gene_ids[seqid].insert(seg.gene_id);
+
+            exons_per_segment.push_back(static_cast<size_t>(seg.exon_count));
+            if (seg.exon_count == 1) {
+                stats.single_exon_segments++;
+            }
+        }
+    }
+
+    // Exon counts from exon caches
+    for (const auto& [seqid, exon_cache] : exon_caches) {
+        stats.per_chromosome[seqid].exons = exon_cache.size();
+        stats.total_exons += exon_cache.size();
+    }
+
+    // Gene-level statistics
+    stats.total_genes = genes.size();
+    std::vector<size_t> transcripts_per_gene;
+    transcripts_per_gene.reserve(genes.size());
+    size_t total_tx = 0;
+
+    for (const auto& [gene_id, gi] : genes) {
+        size_t tx_count = gi.transcript_ids.size();
+        total_tx += tx_count;
+        transcripts_per_gene.push_back(tx_count);
+
+        if (!gi.biotype.empty()) {
+            stats.genes_by_biotype[gi.biotype]++;
+        }
+        if (tx_count > stats.max_transcripts_per_gene) {
+            stats.max_transcripts_per_gene = tx_count;
+            stats.max_transcripts_gene_id = gene_id;
+        }
+        if (tx_count == 1) {
+            stats.single_isoform_genes++;
+        } else {
+            stats.multi_isoform_genes++;
+        }
+    }
+
+    stats.total_transcripts = total_tx;
+    if (!transcripts_per_gene.empty()) {
+        stats.mean_transcripts_per_gene =
+            static_cast<double>(total_tx) / static_cast<double>(transcripts_per_gene.size());
+        stats.median_transcripts_per_gene = compute_median(transcripts_per_gene);
+    }
+
+    // Exons per segment distribution
+    if (!exons_per_segment.empty()) {
+        size_t total_exons_sum = std::accumulate(
+            exons_per_segment.begin(), exons_per_segment.end(), size_t{0});
+        stats.mean_exons_per_segment =
+            static_cast<double>(total_exons_sum) / static_cast<double>(exons_per_segment.size());
+        stats.median_exons_per_segment = compute_median(exons_per_segment);
+        stats.max_exons_per_segment = *std::max_element(
+            exons_per_segment.begin(), exons_per_segment.end());
+    }
+
+    // Deduplication ratio
+    if (stats.total_transcripts > 0) {
+        stats.deduplication_ratio =
+            static_cast<double>(stats.total_segments) / static_cast<double>(stats.total_transcripts);
+    }
+
+    // Per-chromosome gene counts
+    for (const auto& [seqid, gene_set] : chr_gene_ids) {
+        stats.per_chromosome[seqid].genes = gene_set.size();
+    }
+
+    // Total edges from grove
+    stats.total_edges = grove.edge_count();
+
+    // Log per-chromosome summary
     std::vector<std::string> seqids;
     for (const auto& [seqid, _] : segment_caches) {
         seqids.push_back(seqid);
     }
     std::sort(seqids.begin(), seqids.end(), chromosome_compare);
 
-    // Output per-chromosome summary (exons and segments from caches)
     logging::info("Per-chromosome summary:");
     for (const auto& seqid : seqids) {
-        size_t exon_count = exon_caches.count(seqid) ? exon_caches[seqid].size() : 0;
-        size_t seg_count = segment_caches[seqid].size();
+        auto& cs = stats.per_chromosome[seqid];
         logging::info("  " + seqid + ": " +
-            std::to_string(exon_count) + " exons, " +
-            std::to_string(seg_count) + " segments");
+            std::to_string(cs.exons) + " exons, " +
+            std::to_string(cs.segments) + " segments");
     }
+
+    return stats;
 }
 
-void builder::build_from_files(grove_type& grove,
+index_stats builder::build_from_files(grove_type& grove,
                                 const std::vector<std::string>& files,
                                 uint32_t threads) {
     // Parse headers to extract metadata from each file
@@ -121,5 +251,5 @@ void builder::build_from_files(grove_type& grove,
         samples.push_back(std::move(info));
     }
 
-    build_from_samples(grove, samples, threads);
+    return build_from_samples(grove, samples, threads);
 }

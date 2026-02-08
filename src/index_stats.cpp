@@ -58,7 +58,7 @@ double jaccard_distance(const std::set<const void*>& a, const std::set<const voi
 
 } // anonymous namespace
 
-index_stats index_stats::collect(grove_type& grove) {
+index_stats index_stats::collect(grove_type& grove, bool detailed) {
     index_stats stats;
 
     // Collect annotation sources from sample_registry
@@ -171,32 +171,44 @@ index_stats index_stats::collect(grove_type& grove) {
                 if (unique_targets.size() > 1) {
                     stats.branching_exons++;
 
-                    // Track top branching exons
-                    auto& feature = current->get_data();
-                    if (is_exon(feature)) {
-                        auto& exon = get_exon(feature);
-                        index_stats::branching_exon_info info;
-                        info.gene_name = exon.gene_name;
-                        info.gene_id = exon.gene_id;
-                        info.coordinate = exon.coordinate;
-                        info.branches = unique_targets.size();
-                        info.transcripts = exon.transcript_ids.size();
+                    // Collect splicing hubs (exons with many downstream targets)
+                    if (unique_targets.size() > index_stats::MIN_HUB_BRANCHES) {
+                        auto& feature = current->get_data();
+                        if (is_exon(feature)) {
+                            auto& exon = get_exon(feature);
+                            index_stats::branching_exon_info info;
+                            info.gene_name = exon.gene_name;
+                            info.gene_id = exon.gene_id;
+                            info.exon_id = exon.id;
+                            info.coordinate = exon.coordinate;
+                            info.branches = unique_targets.size();
+                            info.transcripts = exon.transcript_ids.size();
+                            info.sample_idx = exon.sample_idx;
 
-                        if (stats.top_branching_exons.size() < index_stats::MAX_TOP_BRANCHING) {
-                            stats.top_branching_exons.push_back(info);
-                        } else if (info.branches > stats.top_branching_exons.back().branches) {
-                            stats.top_branching_exons.back() = info;
+                            // Count per-sample branches from downstream targets
+                            std::set<key_ptr> seen_targets;
+                            for (auto* n : next) {
+                                if (!seen_targets.insert(n).second) continue;
+                                auto& tf = n->get_data();
+                                if (is_exon(tf)) {
+                                    auto& te = get_exon(tf);
+                                    for (uint32_t sid : te.sample_idx) {
+                                        info.sample_branches[sid]++;
+                                    }
+                                }
+                            }
+
+                            stats.splicing_hubs.push_back(std::move(info));
                         }
-                        std::sort(stats.top_branching_exons.begin(),
-                                  stats.top_branching_exons.end(),
-                                  [](const auto& a, const auto& b) {
-                                      return a.branches > b.branches;
-                                  });
                     }
                 }
             }
         }
     }
+
+    // Sort splicing hubs by branch count descending
+    std::sort(stats.splicing_hubs.begin(), stats.splicing_hubs.end(),
+              [](const auto& a, const auto& b) { return a.branches > b.branches; });
 
     // Initialize per-sample and per-source tracking (needed by Phase 3 and Phase 5)
     std::vector<uint32_t> sample_ids;
@@ -348,6 +360,8 @@ index_stats index_stats::collect(grove_type& grove) {
     }
 
     // --- Phase 4b: Structural diversity (pairwise Jaccard distance of exon sets) ---
+    // Only computed in detailed mode (analyze subcommand). Skipped for --stats.
+    if (detailed) {
     // For each segment, walk its exon chain to collect the exon pointer set.
     // Group by gene, then compute mean pairwise Jaccard distance.
     struct segment_exon_info {
@@ -461,6 +475,7 @@ index_stats index_stats::collect(grove_type& grove) {
             ss.isoform_diversity = sample_sum / static_cast<double>(sample_genes);
         }
     }
+    } // end if (detailed)
 
     // Exons per segment distribution
     if (!exons_per_segment.empty()) {
@@ -628,8 +643,8 @@ void index_stats::write(const std::string& path) const {
     out << "Total edges:        " << total_edges << "\n";
     out << "Branching exons:    " << branching_exons << "\n";
 
-    if (!top_branching_exons.empty()) {
-        out << "\nTop splicing hubs:\n";
+    if (!splicing_hubs.empty()) {
+        out << "\nTop splicing hubs (>" << MIN_HUB_BRANCHES << " branches):\n";
         out << "   Exons with the most downstream splice choices.\n\n";
         out << std::left << std::setw(20) << "  Gene"
             << std::setw(16) << "Gene ID"
@@ -637,13 +652,19 @@ void index_stats::write(const std::string& path) const {
             << std::right << std::setw(10) << "Branches"
             << std::setw(12) << "Transcripts" << "\n";
 
-        for (const auto& be : top_branching_exons) {
+        size_t display_count = std::min(splicing_hubs.size(), MAX_DISPLAY_HUBS);
+        for (size_t i = 0; i < display_count; ++i) {
+            const auto& be = splicing_hubs[i];
             std::string gene_label = be.gene_name.empty() ? be.gene_id : be.gene_name;
             out << "  " << std::left << std::setw(18) << gene_label
                 << std::setw(16) << be.gene_id
                 << std::setw(30) << be.coordinate
                 << std::right << std::setw(10) << be.branches
                 << std::setw(12) << be.transcripts << "\n";
+        }
+        if (splicing_hubs.size() > MAX_DISPLAY_HUBS) {
+            out << "  ... and " << (splicing_hubs.size() - MAX_DISPLAY_HUBS)
+                << " more (see splicing_hubs.tsv)\n";
         }
     }
 
@@ -816,6 +837,107 @@ void index_stats::write(const std::string& path) const {
     logging::info("Index statistics written to: " + path);
 }
 
+void index_stats::write_summary(const std::string& path) const {
+    std::ofstream out(path);
+    if (!out.is_open()) {
+        logging::error("Cannot open summary file: " + path);
+        return;
+    }
+
+    out << std::fixed << std::setprecision(2);
+
+    out << "Index Summary\n";
+    out << "=============\n\n";
+
+    // Input entries
+    if (!annotation_sources.empty()) {
+        auto& reg = sample_registry::instance();
+        out << "Inputs: " << reg.size() << " entries (";
+        out << total_samples << " samples, "
+            << (reg.size() - total_samples) << " annotations)\n";
+        for (size_t i = 0; i < reg.size(); ++i) {
+            const auto* info = reg.get(static_cast<uint32_t>(i));
+            if (info && !info->id.empty()) {
+                out << "  " << info->id << "  [" << info->type << "]\n";
+            }
+        }
+        out << "\n";
+    }
+
+    // Overview
+    out << "Chromosomes:        " << total_chromosomes << "\n";
+    out << "Genes:              " << total_genes << "\n";
+    out << "Transcripts:        " << total_transcripts << "\n";
+    out << "Segments:           " << total_segments
+        << "  (deduplicated by exon structure)\n";
+    out << "Unique exons:       " << total_exons << "\n";
+    out << "Graph edges:        " << total_edges << "\n";
+    if (deduplication_ratio > 0) {
+        out << "Dedup ratio:        " << std::setprecision(3)
+            << deduplication_ratio << std::setprecision(2)
+            << "  (segments/transcripts)\n";
+    }
+    out << "\n";
+
+    // Transcripts per gene
+    out << "Transcripts per gene:\n";
+    out << "  Mean:             " << mean_transcripts_per_gene << "\n";
+    out << "  Median:           " << median_transcripts_per_gene << "\n";
+    out << "  Max:              " << max_transcripts_per_gene;
+    if (!max_transcripts_gene_id.empty()) {
+        out << "  (" << max_transcripts_gene_id << ")";
+    }
+    out << "\n";
+    out << "  Single-isoform:   " << single_isoform_genes << "\n";
+    out << "  Multi-isoform:    " << multi_isoform_genes << "\n";
+    out << "\n";
+
+    // Exons per segment
+    out << "Exons per segment:\n";
+    out << "  Mean:             " << mean_exons_per_segment << "\n";
+    out << "  Median:           " << median_exons_per_segment << "\n";
+    out << "  Max:              " << max_exons_per_segment << "\n";
+    out << "  Single-exon:      " << single_exon_segments << "\n";
+    out << "\n";
+
+    // Genes by biotype
+    if (!genes_by_biotype.empty()) {
+        out << "Genes by biotype:\n";
+        std::vector<std::pair<std::string, size_t>> sorted_biotypes(
+            genes_by_biotype.begin(), genes_by_biotype.end());
+        std::sort(sorted_biotypes.begin(), sorted_biotypes.end(),
+            [](const auto& a, const auto& b) { return a.second > b.second; });
+        for (const auto& [biotype, count] : sorted_biotypes) {
+            double pct = total_genes > 0 ?
+                100.0 * static_cast<double>(count) / static_cast<double>(total_genes) : 0;
+            out << "  " << std::left << std::setw(28) << biotype
+                << std::right << std::setw(8) << count
+                << "  (" << std::setprecision(1) << pct << "%)\n";
+        }
+        out << std::setprecision(2) << "\n";
+    }
+
+    // Per chromosome
+    if (!per_chromosome.empty()) {
+        out << "Per chromosome:\n";
+        out << "  " << std::left << std::setw(10) << "Chrom"
+            << std::right << std::setw(8) << "Genes"
+            << std::setw(10) << "Segments"
+            << std::setw(10) << "Exons" << "\n";
+        for (const auto& [seqid, cs] : per_chromosome) {
+            out << "  " << std::left << std::setw(10) << seqid
+                << std::right << std::setw(8) << cs.genes
+                << std::setw(10) << cs.segments
+                << std::setw(10) << cs.exons << "\n";
+        }
+        out << "\n";
+    }
+
+    out << "For detailed per-sample analysis, run: atroplex analyze\n";
+
+    logging::info("Index summary written to: " + path);
+}
+
 void index_stats::write_sample_csv(const std::string& path) const {
     std::ofstream out(path);
     if (!out.is_open()) {
@@ -952,4 +1074,59 @@ void index_stats::write_source_csv(const std::string& path) const {
     write_row("genes", [](const source_stats& s) { return s.genes; });
 
     logging::info("Per-source CSV statistics written to: " + path);
+}
+
+void index_stats::write_splicing_hubs_tsv(const std::string& path) const {
+    std::ofstream out(path);
+    if (!out.is_open()) {
+        logging::error("Cannot open splicing hubs file: " + path);
+        return;
+    }
+
+    if (splicing_hubs.empty()) {
+        logging::warning("No splicing hubs to write");
+        return;
+    }
+
+    auto& registry = sample_registry::instance();
+
+    // Collect sample IDs in sorted order
+    std::vector<uint32_t> sample_ids;
+    for (const auto& [sid, _] : per_sample) {
+        sample_ids.push_back(sid);
+    }
+    std::sort(sample_ids.begin(), sample_ids.end());
+
+    // Header
+    out << "gene_name\tgene_id\texon_id\tcoordinate\tbranches\ttranscripts";
+    for (uint32_t sid : sample_ids) {
+        const auto* info = registry.get(sid);
+        std::string label = (info && !info->id.empty()) ? info->id : std::to_string(sid);
+        out << "\t" << label;
+    }
+    out << "\n";
+
+    // Rows — sample columns show per-sample branch count
+    for (const auto& hub : splicing_hubs) {
+        out << hub.gene_name << "\t"
+            << hub.gene_id << "\t"
+            << hub.exon_id << "\t"
+            << hub.coordinate << "\t"
+            << hub.branches << "\t"
+            << hub.transcripts;
+
+        for (uint32_t sid : sample_ids) {
+            if (!hub.sample_idx.count(sid)) {
+                out << "\t.";
+            } else {
+                auto it = hub.sample_branches.find(sid);
+                out << "\t" << (it != hub.sample_branches.end() ? it->second : 0);
+            }
+        }
+        out << "\n";
+    }
+
+    logging::info("Splicing hubs (" + std::to_string(splicing_hubs.size())
+        + " exons with >" + std::to_string(MIN_HUB_BRANCHES)
+        + " branches) written to: " + path);
 }

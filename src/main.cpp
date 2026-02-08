@@ -21,6 +21,7 @@
 #include "subcall/discover.hpp"
 #include "subcall/build.hpp"
 #include "subcall/dtu.hpp"
+#include "subcall/analyze.hpp"
 
 std::unique_ptr<subcall::subcall> create_subcall(const std::string& name) {
     if (name == "discover") {
@@ -29,6 +30,8 @@ std::unique_ptr<subcall::subcall> create_subcall(const std::string& name) {
         return std::make_unique<subcall::build>();
     } else if (name == "dtu") {
         return std::make_unique<subcall::dtu>();
+    } else if (name == "analyze") {
+        return std::make_unique<subcall::analyze>();
     }
     return nullptr;
 }
@@ -45,6 +48,7 @@ void print_general_help(cxxopts::Options& options) {
     std::cout << "Subcommands:\n";
     std::cout << "\tbuild\t\tBuild pan-transcriptome index from annotation sources\n";
     std::cout << "\tdtu\t\tDifferential transcript usage analysis\n";
+    std::cout << "\tanalyze\t\tFull pan-transcriptome analysis with per-sample statistics\n";
     std::cout << "\tdiscover\tDiscover novel transcripts from long-read data\n";
     std::cout << "\nFor subcommand help: atroplex <subcommand> --help\n";
 }

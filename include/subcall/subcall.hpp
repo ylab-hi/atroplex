@@ -13,6 +13,7 @@
 
 #include <filesystem>
 #include <memory>
+#include <optional>
 #include <string>
 
 #include <cxxopts.hpp>
@@ -21,6 +22,7 @@
 #include <genogrove/data_type/interval.hpp>
 
 #include "genomic_feature.hpp"
+#include "index_stats.hpp"
 
 namespace subcall {
 
@@ -71,6 +73,7 @@ public:
 
 protected:
     std::unique_ptr<grove_type> grove;
+    std::optional<index_stats> build_stats;
     std::filesystem::path output_dir;
 
     /**
