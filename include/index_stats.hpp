@@ -81,8 +81,25 @@ struct index_stats {
         std::string coordinate;
         size_t branches = 0;          // total unique downstream exons
         size_t transcripts = 0;       // transcripts using this exon
+        size_t exon_number = 0;       // 1-based position in representative transcript chain
+        size_t total_exons = 0;       // total exons in that representative segment
         std::unordered_set<uint32_t> sample_idx;              // samples containing this exon
-        std::unordered_map<uint32_t, size_t> sample_branches; // per-sample downstream branch count
+        std::unordered_map<uint32_t, size_t> sample_branches;    // per-sample downstream branch count
+        std::unordered_map<uint32_t, size_t> sample_shared;      // branches also in ≥1 other sample
+        std::unordered_map<uint32_t, size_t> sample_unique;      // branches only in this sample
+        std::unordered_map<uint32_t, size_t> sample_transcripts; // per-sample transcript count
+
+        std::unordered_map<uint32_t, double> sample_psi;          // traditional PSI: hub tx / gene tx per sample
+        std::unordered_map<uint32_t, double> sample_entropy;     // Shannon entropy of branch usage
+
+        // Individual branch targets (for detail file)
+        struct branch_target {
+            std::string exon_id;
+            std::string coordinate;
+            std::unordered_set<uint32_t> sample_idx;
+            std::unordered_map<uint32_t, size_t> sample_transcripts; // per-sample tx count through this target
+        };
+        std::vector<branch_target> targets;
     };
     std::vector<branching_exon_info> splicing_hubs;
     static constexpr size_t MIN_HUB_BRANCHES = 10;
@@ -156,6 +173,12 @@ struct index_stats {
      * Write splicing hubs as TSV (exons with >MIN_HUB_BRANCHES downstream targets).
      */
     void write_splicing_hubs_tsv(const std::string& path) const;
+
+    /**
+     * Write per-branch detail file (one row per hub × downstream target).
+     * Shows which samples each individual branch target occurs in.
+     */
+    void write_branch_details_tsv(const std::string& path) const;
 };
 
 #endif // ATROPLEX_INDEX_STATS_HPP

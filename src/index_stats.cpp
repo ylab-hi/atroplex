@@ -85,6 +85,9 @@ index_stats index_stats::collect(grove_type& grove, bool detailed) {
     // All segment key pointers (needed for exon traversal)
     std::vector<std::pair<std::string, key_ptr>> segment_keys; // (seqid, key)
 
+    // Transcript -> sample mapping (for per-sample hub stats)
+    std::unordered_map<std::string, std::unordered_set<uint32_t>> tx_to_samples;
+
     auto roots = grove.get_root_nodes();
     stats.total_chromosomes = roots.size();
 
@@ -114,6 +117,10 @@ index_stats index_stats::collect(grove_type& grove, bool detailed) {
                 gi.biotype = seg.gene_biotype;
                 for (const auto& tx : seg.transcript_ids) {
                     gi.transcript_ids.insert(tx);
+                    // Build transcript -> sample mapping (for per-sample hub stats)
+                    for (uint32_t sid : seg.sample_idx) {
+                        tx_to_samples[tx].insert(sid);
+                    }
                 }
                 chr_gene_ids[seqid].insert(seg.gene_id);
 
@@ -125,6 +132,20 @@ index_stats index_stats::collect(grove_type& grove, bool detailed) {
                 segment_keys.emplace_back(seqid, key);
             }
             node = node->get_next();
+        }
+    }
+
+    // Build per-sample per-gene transcript counts (for traditional PSI)
+    // gene_id -> sample_id -> transcript count
+    std::unordered_map<std::string, std::unordered_map<uint32_t, size_t>> gene_sample_tx;
+    for (const auto& [gene_id, gi] : genes) {
+        for (const auto& tx : gi.transcript_ids) {
+            auto it = tx_to_samples.find(tx);
+            if (it != tx_to_samples.end()) {
+                for (uint32_t sid : it->second) {
+                    gene_sample_tx[gene_id][sid]++;
+                }
+            }
         }
     }
 
@@ -185,15 +206,93 @@ index_stats index_stats::collect(grove_type& grove, bool detailed) {
                             info.transcripts = exon.transcript_ids.size();
                             info.sample_idx = exon.sample_idx;
 
-                            // Count per-sample branches from downstream targets
+                            // Collect downstream targets with per-sample info
                             std::set<key_ptr> seen_targets;
                             for (auto* n : next) {
                                 if (!seen_targets.insert(n).second) continue;
                                 auto& tf = n->get_data();
                                 if (is_exon(tf)) {
                                     auto& te = get_exon(tf);
+
+                                    // Per-sample branch counts
                                     for (uint32_t sid : te.sample_idx) {
                                         info.sample_branches[sid]++;
+                                    }
+
+                                    // Store target detail with per-sample transcript counts
+                                    index_stats::branching_exon_info::branch_target bt;
+                                    bt.exon_id = te.id;
+                                    bt.coordinate = te.coordinate;
+                                    bt.sample_idx = te.sample_idx;
+
+                                    // Count transcripts through this target per sample
+                                    // Only count transcripts that also use the hub exon
+                                    for (const auto& tx : te.transcript_ids) {
+                                        if (!exon.transcript_ids.count(tx)) continue;
+                                        auto it = tx_to_samples.find(tx);
+                                        if (it != tx_to_samples.end()) {
+                                            for (uint32_t sid : it->second) {
+                                                bt.sample_transcripts[sid]++;
+                                            }
+                                        }
+                                    }
+
+                                    info.targets.push_back(std::move(bt));
+                                }
+                            }
+
+                            // Classify branches as shared/unique per sample
+                            for (uint32_t sid : exon.sample_idx) {
+                                for (const auto& bt : info.targets) {
+                                    if (!bt.sample_idx.count(sid)) continue;
+                                    if (bt.sample_idx.size() > 1) {
+                                        info.sample_shared[sid]++;
+                                    } else {
+                                        info.sample_unique[sid]++;
+                                    }
+                                }
+                            }
+
+                            // Count per-sample transcripts using this hub exon
+                            for (const auto& tx : exon.transcript_ids) {
+                                auto it = tx_to_samples.find(tx);
+                                if (it != tx_to_samples.end()) {
+                                    for (uint32_t sid : it->second) {
+                                        info.sample_transcripts[sid]++;
+                                    }
+                                }
+                            }
+
+                            // Compute Shannon entropy per sample from branch PSI distribution
+                            for (uint32_t sid : exon.sample_idx) {
+                                auto tx_it = info.sample_transcripts.find(sid);
+                                if (tx_it == info.sample_transcripts.end() || tx_it->second == 0) continue;
+                                double total_tx = static_cast<double>(tx_it->second);
+
+                                double entropy = 0.0;
+                                for (const auto& bt : info.targets) {
+                                    auto bt_tx_it = bt.sample_transcripts.find(sid);
+                                    if (bt_tx_it == bt.sample_transcripts.end() || bt_tx_it->second == 0) continue;
+                                    double psi = static_cast<double>(bt_tx_it->second) / total_tx;
+                                    if (psi > 0.0) {
+                                        entropy -= psi * std::log2(psi);
+                                    }
+                                }
+                                info.sample_entropy[sid] = entropy;
+                            }
+
+                            // Traditional PSI: hub transcripts / gene transcripts per sample
+                            auto gene_tx_it = gene_sample_tx.find(exon.gene_id);
+                            if (gene_tx_it != gene_sample_tx.end()) {
+                                for (uint32_t sid : exon.sample_idx) {
+                                    auto hub_tx = info.sample_transcripts.find(sid);
+                                    auto gene_tx = gene_tx_it->second.find(sid);
+                                    if (hub_tx != info.sample_transcripts.end()
+                                        && gene_tx != gene_tx_it->second.end()
+                                        && gene_tx->second > 0) {
+                                        info.sample_psi[sid] =
+                                            static_cast<double>(hub_tx->second)
+                                            / static_cast<double>(gene_tx->second);
                                     }
                                 }
                             }
@@ -209,6 +308,57 @@ index_stats index_stats::collect(grove_type& grove, bool detailed) {
     // Sort splicing hubs by branch count descending
     std::sort(stats.splicing_hubs.begin(), stats.splicing_hubs.end(),
               [](const auto& a, const auto& b) { return a.branches > b.branches; });
+
+    // Enrich hubs with exon position (walk chain from a representative segment)
+    if (!stats.splicing_hubs.empty()) {
+        // Build gene -> segments index
+        std::unordered_map<std::string, std::vector<std::pair<std::string, key_ptr>>> gene_segments;
+        for (auto& [seqid, seg_key] : segment_keys) {
+            auto& seg = get_segment(seg_key->get_data());
+            gene_segments[seg.gene_id].emplace_back(seqid, seg_key);
+        }
+
+        for (auto& hub : stats.splicing_hubs) {
+            auto git = gene_segments.find(hub.gene_id);
+            if (git == gene_segments.end()) continue;
+
+            bool found = false;
+            for (auto& [seqid, seg_key] : git->second) {
+                if (found) break;
+                auto& seg = get_segment(seg_key->get_data());
+                if (seg.transcript_ids.empty()) continue;
+
+                const std::string& tx_id = *seg.transcript_ids.begin();
+                auto first = grove.get_neighbors_if(seg_key,
+                    [&tx_id](const edge_metadata& e) {
+                        return e.type == edge_metadata::edge_type::SEGMENT_TO_EXON
+                            && e.id == tx_id;
+                    });
+                if (first.empty()) continue;
+
+                // Walk chain counting position
+                size_t pos = 1;
+                key_ptr cur = first.front();
+                while (true) {
+                    auto& ef = cur->get_data();
+                    if (is_exon(ef) && get_exon(ef).coordinate == hub.coordinate) {
+                        hub.exon_number = pos;
+                        hub.total_exons = seg.exon_count;
+                        found = true;
+                        break;
+                    }
+                    auto nxt = grove.get_neighbors_if(cur,
+                        [&tx_id](const edge_metadata& e) {
+                            return e.type == edge_metadata::edge_type::EXON_TO_EXON
+                                && e.id == tx_id;
+                        });
+                    if (nxt.empty()) break;
+                    cur = nxt.front();
+                    pos++;
+                }
+            }
+        }
+    }
 
     // Initialize per-sample and per-source tracking (needed by Phase 3 and Phase 5)
     std::vector<uint32_t> sample_ids;
@@ -1097,30 +1247,59 @@ void index_stats::write_splicing_hubs_tsv(const std::string& path) const {
     }
     std::sort(sample_ids.begin(), sample_ids.end());
 
-    // Header
-    out << "gene_name\tgene_id\texon_id\tcoordinate\tbranches\ttranscripts";
+    // Header — six columns per sample: branches, shared, unique, transcripts, entropy, psi
+    out << "gene_name\tgene_id\texon_id\tcoordinate\texon_number\ttotal_exons\ttotal_branches\ttotal_transcripts";
     for (uint32_t sid : sample_ids) {
         const auto* info = registry.get(sid);
         std::string label = (info && !info->id.empty()) ? info->id : std::to_string(sid);
-        out << "\t" << label;
+        out << "\t" << label << ".branches"
+            << "\t" << label << ".shared"
+            << "\t" << label << ".unique"
+            << "\t" << label << ".transcripts"
+            << "\t" << label << ".entropy"
+            << "\t" << label << ".psi";
     }
     out << "\n";
 
-    // Rows — sample columns show per-sample branch count
+    // Rows
+    out << std::fixed;
     for (const auto& hub : splicing_hubs) {
         out << hub.gene_name << "\t"
             << hub.gene_id << "\t"
             << hub.exon_id << "\t"
             << hub.coordinate << "\t"
+            << hub.exon_number << "\t"
+            << hub.total_exons << "\t"
             << hub.branches << "\t"
             << hub.transcripts;
 
         for (uint32_t sid : sample_ids) {
             if (!hub.sample_idx.count(sid)) {
-                out << "\t.";
+                out << "\t.\t.\t.\t.\t.\t.";
             } else {
-                auto it = hub.sample_branches.find(sid);
-                out << "\t" << (it != hub.sample_branches.end() ? it->second : 0);
+                auto br_it = hub.sample_branches.find(sid);
+                auto sh_it = hub.sample_shared.find(sid);
+                auto uq_it = hub.sample_unique.find(sid);
+                auto tx_it = hub.sample_transcripts.find(sid);
+                auto en_it = hub.sample_entropy.find(sid);
+                auto psi_it = hub.sample_psi.find(sid);
+
+                out << "\t" << (br_it != hub.sample_branches.end() ? br_it->second : 0)
+                    << "\t" << (sh_it != hub.sample_shared.end() ? sh_it->second : 0)
+                    << "\t" << (uq_it != hub.sample_unique.end() ? uq_it->second : 0)
+                    << "\t" << (tx_it != hub.sample_transcripts.end() ? tx_it->second : 0)
+                    << "\t";
+                if (en_it != hub.sample_entropy.end()) {
+                    out << std::setprecision(3) << en_it->second;
+                } else {
+                    out << ".";
+                }
+                out << "\t";
+                if (psi_it != hub.sample_psi.end()) {
+                    out << std::setprecision(3) << psi_it->second;
+                } else {
+                    out << ".";
+                }
             }
         }
         out << "\n";
@@ -1129,4 +1308,70 @@ void index_stats::write_splicing_hubs_tsv(const std::string& path) const {
     logging::info("Splicing hubs (" + std::to_string(splicing_hubs.size())
         + " exons with >" + std::to_string(MIN_HUB_BRANCHES)
         + " branches) written to: " + path);
+}
+
+void index_stats::write_branch_details_tsv(const std::string& path) const {
+    std::ofstream out(path);
+    if (!out.is_open()) {
+        logging::error("Cannot open branch details file: " + path);
+        return;
+    }
+
+    if (splicing_hubs.empty()) {
+        logging::warning("No splicing hubs for branch details");
+        return;
+    }
+
+    auto& registry = sample_registry::instance();
+
+    // Collect sample IDs in sorted order
+    std::vector<uint32_t> sample_ids;
+    for (const auto& [sid, _] : per_sample) {
+        sample_ids.push_back(sid);
+    }
+    std::sort(sample_ids.begin(), sample_ids.end());
+
+    // Header — sample columns show branch usage fraction
+    out << "hub_gene_name\thub_gene_id\thub_exon_id\thub_coordinate"
+        << "\ttarget_exon_id\ttarget_coordinate";
+    for (uint32_t sid : sample_ids) {
+        const auto* info = registry.get(sid);
+        std::string label = (info && !info->id.empty()) ? info->id : std::to_string(sid);
+        out << "\t" << label << ".fraction";
+    }
+    out << "\n";
+
+    // One row per (hub, target) pair — sample columns show PSI
+    out << std::fixed << std::setprecision(3);
+    for (const auto& hub : splicing_hubs) {
+        for (const auto& target : hub.targets) {
+            out << hub.gene_name << "\t"
+                << hub.gene_id << "\t"
+                << hub.exon_id << "\t"
+                << hub.coordinate << "\t"
+                << target.exon_id << "\t"
+                << target.coordinate;
+
+            for (uint32_t sid : sample_ids) {
+                if (!target.sample_idx.count(sid)) {
+                    out << "\t.";
+                } else {
+                    auto bt_tx_it = target.sample_transcripts.find(sid);
+                    auto hub_tx_it = hub.sample_transcripts.find(sid);
+                    if (bt_tx_it != target.sample_transcripts.end()
+                        && hub_tx_it != hub.sample_transcripts.end()
+                        && hub_tx_it->second > 0) {
+                        double psi = static_cast<double>(bt_tx_it->second)
+                                   / static_cast<double>(hub_tx_it->second);
+                        out << "\t" << psi;
+                    } else {
+                        out << "\t0";
+                    }
+                }
+            }
+            out << "\n";
+        }
+    }
+
+    logging::info("Branch details written to: " + path);
 }

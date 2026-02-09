@@ -90,10 +90,16 @@ void analyze::execute(const cxxopts::ParseResult& args) {
         stats.write_source_csv(csv_path);
     }
 
-    // Write splicing hubs TSV
+    // Write splicing hubs into subfolder
     if (!stats.splicing_hubs.empty()) {
-        std::string hubs_path = (analysis_dir / (basename + ".splicing_hubs.tsv")).string();
+        auto hubs_dir = analysis_dir / "splicing_hubs";
+        std::filesystem::create_directories(hubs_dir);
+
+        std::string hubs_path = (hubs_dir / (basename + ".splicing_hubs.tsv")).string();
         stats.write_splicing_hubs_tsv(hubs_path);
+
+        std::string details_path = (hubs_dir / (basename + ".branch_details.tsv")).string();
+        stats.write_branch_details_tsv(details_path);
     }
 
     logging::info("Analysis written to: " + analysis_dir.string());
