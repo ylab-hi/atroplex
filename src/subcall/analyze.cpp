@@ -90,6 +90,23 @@ void analyze::execute(const cxxopts::ParseResult& args) {
         stats.write_source_csv(csv_path);
     }
 
+    // Write exon and segment sharing into subfolder
+    if (!stats.per_sample.empty()) {
+        auto sharing_dir = analysis_dir / "sharing";
+        std::filesystem::create_directories(sharing_dir);
+
+        std::string exon_path = (sharing_dir / (basename + ".exon_sharing.tsv")).string();
+        stats.write_exon_sharing_tsv(exon_path);
+
+        std::string seg_path = (sharing_dir / (basename + ".segment_sharing.tsv")).string();
+        stats.write_segment_sharing_tsv(seg_path);
+
+        if (!stats.conserved_exon_details.empty()) {
+            std::string conserved_path = (sharing_dir / (basename + ".conserved_exons.tsv")).string();
+            stats.write_conserved_exons_tsv(conserved_path);
+        }
+    }
+
     // Write splicing hubs into subfolder
     if (!stats.splicing_hubs.empty()) {
         auto hubs_dir = analysis_dir / "splicing_hubs";

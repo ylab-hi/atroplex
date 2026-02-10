@@ -60,6 +60,20 @@ struct index_stats {
     size_t constitutive_exons = 0;    // present in all transcripts of their gene
     size_t alternative_exons = 0;     // present in only some transcripts
 
+    // Conserved exon detail (exons present in ALL samples)
+    struct conserved_exon_entry {
+        std::string exon_id;
+        std::string gene_name;
+        std::string gene_id;
+        std::string chromosome;
+        std::string coordinate;
+        size_t n_transcripts = 0;     // total transcripts using this exon
+        bool constitutive = false;    // present in all transcripts of its gene
+        std::unordered_map<uint32_t, size_t> sample_transcripts;  // per-sample transcript count
+        std::unordered_map<uint32_t, float> sample_expression;    // per-sample expression (if available)
+    };
+    std::vector<conserved_exon_entry> conserved_exon_details;
+
     // Segment sharing distribution across samples
     size_t conserved_segments = 0;       // segments present in ALL samples
     size_t shared_segments = 0;          // segments in 2+ but not all samples
@@ -91,6 +105,7 @@ struct index_stats {
 
         std::unordered_map<uint32_t, double> sample_psi;          // traditional PSI: hub tx / gene tx per sample
         std::unordered_map<uint32_t, double> sample_entropy;     // Shannon entropy of branch usage
+        std::unordered_map<uint32_t, float> sample_expression;   // per-sample expression at hub exon
 
         // Individual branch targets (for detail file)
         struct branch_target {
@@ -98,6 +113,7 @@ struct index_stats {
             std::string coordinate;
             std::unordered_set<uint32_t> sample_idx;
             std::unordered_map<uint32_t, size_t> sample_transcripts; // per-sample tx count through this target
+            std::unordered_map<uint32_t, float> sample_expression;   // per-sample expression at target exon
         };
         std::vector<branch_target> targets;
     };
@@ -117,8 +133,14 @@ struct index_stats {
     struct sample_stats {
         size_t segments = 0;            // segments this sample contributes to
         size_t exclusive_segments = 0;  // segments only in this sample
+        size_t shared_segments = 0;     // segments in 2+ but not all samples
+        size_t conserved_segments = 0;  // segments in ALL samples
         size_t exons = 0;              // exons this sample contributes to
         size_t exclusive_exons = 0;    // exons only in this sample
+        size_t shared_exons = 0;       // exons in 2+ but not all samples
+        size_t conserved_exons = 0;    // exons in ALL samples
+        size_t constitutive_exons = 0; // exons in all transcripts of their gene
+        size_t alternative_exons = 0;  // exons in some transcripts of their gene
         size_t genes = 0;             // genes this sample has features in
         size_t transcripts = 0;       // transcript count
         double isoform_diversity = 0; // mean pairwise Jaccard distance of exon sets per gene
@@ -179,6 +201,24 @@ struct index_stats {
      * Shows which samples each individual branch target occurs in.
      */
     void write_branch_details_tsv(const std::string& path) const;
+
+    /**
+     * Write exon sharing statistics as TSV.
+     * Metrics as rows, samples as columns. Covers cross-sample and transcript-level sharing.
+     */
+    void write_exon_sharing_tsv(const std::string& path) const;
+
+    /**
+     * Write segment sharing statistics as TSV.
+     * Metrics as rows, samples as columns. Covers cross-sample sharing distribution.
+     */
+    void write_segment_sharing_tsv(const std::string& path) const;
+
+    /**
+     * Write conserved exons (present in ALL samples) as TSV.
+     * One row per exon with per-sample transcript counts.
+     */
+    void write_conserved_exons_tsv(const std::string& path) const;
 };
 
 #endif // ATROPLEX_INDEX_STATS_HPP
