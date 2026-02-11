@@ -99,9 +99,6 @@ index_stats index_stats::collect(grove_type& grove, bool detailed) {
     // Transcript -> sample mapping (for per-sample hub stats)
     std::unordered_map<std::string, std::unordered_set<uint32_t>> tx_to_samples;
 
-    // Transcript -> per-sample expression (from segments; expression is transcript-level)
-    std::unordered_map<std::string, std::unordered_map<uint32_t, float>> tx_to_expression;
-
     auto roots = grove.get_root_nodes();
     stats.total_chromosomes = roots.size();
 
@@ -217,8 +214,20 @@ index_stats index_stats::collect(grove_type& grove, bool detailed) {
                             info.exon_id = exon.id;
                             info.coordinate = exon.coordinate;
                             info.branches = unique_targets.size();
-                            info.transcripts = exon.transcript_ids.size();
                             info.sample_idx = exon.sample_idx;
+
+                            // Count transcripts for this gene only (exons can accumulate
+                            // transcript_ids from overlapping genes via deduplication)
+                            auto gene_tx_set = genes.find(exon.gene_id);
+                            if (gene_tx_set != genes.end()) {
+                                size_t gene_filtered = 0;
+                                for (const auto& tx : exon.transcript_ids) {
+                                    if (gene_tx_set->second.transcript_ids.count(tx)) gene_filtered++;
+                                }
+                                info.transcripts = gene_filtered;
+                            } else {
+                                info.transcripts = exon.transcript_ids.size();
+                            }
 
                             // Collect downstream targets with per-sample info
                             std::set<key_ptr> seen_targets;
@@ -240,9 +249,11 @@ index_stats index_stats::collect(grove_type& grove, bool detailed) {
                                     bt.sample_idx = te.sample_idx;
 
                                     // Count transcripts through this target per sample
-                                    // Only count transcripts that also use the hub exon
+                                    // Only count transcripts that also use the hub exon AND belong to same gene
+                                    auto gene_filter = genes.find(exon.gene_id);
                                     for (const auto& tx : te.transcript_ids) {
                                         if (!exon.transcript_ids.count(tx)) continue;
+                                        if (gene_filter != genes.end() && !gene_filter->second.transcript_ids.count(tx)) continue;
                                         auto it = tx_to_samples.find(tx);
                                         if (it != tx_to_samples.end()) {
                                             for (uint32_t sid : it->second) {
@@ -272,7 +283,11 @@ index_stats index_stats::collect(grove_type& grove, bool detailed) {
                             }
 
                             // Count per-sample transcripts using this hub exon
+                            // Filter to only transcripts belonging to this gene (exons can
+                            // accumulate transcript_ids from overlapping genes via deduplication)
+                            auto gene_it = genes.find(exon.gene_id);
                             for (const auto& tx : exon.transcript_ids) {
+                                if (gene_it != genes.end() && !gene_it->second.transcript_ids.count(tx)) continue;
                                 auto it = tx_to_samples.find(tx);
                                 if (it != tx_to_samples.end()) {
                                     for (uint32_t sid : it->second) {

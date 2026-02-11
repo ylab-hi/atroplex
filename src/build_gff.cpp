@@ -132,11 +132,26 @@ void build_gff::process_transcript(
     for (const auto& entry : transcript_entries) {
         if (entry.type == "transcript") {
             // Auto-detect expression attribute (priority order)
-            for (const auto& attr_name : {"counts", "TPM", "FPKM", "RPKM", "cov"}) {
+            static const std::pair<const char*, sample_info::expression_type> expr_attrs[] = {
+                {"counts", sample_info::expression_type::COUNTS},
+                {"TPM",    sample_info::expression_type::TPM},
+                {"FPKM",   sample_info::expression_type::FPKM},
+                {"RPKM",   sample_info::expression_type::RPKM},
+                {"cov",    sample_info::expression_type::UNKNOWN},
+            };
+            for (const auto& [attr_name, expr_type] : expr_attrs) {
                 auto it = entry.attributes.find(attr_name);
                 if (it != entry.attributes.end()) {
                     try {
                         expression_value = std::stof(it->second);
+                        // Set expr_type on sample_info if not already set
+                        if (sample_id.has_value()) {
+                            auto& registry = sample_registry::instance();
+                            auto* info = registry.get(*sample_id);
+                            if (info && !info->has_expression_type()) {
+                                info->expr_type = expr_type;
+                            }
+                        }
                     } catch (...) {}
                     break;
                 }
@@ -165,10 +180,21 @@ void build_gff::process_transcript(
         );
     }
 
-    // Step 3: Link exons into a chain
+    // Step 3: Propagate transcript expression to exons
+    // If the exon already has expression for this sample (e.g., from another transcript
+    // or from direct exon-level quantification), accumulate; otherwise set.
+    if (expression_value >= 0.0f && sample_id.has_value()) {
+        for (auto* exon_key : exon_chain) {
+            auto& exon = get_exon(exon_key->get_data());
+            float current = exon.get_expression(*sample_id); // 0 if absent
+            exon.set_expression(*sample_id, current + expression_value);
+        }
+    }
+
+    // Step 4: Link exons into a chain
     link_exon_chain(grove, grove_mutex, exon_chain, transcript_id);
 
-    // Step 4: Create or reuse segment
+    // Step 5: Create or reuse segment
     create_segment(
         grove, grove_mutex, transcript_id, sorted_exons, exon_coords,
         exon_chain, segment_cache, sample_id, gff_source, segment_count,
