@@ -58,7 +58,8 @@ public:
                       chromosome_exon_caches& exon_caches,
                       chromosome_segment_caches& segment_caches,
                       size_t& segment_count,
-                      uint32_t num_threads = 0);
+                      uint32_t num_threads = 0,
+                      float min_expression = -1.0f);
 
     /**
      * Generate a structure key from ordered exon coordinates
@@ -121,7 +122,8 @@ public:
         exon_cache_type& exon_cache,
         segment_cache_type& segment_cache,
         std::optional<uint32_t> sample_id,
-        size_t& segment_count
+        size_t& segment_count,
+        float min_expression = -1.0f
     );
 
 private:
@@ -144,7 +146,8 @@ private:
         std::map<gdt::genomic_coordinate, key_ptr>& exon_keys,
         std::unordered_map<std::string, key_ptr>& segment_keys,
         std::optional<uint32_t> sample_id,
-        size_t& segment_count
+        size_t& segment_count,
+        float min_expression = -1.0f
     );
 
     /**
@@ -185,19 +188,10 @@ private:
     );
 
     /**
-     * Create edges between consecutive exons in a chain
-     */
-    static void link_exon_chain(
-        grove_type& grove,
-        std::mutex& grove_mutex,
-        const std::vector<key_ptr>& exon_chain,
-        const std::string& transcript_id
-    );
-
-    /**
      * Create new segment or reuse existing one with same exon structure
      * @param gff_source GFF column 2 value (e.g., HAVANA, ENSEMBL, StringTie)
      * @param expression_value Expression value from transcript entry (-1 if not available)
+     * @param transcript_biotype Transcript biotype (e.g., protein_coding, retained_intron)
      */
     static void create_segment(
         grove_type& grove,
@@ -210,7 +204,8 @@ private:
         std::optional<uint32_t> sample_id,
         const std::string& gff_source,
         size_t& segment_count,
-        float expression_value = -1.0f
+        float expression_value = -1.0f,
+        const std::string& transcript_biotype = ""
     );
 
     // ========== Attribute extraction helpers ==========

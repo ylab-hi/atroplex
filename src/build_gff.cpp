@@ -28,7 +28,8 @@ void build_gff::build(grove_type& grove,
     chromosome_exon_caches& exon_caches,
     chromosome_segment_caches& segment_caches,
     size_t& segment_count,
-    uint32_t /*num_threads*/) {
+    uint32_t /*num_threads*/,
+    float min_expression) {
 
     gio::gff_reader reader(filepath.string());
 
@@ -62,7 +63,7 @@ void build_gff::build(grove_type& grove,
         if (!current_gene_id.empty() && gene_id.value() != current_gene_id) {
             process_gene(grove, grove_mutex, current_gene_entries,
                 exon_caches[current_chrom], segment_caches[current_chrom],
-                sample_id, segment_count);
+                sample_id, segment_count, min_expression);
             current_gene_entries.clear();
         }
 
@@ -75,7 +76,7 @@ void build_gff::build(grove_type& grove,
     if (!current_gene_entries.empty()) {
         process_gene(grove, grove_mutex, current_gene_entries,
             exon_caches[current_chrom], segment_caches[current_chrom],
-            sample_id, segment_count);
+            sample_id, segment_count, min_expression);
     }
 
     logging::progress_done(segment_count, "Processed " + filepath.filename().string());
@@ -88,7 +89,8 @@ void build_gff::process_gene(
     exon_cache_type& exon_cache,
     segment_cache_type& segment_cache,
     std::optional<uint32_t> sample_id,
-    size_t& segment_count
+    size_t& segment_count,
+    float min_expression
 ) {
     // Group entries by transcript
     std::unordered_map<std::string, std::vector<gio::gff_entry>> transcripts;
@@ -104,7 +106,7 @@ void build_gff::process_gene(
     // Uses chromosome-level caches for cross-file deduplication
     for (auto& [transcript_id, entries] : transcripts) {
         process_transcript(grove, grove_mutex, transcript_id, entries, exon_cache,
-            segment_cache, sample_id, segment_count);
+            segment_cache, sample_id, segment_count, min_expression);
     }
 
     // TODO: Annotate all exons with overlapping features (CDS, UTR, codons)
@@ -119,7 +121,8 @@ void build_gff::process_transcript(
     std::map<gdt::genomic_coordinate, key_ptr>& exon_cache,
     std::unordered_map<std::string, key_ptr>& segment_cache,
     std::optional<uint32_t> sample_id,
-    size_t& segment_count
+    size_t& segment_count,
+    float min_expression
 ) {
     // Step 1: Extract and sort exons in 5'→3' biological order
     std::vector<gio::gff_entry> sorted_exons = extract_sorted_exons(transcript_entries);
@@ -127,8 +130,9 @@ void build_gff::process_transcript(
         return;
     }
 
-    // Extract expression from transcript-level entry (counts, TPM, FPKM)
+    // Extract expression and transcript biotype from transcript-level entry
     float expression_value = -1.0f;
+    std::string transcript_biotype;
     for (const auto& entry : transcript_entries) {
         if (entry.type == "transcript") {
             // Auto-detect expression attribute (priority order)
@@ -156,8 +160,25 @@ void build_gff::process_transcript(
                     break;
                 }
             }
+
+            // Extract transcript biotype (GENCODE: transcript_type, Ensembl: transcript_biotype)
+            auto bt_it = entry.attributes.find("transcript_type");
+            if (bt_it == entry.attributes.end()) {
+                bt_it = entry.attributes.find("transcript_biotype");
+            }
+            if (bt_it != entry.attributes.end()) {
+                transcript_biotype = bt_it->second;
+            }
+
             break;
         }
+    }
+
+    // Filter: skip transcripts below expression threshold
+    // Only applies when both the filter is active (min_expression >= 0) and the
+    // transcript has expression data (expression_value >= 0)
+    if (min_expression >= 0 && expression_value >= 0 && expression_value < min_expression) {
+        return;
     }
 
     // Step 2: Insert or reuse exons, collecting keys and coordinates
@@ -180,25 +201,11 @@ void build_gff::process_transcript(
         );
     }
 
-    // Step 3: Propagate transcript expression to exons
-    // If the exon already has expression for this sample (e.g., from another transcript
-    // or from direct exon-level quantification), accumulate; otherwise set.
-    if (expression_value >= 0.0f && sample_id.has_value()) {
-        for (auto* exon_key : exon_chain) {
-            auto& exon = get_exon(exon_key->get_data());
-            float current = exon.get_expression(*sample_id); // 0 if absent
-            exon.set_expression(*sample_id, current + expression_value);
-        }
-    }
-
-    // Step 4: Link exons into a chain
-    link_exon_chain(grove, grove_mutex, exon_chain, transcript_id);
-
-    // Step 5: Create or reuse segment
+    // Step 3: Create or reuse segment (edges created inside for new segments only)
     create_segment(
         grove, grove_mutex, transcript_id, sorted_exons, exon_coords,
         exon_chain, segment_cache, sample_id, gff_source, segment_count,
-        expression_value
+        expression_value, transcript_biotype
     );
 }
 
@@ -288,19 +295,6 @@ key_ptr build_gff::insert_exon(
     return exon_key;
 }
 
-void build_gff::link_exon_chain(
-    grove_type& grove,
-    std::mutex& grove_mutex,
-    const std::vector<key_ptr>& exon_chain,
-    const std::string& transcript_id
-) {
-    std::lock_guard<std::mutex> lock(grove_mutex);
-    for (size_t i = 0; i + 1 < exon_chain.size(); ++i) {
-        edge_metadata edge(transcript_id, edge_metadata::edge_type::EXON_TO_EXON);
-        grove.add_edge(exon_chain[i], exon_chain[i + 1], edge);
-    }
-}
-
 void build_gff::create_segment(
     grove_type& grove,
     std::mutex& grove_mutex,
@@ -312,7 +306,8 @@ void build_gff::create_segment(
     std::optional<uint32_t> sample_id,
     const std::string& gff_source,
     size_t& segment_count,
-    float expression_value
+    float expression_value,
+    const std::string& transcript_biotype
 ) {
     std::string seqid = normalize_chromosome(sorted_exons.front().seqid);
     std::string structure_key = make_exon_structure_key(seqid, exon_coords);
@@ -323,6 +318,9 @@ void build_gff::create_segment(
         key_ptr seg_key = cached->second;
         auto& seg = get_segment(seg_key->get_data());
         seg.transcript_ids.insert(transcript_id);
+        if (!transcript_biotype.empty()) {
+            seg.transcript_biotypes[transcript_id] = transcript_biotype;
+        }
         if (sample_id.has_value()) {
             seg.add_sample(*sample_id);
             if (expression_value >= 0.0f) {
@@ -332,11 +330,7 @@ void build_gff::create_segment(
         if (!gff_source.empty()) {
             seg.add_source(gff_source);
         }
-
-        std::lock_guard<std::mutex> lock(grove_mutex);
-        edge_metadata edge(transcript_id, edge_metadata::edge_type::SEGMENT_TO_EXON);
-        grove.add_edge(seg_key, exon_chain.front(), edge);
-        return;
+        return;  // All edges created when segment was first inserted
     }
 
     // Compute segment span (min/max positions across all exons)
@@ -359,7 +353,11 @@ void build_gff::create_segment(
     // Build segment feature
     segment_feature new_segment;
     new_segment.id = structure_key;
+    new_segment.segment_index = segment_count;
     new_segment.transcript_ids.insert(transcript_id);
+    if (!transcript_biotype.empty()) {
+        new_segment.transcript_biotypes[transcript_id] = transcript_biotype;
+    }
     new_segment.exon_count = static_cast<int>(sorted_exons.size());
     new_segment.coordinate = coordinate_str;
 
@@ -379,14 +377,24 @@ void build_gff::create_segment(
         new_segment.add_source(gff_source);
     }
 
-    // Insert into grove (protected by mutex)
+    // Insert into grove + create all edges (protected by mutex)
+    // Use compact numeric segment index as edge ID for memory efficiency
+    std::string edge_id = std::to_string(segment_count);
     genomic_feature feature = new_segment;
     key_ptr seg_key;
     {
         std::lock_guard<std::mutex> lock(grove_mutex);
         seg_key = grove.insert_data(seqid, segment_coord, feature);
-        edge_metadata edge(transcript_id, edge_metadata::edge_type::SEGMENT_TO_EXON);
-        grove.add_edge(seg_key, exon_chain.front(), edge);
+
+        // SEGMENT_TO_EXON edge (one per segment)
+        edge_metadata seg_edge(edge_id, edge_metadata::edge_type::SEGMENT_TO_EXON);
+        grove.add_edge(seg_key, exon_chain.front(), seg_edge);
+
+        // EXON_TO_EXON chain edges (one per adjacent exon pair in this segment)
+        for (size_t i = 0; i + 1 < exon_chain.size(); ++i) {
+            edge_metadata exon_edge(edge_id, edge_metadata::edge_type::EXON_TO_EXON);
+            grove.add_edge(exon_chain[i], exon_chain[i + 1], exon_edge);
+        }
     }
     segment_count++;
 

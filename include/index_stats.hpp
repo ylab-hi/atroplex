@@ -39,6 +39,9 @@ struct index_stats {
     // Gene biotype breakdown
     std::map<std::string, size_t> genes_by_biotype;
 
+    // Transcript biotype breakdown
+    std::map<std::string, size_t> transcripts_by_biotype;
+
     // Transcripts per gene
     double mean_transcripts_per_gene = 0;
     double median_transcripts_per_gene = 0;
@@ -147,6 +150,8 @@ struct index_stats {
         double deduplication_ratio = 0; // segments / transcripts
         double mean_expression = 0;   // mean expression across segments (if available)
         size_t expressed_segments = 0; // segments with expression data
+        std::map<std::string, size_t> genes_by_biotype;        // per-sample gene biotype
+        std::map<std::string, size_t> transcripts_by_biotype;  // per-sample transcript biotype
     };
     std::unordered_map<uint32_t, sample_stats> per_sample;
 
@@ -161,10 +166,23 @@ struct index_stats {
     std::map<std::string, source_stats> per_source;
 
     /**
-     * Collect statistics by traversing a built grove.
-     * @param detailed  If true, run expensive Phase 4b (Jaccard diversity).
+     * Options for collect() — controls detail level and streaming output.
      */
-    static index_stats collect(grove_type& grove, bool detailed = true);
+    struct collect_options {
+        bool detailed = true;       // run expensive Phase 4b (Jaccard diversity)
+        std::string output_dir;     // if set, stream large outputs to files during traversal
+        std::string basename;       // file prefix for streamed outputs
+    };
+
+    /**
+     * Collect statistics by traversing a built grove.
+     * When output_dir is set, conserved exons and branch details are streamed
+     * directly to files to reduce peak memory usage.
+     */
+    static index_stats collect(grove_type& grove, const collect_options& opts);
+    static index_stats collect(grove_type& grove) {
+        return collect(grove, collect_options{});
+    }
 
     /**
      * Write full analysis report to a text file.
@@ -219,6 +237,36 @@ struct index_stats {
      * One row per exon with per-sample transcript counts.
      */
     void write_conserved_exons_tsv(const std::string& path) const;
+
+    /**
+     * Write global overview statistics as TSV (metric/value pairs).
+     */
+    void write_overview_tsv(const std::string& path) const;
+
+    /**
+     * Write per-chromosome summary as TSV.
+     * One row per chromosome with genes, segments, exons.
+     */
+    void write_per_chromosome_tsv(const std::string& path) const;
+
+    /**
+     * Write per-source summary as TSV.
+     * One row per annotation source (GFF column 2) with genes, segments, exons.
+     */
+    void write_per_source_tsv(const std::string& path) const;
+
+    /**
+     * Write per-sample summary as TSV.
+     * One row per sample with genes, segments, exons, diversity, etc.
+     */
+    void write_per_sample_tsv(const std::string& path) const;
+
+    /**
+     * Write gene and transcript biotype breakdown as TSV.
+     * One row per (level, biotype) pair with per-sample counts.
+     * Level is "gene" or "transcript".
+     */
+    void write_biotype_tsv(const std::string& path) const;
 };
 
 #endif // ATROPLEX_INDEX_STATS_HPP

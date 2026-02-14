@@ -145,22 +145,21 @@ match_result transcript_matcher::match(const read_cluster& cluster) {
         if (!is_segment(seg_key->get_data())) continue;
 
         const auto& seg = get_segment(seg_key->get_data());
+        if (seg.transcript_ids.empty()) continue;
 
-        // Try each transcript associated with this segment
-        for (const auto& transcript_id : seg.transcript_ids) {
-            auto exon_chain = get_exon_chain(seg_key, transcript_id);
-            if (exon_chain.empty()) continue;
+        // All transcripts of a segment share the same exon chain — get it once
+        auto exon_chain = get_exon_chain(seg_key, "");
+        if (exon_chain.empty()) continue;
 
-            double score = score_junction_match(cluster, exon_chain);
+        double score = score_junction_match(cluster, exon_chain);
 
-            if (score > best_score) {
-                best_score = score;
-                best_segment = seg_key;
-                best_transcript_id = transcript_id;
-                best_gene_id = seg.gene_id;
-                best_exon_chain = exon_chain;
-                best_ref_junctions = static_cast<int>(exon_chain.size()) - 1;
-            }
+        if (score > best_score) {
+            best_score = score;
+            best_segment = seg_key;
+            best_transcript_id = *seg.transcript_ids.begin();
+            best_gene_id = seg.gene_id;
+            best_exon_chain = exon_chain;
+            best_ref_junctions = static_cast<int>(exon_chain.size()) - 1;
         }
     }
 
@@ -193,25 +192,24 @@ match_result transcript_matcher::match(const read_cluster& cluster) {
     // Classify using SQANTI categories
     classify_match(result, cluster, best_exon_chain);
 
-    // Check for ambiguous matches (multiple transcripts with same best score)
+    // Check for ambiguous matches (multiple segments with same best score)
     int equal_matches = 0;
     for (key_ptr seg_key : candidates) {
         if (!is_segment(seg_key->get_data())) continue;
+        if (seg_key == best_segment) continue;
+
         const auto& seg = get_segment(seg_key->get_data());
+        if (seg.transcript_ids.empty()) continue;
 
-        for (const auto& transcript_id : seg.transcript_ids) {
-            if (seg_key == best_segment && transcript_id == best_transcript_id) continue;
+        auto exon_chain = get_exon_chain(seg_key, "");
+        if (exon_chain.empty()) continue;
 
-            auto exon_chain = get_exon_chain(seg_key, transcript_id);
-            if (exon_chain.empty()) continue;
-
-            double score = score_junction_match(cluster, exon_chain);
-            if (std::abs(score - best_score) < 0.001 && score >= cfg_.min_junction_score) {
-                equal_matches++;
-                result.matched_segments.push_back(seg_key);
-                result.matched_transcript_ids.push_back(transcript_id);
-                result.matched_gene_ids.push_back(seg.gene_id);
-            }
+        double score = score_junction_match(cluster, exon_chain);
+        if (std::abs(score - best_score) < 0.001 && score >= cfg_.min_junction_score) {
+            equal_matches++;
+            result.matched_segments.push_back(seg_key);
+            result.matched_transcript_ids.push_back(*seg.transcript_ids.begin());
+            result.matched_gene_ids.push_back(seg.gene_id);
         }
     }
 
@@ -521,28 +519,31 @@ std::vector<key_ptr> transcript_matcher::find_candidate_segments(
 }
 
 std::vector<key_ptr> transcript_matcher::get_exon_chain(
-    key_ptr segment, const std::string& transcript_id) {
+    key_ptr segment, const std::string& /*transcript_id*/) {
 
     std::vector<key_ptr> chain;
 
-    // Get SEGMENT_TO_EXON edge to find first exon
+    const auto& seg = get_segment(segment->get_data());
+    std::string edge_id = std::to_string(seg.segment_index);
+
+    // Get SEGMENT_TO_EXON edge to find first exon (filter by segment index)
     auto first_exons = grove_.get_neighbors_if(segment,
-        [&transcript_id](const edge_metadata& e) {
+        [&edge_id](const edge_metadata& e) {
             return e.type == edge_metadata::edge_type::SEGMENT_TO_EXON &&
-                   e.id == transcript_id;
+                   e.id == edge_id;
         });
 
     if (first_exons.empty()) return chain;
 
-    // Traverse EXON_TO_EXON edges
+    // Traverse EXON_TO_EXON edges (filter by segment index)
     key_ptr current = first_exons[0];
     while (current != nullptr) {
         chain.push_back(current);
 
         auto next_exons = grove_.get_neighbors_if(current,
-            [&transcript_id](const edge_metadata& e) {
+            [&edge_id](const edge_metadata& e) {
                 return e.type == edge_metadata::edge_type::EXON_TO_EXON &&
-                       e.id == transcript_id;
+                       e.id == edge_id;
             });
 
         current = next_exons.empty() ? nullptr : next_exons[0];

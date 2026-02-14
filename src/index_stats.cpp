@@ -12,8 +12,10 @@
 
 #include <algorithm>
 #include <cmath>
+#include <filesystem>
 #include <fstream>
 #include <iomanip>
+#include <memory>
 #include <numeric>
 #include <set>
 #include <unordered_map>
@@ -69,8 +71,10 @@ double jaccard_distance(const std::set<const void*>& a, const std::set<const voi
 
 } // anonymous namespace
 
-index_stats index_stats::collect(grove_type& grove, bool detailed) {
+index_stats index_stats::collect(grove_type& grove, const collect_options& opts) {
     index_stats stats;
+    bool detailed = opts.detailed;
+    bool streaming = !opts.output_dir.empty();
 
     // Collect annotation sources from sample_registry
     auto& registry = sample_registry::instance();
@@ -98,6 +102,9 @@ index_stats index_stats::collect(grove_type& grove, bool detailed) {
 
     // Transcript -> sample mapping (for per-sample hub stats)
     std::unordered_map<std::string, std::unordered_set<uint32_t>> tx_to_samples;
+
+    // Transcript -> biotype mapping (for per-sample biotype counts)
+    std::unordered_map<std::string, std::string> tx_biotypes;
 
     auto roots = grove.get_root_nodes();
     stats.total_chromosomes = roots.size();
@@ -135,6 +142,13 @@ index_stats index_stats::collect(grove_type& grove, bool detailed) {
                 }
                 chr_gene_ids[seqid].insert(seg.gene_id);
 
+                // Collect transcript biotypes
+                for (const auto& [tx_id, biotype] : seg.transcript_biotypes) {
+                    if (!biotype.empty()) {
+                        tx_biotypes[tx_id] = biotype;
+                    }
+                }
+
                 exons_per_segment.push_back(static_cast<size_t>(seg.exon_count));
                 if (seg.exon_count == 1) {
                     stats.single_exon_segments++;
@@ -162,6 +176,45 @@ index_stats index_stats::collect(grove_type& grove, bool detailed) {
 
     // --- Phase 2: Traverse graph from segments to collect exons ---
     std::set<const void*> visited_exons; // deduplicate by pointer
+
+    // Streaming: open branch details file if output_dir is set
+    std::unique_ptr<std::ofstream> branch_stream;
+    std::vector<uint32_t> stream_sample_ids;
+    std::vector<std::string> stream_labels;
+    std::vector<bool> stream_is_sample;
+    std::vector<std::string> stream_expr_labels;
+
+    if (streaming) {
+        // Prepare sample ID ordering for streaming output
+        for (size_t i = 0; i < registry.size(); ++i) {
+            stream_sample_ids.push_back(static_cast<uint32_t>(i));
+        }
+        for (uint32_t sid : stream_sample_ids) {
+            const auto* info = registry.get(sid);
+            stream_labels.push_back((info && !info->id.empty()) ? info->id : std::to_string(sid));
+            bool is_samp = info && info->type == "sample";
+            stream_is_sample.push_back(is_samp);
+            stream_expr_labels.push_back(is_samp ? expr_type_label(info->expr_type) : "");
+        }
+
+        auto hubs_dir = std::filesystem::path(opts.output_dir) / "splicing_hubs";
+        std::filesystem::create_directories(hubs_dir);
+        auto bd_path = hubs_dir / (opts.basename + ".branch_details.tsv");
+        branch_stream = std::make_unique<std::ofstream>(bd_path.string());
+
+        if (branch_stream->is_open()) {
+            *branch_stream << "hub_gene_name\thub_gene_id\thub_exon_id\thub_coordinate"
+                           << "\ttarget_exon_id\ttarget_coordinate";
+            for (size_t i = 0; i < stream_sample_ids.size(); ++i) {
+                *branch_stream << "\t" << stream_labels[i] << ".fraction";
+                if (stream_is_sample[i]) {
+                    *branch_stream << "\t" << stream_labels[i] << "." << stream_expr_labels[i];
+                }
+            }
+            *branch_stream << "\n";
+            *branch_stream << std::fixed;
+        }
+    }
 
     for (auto& [seqid, seg_key] : segment_keys) {
         // Follow SEGMENT_TO_EXON edges
@@ -330,12 +383,60 @@ index_stats index_stats::collect(grove_type& grove, bool detailed) {
                                 }
                             }
 
+                            // Stream branch detail rows to file and drop targets to save memory
+                            if (branch_stream && branch_stream->is_open()) {
+                                for (const auto& target : info.targets) {
+                                    *branch_stream << info.gene_name << "\t"
+                                        << info.gene_id << "\t"
+                                        << info.exon_id << "\t"
+                                        << info.coordinate << "\t"
+                                        << target.exon_id << "\t"
+                                        << target.coordinate;
+
+                                    for (size_t si = 0; si < stream_sample_ids.size(); ++si) {
+                                        uint32_t sid = stream_sample_ids[si];
+                                        if (!target.sample_idx.count(sid)) {
+                                            *branch_stream << "\t.";
+                                            if (stream_is_sample[si]) *branch_stream << "\t.";
+                                        } else {
+                                            auto bt_tx_it = target.sample_transcripts.find(sid);
+                                            auto hub_tx_it = info.sample_transcripts.find(sid);
+                                            if (bt_tx_it != target.sample_transcripts.end()
+                                                && hub_tx_it != info.sample_transcripts.end()
+                                                && hub_tx_it->second > 0) {
+                                                double frac = static_cast<double>(bt_tx_it->second)
+                                                            / static_cast<double>(hub_tx_it->second);
+                                                *branch_stream << "\t" << std::setprecision(3) << frac;
+                                            } else {
+                                                *branch_stream << "\t0";
+                                            }
+                                            if (stream_is_sample[si]) {
+                                                auto expr_it = target.sample_expression.find(sid);
+                                                if (expr_it != target.sample_expression.end()) {
+                                                    *branch_stream << "\t" << std::setprecision(2) << expr_it->second;
+                                                } else {
+                                                    *branch_stream << "\t.";
+                                                }
+                                            }
+                                        }
+                                    }
+                                    *branch_stream << "\n";
+                                }
+                                info.targets.clear();
+                                info.targets.shrink_to_fit();
+                            }
+
                             stats.splicing_hubs.push_back(std::move(info));
                         }
                     }
                 }
             }
         }
+    }
+
+    if (branch_stream) {
+        branch_stream.reset();
+        logging::info("Branch details streamed to file");
     }
 
     // Sort splicing hubs by branch count descending
@@ -361,11 +462,11 @@ index_stats index_stats::collect(grove_type& grove, bool detailed) {
                 auto& seg = get_segment(seg_key->get_data());
                 if (seg.transcript_ids.empty()) continue;
 
-                const std::string& tx_id = *seg.transcript_ids.begin();
+                std::string edge_id = std::to_string(seg.segment_index);
                 auto first = grove.get_neighbors_if(seg_key,
-                    [&tx_id](const edge_metadata& e) {
+                    [&edge_id](const edge_metadata& e) {
                         return e.type == edge_metadata::edge_type::SEGMENT_TO_EXON
-                            && e.id == tx_id;
+                            && e.id == edge_id;
                     });
                 if (first.empty()) continue;
 
@@ -381,9 +482,9 @@ index_stats index_stats::collect(grove_type& grove, bool detailed) {
                         break;
                     }
                     auto nxt = grove.get_neighbors_if(cur,
-                        [&tx_id](const edge_metadata& e) {
+                        [&edge_id](const edge_metadata& e) {
                             return e.type == edge_metadata::edge_type::EXON_TO_EXON
-                                && e.id == tx_id;
+                                && e.id == edge_id;
                         });
                     if (nxt.empty()) break;
                     cur = nxt.front();
@@ -392,6 +493,9 @@ index_stats index_stats::collect(grove_type& grove, bool detailed) {
             }
         }
     }
+
+    // Free gene_sample_tx — only needed for Phase 2 PSI computation
+    gene_sample_tx.clear();
 
     // Initialize per-sample and per-source tracking (needed by Phase 3 and Phase 5)
     std::vector<uint32_t> sample_ids;
@@ -420,6 +524,38 @@ index_stats index_stats::collect(grove_type& grove, bool detailed) {
         }
     }
     stats.total_samples = total_samples;
+
+    // Compute global + per-sample transcript biotype counts
+    for (const auto& [tx_id, biotype] : tx_biotypes) {
+        stats.transcripts_by_biotype[biotype]++;
+        auto it = tx_to_samples.find(tx_id);
+        if (it != tx_to_samples.end()) {
+            for (uint32_t sid : it->second) {
+                stats.per_sample[sid].transcripts_by_biotype[biotype]++;
+            }
+        }
+    }
+
+    // Streaming: open conserved exons file if output_dir is set
+    std::unique_ptr<std::ofstream> conserved_stream;
+    if (streaming) {
+        auto sharing_dir = std::filesystem::path(opts.output_dir) / "sharing";
+        std::filesystem::create_directories(sharing_dir);
+        auto ce_path = sharing_dir / (opts.basename + ".conserved_exons.tsv");
+        conserved_stream = std::make_unique<std::ofstream>(ce_path.string());
+
+        if (conserved_stream->is_open()) {
+            *conserved_stream << "exon_id\tgene_name\tgene_id\tchromosome\tcoordinate\tn_transcripts\tconstitutive";
+            for (size_t i = 0; i < stream_sample_ids.size(); ++i) {
+                *conserved_stream << "\t" << stream_labels[i] << ".transcripts";
+                if (stream_is_sample[i]) {
+                    *conserved_stream << "\t" << stream_labels[i] << "." << stream_expr_labels[i];
+                }
+            }
+            *conserved_stream << "\n";
+            *conserved_stream << std::fixed;
+        }
+    }
 
     std::set<const void*> visited_exons_stats;
     size_t total_tx_per_exon = 0;
@@ -485,24 +621,57 @@ index_stats index_stats::collect(grove_type& grove, bool detailed) {
 
                 // Collect conserved exon details
                 if (is_conserved) {
-                    index_stats::conserved_exon_entry entry;
-                    entry.exon_id = exon.id;
-                    entry.gene_name = exon.gene_name;
-                    entry.gene_id = exon.gene_id;
-                    entry.chromosome = seqid;
-                    entry.coordinate = exon.coordinate;
-                    entry.n_transcripts = tx_count;
-                    entry.constitutive = (gene_total > 0 && tx_count >= gene_total);
+                    bool constitutive = (gene_total > 0 && tx_count >= gene_total);
+
+                    // Build per-sample transcript counts for this exon
+                    std::unordered_map<uint32_t, size_t> entry_sample_tx;
                     for (const auto& tx : exon.transcript_ids) {
                         auto it = tx_to_samples.find(tx);
                         if (it != tx_to_samples.end()) {
                             for (uint32_t sid : it->second) {
-                                entry.sample_transcripts[sid]++;
+                                entry_sample_tx[sid]++;
                             }
                         }
                     }
-                    entry.sample_expression = exon.expression;
-                    stats.conserved_exon_details.push_back(std::move(entry));
+
+                    if (conserved_stream && conserved_stream->is_open()) {
+                        // Stream directly to file
+                        *conserved_stream << exon.id << "\t"
+                            << exon.gene_name << "\t"
+                            << exon.gene_id << "\t"
+                            << seqid << "\t"
+                            << exon.coordinate << "\t"
+                            << tx_count << "\t"
+                            << (constitutive ? "yes" : "no");
+
+                        for (size_t si = 0; si < stream_sample_ids.size(); ++si) {
+                            uint32_t sid = stream_sample_ids[si];
+                            auto tx_it = entry_sample_tx.find(sid);
+                            *conserved_stream << "\t" << (tx_it != entry_sample_tx.end() ? tx_it->second : size_t{0});
+                            if (stream_is_sample[si]) {
+                                auto expr_it = exon.expression.find(sid);
+                                if (expr_it != exon.expression.end()) {
+                                    *conserved_stream << "\t" << std::setprecision(2) << expr_it->second;
+                                } else {
+                                    *conserved_stream << "\t.";
+                                }
+                            }
+                        }
+                        *conserved_stream << "\n";
+                    } else {
+                        // Accumulate in memory (non-streaming path)
+                        index_stats::conserved_exon_entry entry;
+                        entry.exon_id = exon.id;
+                        entry.gene_name = exon.gene_name;
+                        entry.gene_id = exon.gene_id;
+                        entry.chromosome = seqid;
+                        entry.coordinate = exon.coordinate;
+                        entry.n_transcripts = tx_count;
+                        entry.constitutive = constitutive;
+                        entry.sample_transcripts = std::move(entry_sample_tx);
+                        entry.sample_expression = exon.expression;
+                        stats.conserved_exon_details.push_back(std::move(entry));
+                    }
                 }
 
                 // Per-source exon stats
@@ -532,6 +701,14 @@ index_stats index_stats::collect(grove_type& grove, bool detailed) {
         stats.mean_transcripts_per_exon =
             static_cast<double>(total_tx_per_exon) / static_cast<double>(stats.total_exons);
     }
+
+    // Close conserved exon stream and free tx_to_samples (no longer needed)
+    if (conserved_stream) {
+        conserved_stream.reset();
+        logging::info("Conserved exons streamed to file");
+    }
+    tx_to_samples.clear();
+    tx_biotypes.clear();
 
     // --- Phase 4: Compute gene-level statistics ---
     stats.total_genes = genes.size();
@@ -588,23 +765,21 @@ index_stats index_stats::collect(grove_type& grove, bool detailed) {
 
     for (auto& [seqid, seg_key] : segment_keys) {
         auto& seg = get_segment(seg_key->get_data());
-        if (seg.transcript_ids.empty()) continue;
 
-        // Pick one transcript to follow its specific exon chain
-        const std::string& tx_id = *seg.transcript_ids.begin();
+        std::string edge_id = std::to_string(seg.segment_index);
 
         segment_exon_info sei;
         sei.sample_idx = seg.sample_idx;
 
-        // Get first exon via SEGMENT_TO_EXON edge for this transcript
+        // Get first exon via SEGMENT_TO_EXON edge (filter by segment index)
         auto first_exons = grove.get_neighbors_if(seg_key,
-            [&tx_id](const edge_metadata& e) {
-                return e.type == edge_metadata::edge_type::SEGMENT_TO_EXON && e.id == tx_id;
+            [&edge_id](const edge_metadata& e) {
+                return e.type == edge_metadata::edge_type::SEGMENT_TO_EXON && e.id == edge_id;
             });
 
         if (first_exons.empty()) continue;
 
-        // Walk exon chain following this transcript's EXON_TO_EXON edges
+        // Walk exon chain following segment's EXON_TO_EXON edges
         key_ptr current = first_exons.front();
         sei.exon_set.insert(current);
 
@@ -612,8 +787,8 @@ index_stats index_stats::collect(grove_type& grove, bool detailed) {
         while (found_next) {
             found_next = false;
             auto next = grove.get_neighbors_if(current,
-                [&tx_id](const edge_metadata& e) {
-                    return e.type == edge_metadata::edge_type::EXON_TO_EXON && e.id == tx_id;
+                [&edge_id](const edge_metadata& e) {
+                    return e.type == edge_metadata::edge_type::EXON_TO_EXON && e.id == edge_id;
                 });
             if (!next.empty()) {
                 current = next.front();
@@ -626,12 +801,20 @@ index_stats index_stats::collect(grove_type& grove, bool detailed) {
     }
 
     // Compute global mean pairwise Jaccard distance (averaged per gene, then across genes)
+    // Cap at MAX_JACCARD_SEGMENTS to avoid O(n²) blowup on highly fragmented genes
+    static constexpr size_t MAX_JACCARD_SEGMENTS = 200;
+    size_t skipped_genes = 0;
+
     {
         double global_sum = 0;
         size_t gene_count = 0;
 
         for (auto& [gene_id, seg_infos] : gene_segment_exons) {
             if (seg_infos.size() < 2) continue;
+            if (seg_infos.size() > MAX_JACCARD_SEGMENTS) {
+                skipped_genes++;
+                continue;
+            }
 
             double gene_sum = 0;
             size_t gene_pairs = 0;
@@ -655,12 +838,19 @@ index_stats index_stats::collect(grove_type& grove, bool detailed) {
         }
     }
 
+    if (skipped_genes > 0) {
+        logging::info("Jaccard diversity: skipped " + std::to_string(skipped_genes)
+            + " genes with >" + std::to_string(MAX_JACCARD_SEGMENTS) + " segments");
+    }
+
     // Per-sample Jaccard diversity
     for (auto& [sid, ss] : stats.per_sample) {
         double sample_sum = 0;
         size_t sample_genes = 0;
 
         for (auto& [gene_id, seg_infos] : gene_segment_exons) {
+            if (seg_infos.size() > MAX_JACCARD_SEGMENTS) continue;
+
             // Filter to segments containing this sample
             std::vector<size_t> indices;
             for (size_t k = 0; k < seg_infos.size(); ++k) {
@@ -691,6 +881,9 @@ index_stats index_stats::collect(grove_type& grove, bool detailed) {
             ss.isoform_diversity = sample_sum / static_cast<double>(sample_genes);
         }
     }
+
+    // Explicitly free Jaccard data
+    gene_segment_exons.clear();
     } // end if (detailed)
 
     // Exons per segment distribution
@@ -763,6 +956,13 @@ index_stats index_stats::collect(grove_type& grove, bool detailed) {
         }
         if (ss.expressed_segments > 0) {
             ss.mean_expression /= static_cast<double>(ss.expressed_segments);
+        }
+        // Per-sample gene biotype counts
+        for (const auto& gene_id : sample_gene_ids[sid]) {
+            auto it = genes.find(gene_id);
+            if (it != genes.end() && !it->second.biotype.empty()) {
+                ss.genes_by_biotype[it->second.biotype]++;
+            }
         }
     }
 
@@ -849,6 +1049,25 @@ void index_stats::write(const std::string& path) const {
         for (const auto& [biotype, count] : sorted_biotypes) {
             double pct = total_genes > 0 ?
                 100.0 * static_cast<double>(count) / static_cast<double>(total_genes) : 0;
+            out << "  " << std::left << std::setw(30) << biotype
+                << std::right << std::setw(8) << count
+                << "  (" << std::setprecision(1) << pct << "%)\n";
+        }
+        out << std::setprecision(2);
+    }
+
+    // ── Transcripts by biotype ──
+    if (!transcripts_by_biotype.empty()) {
+        section("Transcripts by biotype");
+
+        std::vector<std::pair<std::string, size_t>> sorted_tx_biotypes(
+            transcripts_by_biotype.begin(), transcripts_by_biotype.end());
+        std::sort(sorted_tx_biotypes.begin(), sorted_tx_biotypes.end(),
+            [](const auto& a, const auto& b) { return a.second > b.second; });
+
+        for (const auto& [biotype, count] : sorted_tx_biotypes) {
+            double pct = total_transcripts > 0 ?
+                100.0 * static_cast<double>(count) / static_cast<double>(total_transcripts) : 0;
             out << "  " << std::left << std::setw(30) << biotype
                 << std::right << std::setw(8) << count
                 << "  (" << std::setprecision(1) << pct << "%)\n";
@@ -1130,6 +1349,23 @@ void index_stats::write_summary(const std::string& path) const {
         for (const auto& [biotype, count] : sorted_biotypes) {
             double pct = total_genes > 0 ?
                 100.0 * static_cast<double>(count) / static_cast<double>(total_genes) : 0;
+            out << "  " << std::left << std::setw(28) << biotype
+                << std::right << std::setw(8) << count
+                << "  (" << std::setprecision(1) << pct << "%)\n";
+        }
+        out << std::setprecision(2) << "\n";
+    }
+
+    // Transcripts by biotype
+    if (!transcripts_by_biotype.empty()) {
+        out << "Transcripts by biotype:\n";
+        std::vector<std::pair<std::string, size_t>> sorted_tx_biotypes(
+            transcripts_by_biotype.begin(), transcripts_by_biotype.end());
+        std::sort(sorted_tx_biotypes.begin(), sorted_tx_biotypes.end(),
+            [](const auto& a, const auto& b) { return a.second > b.second; });
+        for (const auto& [biotype, count] : sorted_tx_biotypes) {
+            double pct = total_transcripts > 0 ?
+                100.0 * static_cast<double>(count) / static_cast<double>(total_transcripts) : 0;
             out << "  " << std::left << std::setw(28) << biotype
                 << std::right << std::setw(8) << count
                 << "  (" << std::setprecision(1) << pct << "%)\n";
@@ -1689,4 +1925,208 @@ void index_stats::write_conserved_exons_tsv(const std::string& path) const {
 
     logging::info("Conserved exons (" + std::to_string(sorted.size())
         + " exons in all " + std::to_string(total_samples) + " samples) written to: " + path);
+}
+
+void index_stats::write_overview_tsv(const std::string& path) const {
+    std::ofstream out(path);
+    if (!out.is_open()) {
+        logging::error("Cannot open overview file: " + path);
+        return;
+    }
+
+    out << "metric\tvalue\n";
+
+    out << "chromosomes\t" << total_chromosomes << "\n";
+    out << "genes\t" << total_genes << "\n";
+    out << "transcripts\t" << total_transcripts << "\n";
+    out << "segments\t" << total_segments << "\n";
+    out << "exons\t" << total_exons << "\n";
+    out << "edges\t" << total_edges << "\n";
+    out << "samples\t" << total_samples << "\n";
+
+    out << std::fixed << std::setprecision(2);
+    out << "mean_transcripts_per_gene\t" << mean_transcripts_per_gene << "\n";
+    out << "median_transcripts_per_gene\t" << median_transcripts_per_gene << "\n";
+    out << "max_transcripts_per_gene\t" << max_transcripts_per_gene << "\n";
+    if (!max_transcripts_gene_id.empty()) {
+        out << "max_transcripts_gene_id\t" << max_transcripts_gene_id << "\n";
+    }
+    out << "single_isoform_genes\t" << single_isoform_genes << "\n";
+    out << "multi_isoform_genes\t" << multi_isoform_genes << "\n";
+
+    out << "mean_exons_per_segment\t" << mean_exons_per_segment << "\n";
+    out << "median_exons_per_segment\t" << median_exons_per_segment << "\n";
+    out << "max_exons_per_segment\t" << max_exons_per_segment << "\n";
+    out << "single_exon_segments\t" << single_exon_segments << "\n";
+
+    out << "branching_exons\t" << branching_exons << "\n";
+    out << "deduplication_ratio\t" << deduplication_ratio << "\n";
+
+    if (isoform_diversity > 0) {
+        out << "isoform_diversity\t" << isoform_diversity << "\n";
+        out << "multi_segment_genes\t" << multi_segment_genes << "\n";
+    }
+
+    logging::info("Overview statistics written to: " + path);
+}
+
+void index_stats::write_per_chromosome_tsv(const std::string& path) const {
+    std::ofstream out(path);
+    if (!out.is_open()) {
+        logging::error("Cannot open per-chromosome file: " + path);
+        return;
+    }
+
+    out << "chromosome\tgenes\tsegments\texons\n";
+    for (const auto& [seqid, cs] : per_chromosome) {
+        out << seqid << "\t" << cs.genes << "\t" << cs.segments << "\t" << cs.exons << "\n";
+    }
+
+    logging::info("Per-chromosome statistics written to: " + path);
+}
+
+void index_stats::write_per_source_tsv(const std::string& path) const {
+    std::ofstream out(path);
+    if (!out.is_open()) {
+        logging::error("Cannot open per-source file: " + path);
+        return;
+    }
+
+    out << "source\tgenes\tsegments\texclusive_segments\texons\texclusive_exons\n";
+    for (const auto& [source, ss] : per_source) {
+        out << source << "\t" << ss.genes
+            << "\t" << ss.segments << "\t" << ss.exclusive_segments
+            << "\t" << ss.exons << "\t" << ss.exclusive_exons << "\n";
+    }
+
+    logging::info("Per-source statistics written to: " + path);
+}
+
+void index_stats::write_per_sample_tsv(const std::string& path) const {
+    std::ofstream out(path);
+    if (!out.is_open()) {
+        logging::error("Cannot open per-sample file: " + path);
+        return;
+    }
+
+    auto& registry = sample_registry::instance();
+
+    // Collect sample IDs in sorted order
+    std::vector<uint32_t> sample_ids;
+    for (const auto& [sid, _] : per_sample) {
+        sample_ids.push_back(sid);
+    }
+    std::sort(sample_ids.begin(), sample_ids.end());
+
+    out << "sample\ttype\tgenes\tsegments\texclusive_segments\texons\texclusive_exons"
+        << "\ttranscripts\tisoform_diversity\tdeduplication_ratio"
+        << "\texpressed_segments\tmean_expression\n";
+
+    out << std::fixed;
+    for (uint32_t sid : sample_ids) {
+        const auto& ss = per_sample.at(sid);
+        const auto* info = registry.get(sid);
+        std::string label = (info && !info->id.empty()) ? info->id : std::to_string(sid);
+        std::string type = (info ? info->type : "sample");
+
+        out << label << "\t" << type
+            << "\t" << ss.genes
+            << "\t" << ss.segments << "\t" << ss.exclusive_segments
+            << "\t" << ss.exons << "\t" << ss.exclusive_exons
+            << "\t" << ss.transcripts
+            << "\t" << std::setprecision(2) << ss.isoform_diversity
+            << "\t" << std::setprecision(3) << ss.deduplication_ratio;
+
+        if (ss.expressed_segments > 0) {
+            out << "\t" << ss.expressed_segments
+                << "\t" << std::setprecision(2) << ss.mean_expression;
+        } else {
+            out << "\t.\t.";
+        }
+        out << "\n";
+    }
+
+    logging::info("Per-sample statistics written to: " + path);
+}
+
+void index_stats::write_biotype_tsv(const std::string& path) const {
+    std::ofstream out(path);
+    if (!out.is_open()) {
+        logging::error("Cannot open biotype file: " + path);
+        return;
+    }
+
+    if (genes_by_biotype.empty() && transcripts_by_biotype.empty()) {
+        logging::warning("No biotype data to write");
+        return;
+    }
+
+    auto& registry = sample_registry::instance();
+
+    // Collect sample IDs in sorted order
+    std::vector<uint32_t> sample_ids;
+    for (const auto& [sid, _] : per_sample) {
+        sample_ids.push_back(sid);
+    }
+    std::sort(sample_ids.begin(), sample_ids.end());
+
+    // Resolve sample labels
+    std::vector<std::string> labels;
+    for (uint32_t sid : sample_ids) {
+        const auto* info = registry.get(sid);
+        labels.push_back((info && !info->id.empty()) ? info->id : std::to_string(sid));
+    }
+
+    // Header
+    out << "level\tbiotype\ttotal";
+    for (const auto& label : labels) {
+        out << "\t" << label;
+    }
+    out << "\n";
+
+    // Gene biotype rows (sorted by count descending)
+    {
+        std::vector<std::pair<std::string, size_t>> sorted_bt(
+            genes_by_biotype.begin(), genes_by_biotype.end());
+        std::sort(sorted_bt.begin(), sorted_bt.end(),
+            [](const auto& a, const auto& b) { return a.second > b.second; });
+
+        for (const auto& [biotype, count] : sorted_bt) {
+            out << "gene\t" << biotype << "\t" << count;
+            for (uint32_t sid : sample_ids) {
+                auto it = per_sample.find(sid);
+                if (it != per_sample.end()) {
+                    auto bt_it = it->second.genes_by_biotype.find(biotype);
+                    out << "\t" << (bt_it != it->second.genes_by_biotype.end() ? bt_it->second : size_t{0});
+                } else {
+                    out << "\t0";
+                }
+            }
+            out << "\n";
+        }
+    }
+
+    // Transcript biotype rows (sorted by count descending)
+    {
+        std::vector<std::pair<std::string, size_t>> sorted_bt(
+            transcripts_by_biotype.begin(), transcripts_by_biotype.end());
+        std::sort(sorted_bt.begin(), sorted_bt.end(),
+            [](const auto& a, const auto& b) { return a.second > b.second; });
+
+        for (const auto& [biotype, count] : sorted_bt) {
+            out << "transcript\t" << biotype << "\t" << count;
+            for (uint32_t sid : sample_ids) {
+                auto it = per_sample.find(sid);
+                if (it != per_sample.end()) {
+                    auto bt_it = it->second.transcripts_by_biotype.find(biotype);
+                    out << "\t" << (bt_it != it->second.transcripts_by_biotype.end() ? bt_it->second : size_t{0});
+                } else {
+                    out << "\t0";
+                }
+            }
+            out << "\n";
+        }
+    }
+
+    logging::info("Biotype statistics written to: " + path);
 }

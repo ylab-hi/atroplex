@@ -202,7 +202,12 @@ struct segment_feature {
     // Maps sample registry ID -> expression value (TPM, FPKM, count, etc.)
     std::unordered_map<uint32_t, float> expression;
 
+    // Transcript biotype mapping (transcript_id -> biotype)
+    // e.g., protein_coding, retained_intron, nonsense_mediated_decay
+    std::unordered_map<std::string, std::string> transcript_biotypes;
+
     // Segment structure
+    size_t segment_index;            // Unique numeric index (used as edge ID for traversal)
     int exon_count;                  // Number of exons in this segment
 
     // Read support metadata (populated during discovery phase)
@@ -211,7 +216,7 @@ struct segment_feature {
 
     // Constructors
     segment_feature()
-        : exon_count(0), read_coverage(0) {}
+        : segment_index(0), exon_count(0), read_coverage(0) {}
 
     // --- Sample tracking methods ---
 

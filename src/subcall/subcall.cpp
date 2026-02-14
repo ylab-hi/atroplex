@@ -39,6 +39,8 @@ void subcall::add_common_options(cxxopts::Options& options) {
             cxxopts::value<std::vector<std::string>>())
         ("k,order", "Genogrove tree order",
             cxxopts::value<int>()->default_value("3"))
+        ("min-expression", "Minimum expression value to include a transcript (filters low-count novels)",
+            cxxopts::value<float>()->default_value("-1"))
         ;
 }
 
@@ -112,9 +114,13 @@ void subcall::setup_grove(const cxxopts::ParseResult& args) {
 
     // Build grove if we have samples
     if (!all_samples.empty()) {
+        float min_expr = args["min-expression"].as<float>();
         logging::info("Creating grove with order: " + std::to_string(order));
+        if (min_expr >= 0) {
+            logging::info("Filtering transcripts with expression < " + std::to_string(min_expr));
+        }
         grove = std::make_unique<grove_type>(order);
-        build_stats = builder::build_from_samples(*grove, all_samples, threads);
+        build_stats = builder::build_from_samples(*grove, all_samples, threads, min_expr);
         logging::info("Grove ready with spatial index and graph structure");
     }
 }

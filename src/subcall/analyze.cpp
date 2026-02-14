@@ -71,26 +71,44 @@ void analyze::execute(const cxxopts::ParseResult& args) {
         : std::filesystem::path(first_input).stem().string();
 
     // Full collection including Jaccard diversity (Phase 4b)
+    // Stream large outputs (conserved exons, branch details) directly to files
     logging::info("Running pan-transcriptome analysis...");
-    auto stats = index_stats::collect(*grove, true);
+    index_stats::collect_options opts;
+    opts.detailed = true;
+    opts.output_dir = analysis_dir.string();
+    opts.basename = basename;
+    auto stats = index_stats::collect(*grove, opts);
 
     // Write full text report
     std::string stats_path = (analysis_dir / (basename + ".analysis.txt")).string();
     stats.write(stats_path);
 
-    // Write per-sample CSV
-    if (!stats.per_sample.empty()) {
-        std::string csv_path = (analysis_dir / (basename + ".sample_stats.csv")).string();
-        stats.write_sample_csv(csv_path);
+    // Write overview TSV (global stats)
+    std::string overview_path = (analysis_dir / (basename + ".overview.tsv")).string();
+    stats.write_overview_tsv(overview_path);
+
+    // Write per-chromosome TSV
+    if (!stats.per_chromosome.empty()) {
+        std::string chr_path = (analysis_dir / (basename + ".per_chromosome.tsv")).string();
+        stats.write_per_chromosome_tsv(chr_path);
     }
 
-    // Write per-source CSV
+    // Write per-source TSV
     if (!stats.per_source.empty()) {
-        std::string csv_path = (analysis_dir / (basename + ".source_stats.csv")).string();
-        stats.write_source_csv(csv_path);
+        std::string source_path = (analysis_dir / (basename + ".per_source.tsv")).string();
+        stats.write_per_source_tsv(source_path);
     }
+
+    // Write per-sample TSV
+    if (!stats.per_sample.empty()) {
+        std::string sample_path = (analysis_dir / (basename + ".per_sample.tsv")).string();
+        stats.write_per_sample_tsv(sample_path);
+    }
+
+
 
     // Write exon and segment sharing into subfolder
+    // (conserved_exons.tsv is already streamed by collect())
     if (!stats.per_sample.empty()) {
         auto sharing_dir = analysis_dir / "sharing";
         std::filesystem::create_directories(sharing_dir);
@@ -100,23 +118,21 @@ void analyze::execute(const cxxopts::ParseResult& args) {
 
         std::string seg_path = (sharing_dir / (basename + ".segment_sharing.tsv")).string();
         stats.write_segment_sharing_tsv(seg_path);
-
-        if (!stats.conserved_exon_details.empty()) {
-            std::string conserved_path = (sharing_dir / (basename + ".conserved_exons.tsv")).string();
-            stats.write_conserved_exons_tsv(conserved_path);
-        }
     }
 
-    // Write splicing hubs into subfolder
+    // Write biotype breakdown
+    if (!stats.genes_by_biotype.empty() || !stats.transcripts_by_biotype.empty()) {
+        std::string biotype_path = (analysis_dir / (basename + ".biotype.tsv")).string();
+        stats.write_biotype_tsv(biotype_path);
+    }
+
+    // Write splicing hubs summary (branch_details.tsv is already streamed by collect())
     if (!stats.splicing_hubs.empty()) {
         auto hubs_dir = analysis_dir / "splicing_hubs";
         std::filesystem::create_directories(hubs_dir);
 
         std::string hubs_path = (hubs_dir / (basename + ".splicing_hubs.tsv")).string();
         stats.write_splicing_hubs_tsv(hubs_path);
-
-        std::string details_path = (hubs_dir / (basename + ".branch_details.tsv")).string();
-        stats.write_branch_details_tsv(details_path);
     }
 
     logging::info("Analysis written to: " + analysis_dir.string());

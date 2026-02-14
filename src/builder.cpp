@@ -60,7 +60,8 @@ double compute_median(std::vector<size_t>& values) {
 
 index_stats builder::build_from_samples(grove_type& grove,
                                   const std::vector<sample_info>& samples,
-                                  uint32_t threads) {
+                                  uint32_t threads,
+                                  float min_expression) {
     if (samples.empty()) {
         logging::warning("No samples provided to build genogrove");
         return {};
@@ -99,7 +100,7 @@ index_stats builder::build_from_samples(grove_type& grove,
             uint32_t registry_id = sample_registry::instance().register_data(info);
 
             // Build with persistent caches for cross-file deduplication
-            build_gff::build(grove, filepath, registry_id, exon_caches, segment_caches, segment_count, threads);
+            build_gff::build(grove, filepath, registry_id, exon_caches, segment_caches, segment_count, threads, min_expression);
         } else {
             logging::warning("Unsupported file type for: " + filepath.string());
         }
@@ -149,6 +150,13 @@ index_stats builder::build_from_samples(grove_type& grove,
                 gi.transcript_ids.insert(tx);
             }
             chr_gene_ids[seqid].insert(seg.gene_id);
+
+            // Collect transcript biotypes
+            for (const auto& [tx_id, biotype] : seg.transcript_biotypes) {
+                if (!biotype.empty()) {
+                    stats.transcripts_by_biotype[biotype]++;
+                }
+            }
 
             exons_per_segment.push_back(static_cast<size_t>(seg.exon_count));
             if (seg.exon_count == 1) {
