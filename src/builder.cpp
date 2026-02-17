@@ -76,6 +76,7 @@ index_stats builder::build_from_samples(grove_type& grove,
     // Chromosome-level caches for deduplication across files
     chromosome_exon_caches exon_caches;
     chromosome_segment_caches segment_caches;
+    chromosome_gene_segment_indices gene_indices;
     size_t segment_count = 0;
 
     // Process each sample sequentially
@@ -100,7 +101,55 @@ index_stats builder::build_from_samples(grove_type& grove,
             uint32_t registry_id = sample_registry::instance().register_data(info);
 
             // Build with persistent caches for cross-file deduplication
-            build_gff::build(grove, filepath, registry_id, exon_caches, segment_caches, segment_count, threads, min_expression);
+            build_gff::build(grove, filepath, registry_id, exon_caches, segment_caches, gene_indices, segment_count, threads, min_expression);
+
+            // Estimate grove memory usage after each file
+            size_t mem_segments = 0, mem_exons = 0, mem_gene_idx = 0;
+            for (const auto& [sid, seg_cache] : segment_caches) {
+                for (const auto& [key, seg_ptr] : seg_cache) {
+                    auto& seg = get_segment(seg_ptr->get_data());
+                    mem_segments += sizeof(segment_feature)
+                        + seg.gene_id.capacity()
+                        + seg.gene_name.capacity() + seg.coordinate.capacity()
+                        + seg.transcript_ids.size() * 12  // ~12 bytes per set entry (uint32_t + hash node)
+                        + seg.sample_idx.size() * 12
+                        + seg.expression.size() * 12
+                        + seg.transcript_biotypes.size() * 40  // uint32_t key + string value
+                        + seg.sources.size() * 30;
+                }
+            }
+            for (const auto& [sid, exon_cache] : exon_caches) {
+                for (const auto& [coord, exon_ptr] : exon_cache) {
+                    auto& exon = get_exon(exon_ptr->get_data());
+                    mem_exons += sizeof(exon_feature)
+                        + exon.id.capacity() + exon.gene_id.capacity()
+                        + exon.gene_name.capacity() + exon.coordinate.capacity()
+                        + exon.transcript_ids.size() * 12  // uint32_t + hash node
+                        + exon.sample_idx.size() * 12
+                        + exon.expression.size() * 12
+                        + exon.sources.size() * 30;
+                }
+            }
+            for (const auto& [sid, gidx] : gene_indices) {
+                for (const auto& [gene_id, entries] : gidx) {
+                    for (const auto& e : entries) {
+                        mem_gene_idx += sizeof(segment_chain_entry)
+                            + e.exon_chain.capacity() * sizeof(key_ptr)
+                            + e.structure_key.capacity();
+                    }
+                }
+            }
+            size_t mem_edges = grove.edge_count() * (sizeof(edge_metadata) + 32);
+            size_t mem_total = mem_segments + mem_exons + mem_edges + mem_gene_idx;
+
+            auto fmt_mb = [](size_t bytes) {
+                return std::to_string(bytes / (1024 * 1024)) + " MB";
+            };
+            logging::info("Memory estimate: " + fmt_mb(mem_total) +
+                " (segments: " + fmt_mb(mem_segments) +
+                ", exons: " + fmt_mb(mem_exons) +
+                ", edges: " + fmt_mb(mem_edges) +
+                ", gene_idx: " + fmt_mb(mem_gene_idx) + ")");
         } else {
             logging::warning("Unsupported file type for: " + filepath.string());
         }
@@ -128,7 +177,7 @@ index_stats builder::build_from_samples(grove_type& grove,
 
     // Gene info from segment features
     struct gene_info {
-        std::unordered_set<std::string> transcript_ids;
+        std::unordered_set<uint32_t> transcript_ids;
         std::string biotype;
     };
     std::unordered_map<std::string, gene_info> genes;
@@ -143,6 +192,7 @@ index_stats builder::build_from_samples(grove_type& grove,
             if (!is_segment(feature)) continue;
 
             auto& seg = get_segment(feature);
+            if (seg.absorbed) continue;  // Skip tombstoned segments
 
             auto& gi = genes[seg.gene_id];
             gi.biotype = seg.gene_biotype;
@@ -161,6 +211,17 @@ index_stats builder::build_from_samples(grove_type& grove,
             exons_per_segment.push_back(static_cast<size_t>(seg.exon_count));
             if (seg.exon_count == 1) {
                 stats.single_exon_segments++;
+            }
+        }
+    }
+
+    // Count absorbed segments from gene indices
+    for (const auto& [seqid, gene_idx] : gene_indices) {
+        for (const auto& [gene_id, entries] : gene_idx) {
+            for (const auto& entry : entries) {
+                if (get_segment(entry.segment->get_data()).absorbed) {
+                    stats.absorbed_segments++;
+                }
             }
         }
     }

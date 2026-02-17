@@ -156,7 +156,7 @@ match_result transcript_matcher::match(const read_cluster& cluster) {
         if (score > best_score) {
             best_score = score;
             best_segment = seg_key;
-            best_transcript_id = *seg.transcript_ids.begin();
+            best_transcript_id = transcript_registry::instance().resolve(*seg.transcript_ids.begin());
             best_gene_id = seg.gene_id;
             best_exon_chain = exon_chain;
             best_ref_junctions = static_cast<int>(exon_chain.size()) - 1;
@@ -208,7 +208,8 @@ match_result transcript_matcher::match(const read_cluster& cluster) {
         if (std::abs(score - best_score) < 0.001 && score >= cfg_.min_junction_score) {
             equal_matches++;
             result.matched_segments.push_back(seg_key);
-            result.matched_transcript_ids.push_back(*seg.transcript_ids.begin());
+            result.matched_transcript_ids.push_back(
+                transcript_registry::instance().resolve(*seg.transcript_ids.begin()));
             result.matched_gene_ids.push_back(seg.gene_id);
         }
     }
@@ -501,6 +502,7 @@ std::vector<key_ptr> transcript_matcher::find_candidate_segments(
 
     for (auto* key : result.get_keys()) {
         if (!is_segment(key->get_data())) continue;
+        if (get_segment(key->get_data()).absorbed) continue;
 
         // Check minimum overlap
         const auto& seg_coord = key->get_value();
@@ -524,11 +526,11 @@ std::vector<key_ptr> transcript_matcher::get_exon_chain(
     std::vector<key_ptr> chain;
 
     const auto& seg = get_segment(segment->get_data());
-    std::string edge_id = std::to_string(seg.segment_index);
+    size_t edge_id = seg.segment_index;
 
     // Get SEGMENT_TO_EXON edge to find first exon (filter by segment index)
     auto first_exons = grove_.get_neighbors_if(segment,
-        [&edge_id](const edge_metadata& e) {
+        [edge_id](const edge_metadata& e) {
             return e.type == edge_metadata::edge_type::SEGMENT_TO_EXON &&
                    e.id == edge_id;
         });
@@ -541,7 +543,7 @@ std::vector<key_ptr> transcript_matcher::get_exon_chain(
         chain.push_back(current);
 
         auto next_exons = grove_.get_neighbors_if(current,
-            [&edge_id](const edge_metadata& e) {
+            [edge_id](const edge_metadata& e) {
                 return e.type == edge_metadata::edge_type::EXON_TO_EXON &&
                        e.id == edge_id;
             });
@@ -610,10 +612,6 @@ key_ptr transcript_matcher::create_discovered_segment(const read_cluster& cluste
     // Build segment feature for discovered pattern
     segment_feature new_segment;
     new_segment.add_source("atroplex");  // Mark as discovered by atroplex
-
-    std::ostringstream id_ss;
-    id_ss << "DISC_" << cluster.seqid << "_" << cluster.start << "_" << cluster.end;
-    new_segment.id = id_ss.str();
 
     std::ostringstream coord_ss;
     coord_ss << cluster.seqid << ":" << cluster.strand << ":"

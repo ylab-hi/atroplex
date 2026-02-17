@@ -51,7 +51,7 @@ exon_feature exon_feature::from_gff_entry(
         transcript_id = get_attribute(attributes, "Parent");
     }
     if (!transcript_id.empty()) {
-        feature.transcript_ids.insert(transcript_id);
+        feature.transcript_ids.insert(transcript_registry::instance().intern(transcript_id));
     }
 
     // Note: GFF source (column 2) is added separately via add_source() in build_gff

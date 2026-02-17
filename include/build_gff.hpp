@@ -57,6 +57,7 @@ public:
                       std::optional<uint32_t> sample_id,
                       chromosome_exon_caches& exon_caches,
                       chromosome_segment_caches& segment_caches,
+                      chromosome_gene_segment_indices& gene_indices,
                       size_t& segment_count,
                       uint32_t num_threads = 0,
                       float min_expression = -1.0f);
@@ -121,6 +122,7 @@ public:
         const std::vector<gio::gff_entry>& gene_entries,
         exon_cache_type& exon_cache,
         segment_cache_type& segment_cache,
+        gene_segment_index_type& gene_index,
         std::optional<uint32_t> sample_id,
         size_t& segment_count,
         float min_expression = -1.0f
@@ -145,6 +147,7 @@ private:
         const std::vector<gio::gff_entry>& all_entries,
         std::map<gdt::genomic_coordinate, key_ptr>& exon_keys,
         std::unordered_map<std::string, key_ptr>& segment_keys,
+        gene_segment_index_type& gene_index,
         std::optional<uint32_t> sample_id,
         size_t& segment_count,
         float min_expression = -1.0f
@@ -201,11 +204,46 @@ private:
         const std::vector<gdt::genomic_coordinate>& exon_coords,
         const std::vector<key_ptr>& exon_chain,
         std::unordered_map<std::string, key_ptr>& segment_cache,
+        gene_segment_index_type& gene_index,
         std::optional<uint32_t> sample_id,
         const std::string& gff_source,
         size_t& segment_count,
         float expression_value = -1.0f,
         const std::string& transcript_biotype = ""
+    );
+
+    // ========== ISM absorption helpers ==========
+
+    /**
+     * Check if sub is a contiguous subsequence of parent (pointer comparison)
+     * Used to detect ISM transcripts that are truncated versions of full-length segments
+     */
+    static bool is_contiguous_subsequence(
+        const std::vector<key_ptr>& sub,
+        const std::vector<key_ptr>& parent
+    );
+
+    /**
+     * Merge transcript metadata into an existing segment (shared by dedup + absorption)
+     */
+    static void merge_into_segment(
+        key_ptr target_seg,
+        const std::string& transcript_id,
+        std::optional<uint32_t> sample_id,
+        const std::string& gff_source,
+        float expression_value,
+        const std::string& transcript_biotype
+    );
+
+    /**
+     * Reverse absorption: absorb existing shorter segments into a new longer one
+     */
+    static void try_reverse_absorption(
+        gene_segment_index_type& gene_index,
+        const std::string& gene_id,
+        key_ptr new_seg,
+        const std::vector<key_ptr>& new_exon_chain,
+        segment_cache_type& segment_cache
     );
 
     // ========== Attribute extraction helpers ==========

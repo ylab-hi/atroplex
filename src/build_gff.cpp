@@ -27,6 +27,7 @@ void build_gff::build(grove_type& grove,
     std::optional<uint32_t> sample_id,
     chromosome_exon_caches& exon_caches,
     chromosome_segment_caches& segment_caches,
+    chromosome_gene_segment_indices& gene_indices,
     size_t& segment_count,
     uint32_t /*num_threads*/,
     float min_expression) {
@@ -63,6 +64,7 @@ void build_gff::build(grove_type& grove,
         if (!current_gene_id.empty() && gene_id.value() != current_gene_id) {
             process_gene(grove, grove_mutex, current_gene_entries,
                 exon_caches[current_chrom], segment_caches[current_chrom],
+                gene_indices[current_chrom],
                 sample_id, segment_count, min_expression);
             current_gene_entries.clear();
         }
@@ -76,6 +78,7 @@ void build_gff::build(grove_type& grove,
     if (!current_gene_entries.empty()) {
         process_gene(grove, grove_mutex, current_gene_entries,
             exon_caches[current_chrom], segment_caches[current_chrom],
+            gene_indices[current_chrom],
             sample_id, segment_count, min_expression);
     }
 
@@ -88,6 +91,7 @@ void build_gff::process_gene(
     const std::vector<gio::gff_entry>& gene_entries,
     exon_cache_type& exon_cache,
     segment_cache_type& segment_cache,
+    gene_segment_index_type& gene_index,
     std::optional<uint32_t> sample_id,
     size_t& segment_count,
     float min_expression
@@ -106,7 +110,7 @@ void build_gff::process_gene(
     // Uses chromosome-level caches for cross-file deduplication
     for (auto& [transcript_id, entries] : transcripts) {
         process_transcript(grove, grove_mutex, transcript_id, entries, exon_cache,
-            segment_cache, sample_id, segment_count, min_expression);
+            segment_cache, gene_index, sample_id, segment_count, min_expression);
     }
 
     // TODO: Annotate all exons with overlapping features (CDS, UTR, codons)
@@ -120,6 +124,7 @@ void build_gff::process_transcript(
     const std::vector<gio::gff_entry>& transcript_entries,
     std::map<gdt::genomic_coordinate, key_ptr>& exon_cache,
     std::unordered_map<std::string, key_ptr>& segment_cache,
+    gene_segment_index_type& gene_index,
     std::optional<uint32_t> sample_id,
     size_t& segment_count,
     float min_expression
@@ -204,8 +209,8 @@ void build_gff::process_transcript(
     // Step 3: Create or reuse segment (edges created inside for new segments only)
     create_segment(
         grove, grove_mutex, transcript_id, sorted_exons, exon_coords,
-        exon_chain, segment_cache, sample_id, gff_source, segment_count,
-        expression_value, transcript_biotype
+        exon_chain, segment_cache, gene_index, sample_id, gff_source,
+        segment_count, expression_value, transcript_biotype
     );
 }
 
@@ -258,7 +263,7 @@ key_ptr build_gff::insert_exon(
         // Reuse existing exon - add transcript, sample, and source
         key_ptr exon_key = cached->second;
         auto& exon = get_exon(exon_key->get_data());
-        exon.transcript_ids.insert(transcript_id);
+        exon.transcript_ids.insert(transcript_registry::instance().intern(transcript_id));
         if (sample_id.has_value()) {
             exon.add_sample(*sample_id);
         }
@@ -276,7 +281,7 @@ key_ptr build_gff::insert_exon(
         exon_entry.interval,
         strand
     );
-    new_exon.transcript_ids.insert(transcript_id);
+    new_exon.transcript_ids.insert(transcript_registry::instance().intern(transcript_id));
     if (sample_id.has_value()) {
         new_exon.add_sample(*sample_id);
     }
@@ -303,6 +308,7 @@ void build_gff::create_segment(
     const std::vector<gdt::genomic_coordinate>& exon_coords,
     const std::vector<key_ptr>& exon_chain,
     std::unordered_map<std::string, key_ptr>& segment_cache,
+    gene_segment_index_type& gene_index,
     std::optional<uint32_t> sample_id,
     const std::string& gff_source,
     size_t& segment_count,
@@ -312,28 +318,50 @@ void build_gff::create_segment(
     std::string seqid = normalize_chromosome(sorted_exons.front().seqid);
     std::string structure_key = make_exon_structure_key(seqid, exon_coords);
 
+    // Step 1: Exact match deduplication (unchanged)
     auto cached = segment_cache.find(structure_key);
     if (cached != segment_cache.end()) {
-        // Reuse existing segment - add transcript, sample, and source
-        key_ptr seg_key = cached->second;
-        auto& seg = get_segment(seg_key->get_data());
-        seg.transcript_ids.insert(transcript_id);
-        if (!transcript_biotype.empty()) {
-            seg.transcript_biotypes[transcript_id] = transcript_biotype;
-        }
-        if (sample_id.has_value()) {
-            seg.add_sample(*sample_id);
-            if (expression_value >= 0.0f) {
-                seg.set_expression(*sample_id, expression_value);
-            }
-        }
-        if (!gff_source.empty()) {
-            seg.add_source(gff_source);
-        }
-        return;  // All edges created when segment was first inserted
+        merge_into_segment(cached->second, transcript_id, sample_id,
+                          gff_source, expression_value, transcript_biotype);
+        return;
     }
 
-    // Compute segment span (min/max positions across all exons)
+    // Step 2: Skip mono-exon transcripts (ambiguous parent, noise in long-read data)
+    if (exon_chain.size() == 1) {
+        return;
+    }
+
+    // Step 3: Forward absorption — check if a longer parent segment exists
+    const std::string& gene_id = get_exon(exon_chain.front()->get_data()).gene_id;
+    auto gene_it = gene_index.find(gene_id);
+
+    if (gene_it != gene_index.end()) {
+        key_ptr best_parent = nullptr;
+        size_t best_exon_count = 0;
+
+        for (const auto& entry : gene_it->second) {
+            auto& candidate_seg = get_segment(entry.segment->get_data());
+            if (candidate_seg.absorbed) continue;
+            if (entry.exon_chain.size() <= exon_chain.size()) continue;
+
+            if (is_contiguous_subsequence(exon_chain, entry.exon_chain)) {
+                if (entry.exon_chain.size() > best_exon_count) {
+                    best_parent = entry.segment;
+                    best_exon_count = entry.exon_chain.size();
+                }
+            }
+        }
+
+        if (best_parent != nullptr) {
+            // Absorb: merge this ISM's metadata into the parent segment
+            merge_into_segment(best_parent, transcript_id, sample_id,
+                              gff_source, expression_value, transcript_biotype);
+            get_segment(best_parent->get_data()).absorbed_count++;
+            return;
+        }
+    }
+
+    // Step 4: Create new segment (no exact match, no parent found)
     auto [min_it, max_it] = std::minmax_element(sorted_exons.begin(), sorted_exons.end(),
         [](const gio::gff_entry& a, const gio::gff_entry& b) {
             return a.interval.get_start() < b.interval.get_start();
@@ -350,18 +378,16 @@ void build_gff::create_segment(
         std::to_string(segment_coord.get_start()) + "-" +
         std::to_string(segment_coord.get_end());
 
-    // Build segment feature
     segment_feature new_segment;
-    new_segment.id = structure_key;
     new_segment.segment_index = segment_count;
-    new_segment.transcript_ids.insert(transcript_id);
+    uint32_t tx_id = transcript_registry::instance().intern(transcript_id);
+    new_segment.transcript_ids.insert(tx_id);
     if (!transcript_biotype.empty()) {
-        new_segment.transcript_biotypes[transcript_id] = transcript_biotype;
+        new_segment.transcript_biotypes[tx_id] = transcript_biotype;
     }
     new_segment.exon_count = static_cast<int>(sorted_exons.size());
     new_segment.coordinate = coordinate_str;
 
-    // Copy gene info from first exon
     const auto& first_exon_data = get_exon(exon_chain.front()->get_data());
     new_segment.gene_id = first_exon_data.gene_id;
     new_segment.gene_name = first_exon_data.gene_name;
@@ -377,28 +403,123 @@ void build_gff::create_segment(
         new_segment.add_source(gff_source);
     }
 
-    // Insert into grove + create all edges (protected by mutex)
-    // Use compact numeric segment index as edge ID for memory efficiency
-    std::string edge_id = std::to_string(segment_count);
     genomic_feature feature = new_segment;
     key_ptr seg_key;
     {
         std::lock_guard<std::mutex> lock(grove_mutex);
         seg_key = grove.insert_data(seqid, segment_coord, feature);
 
-        // SEGMENT_TO_EXON edge (one per segment)
-        edge_metadata seg_edge(edge_id, edge_metadata::edge_type::SEGMENT_TO_EXON);
+        edge_metadata seg_edge(segment_count, edge_metadata::edge_type::SEGMENT_TO_EXON);
         grove.add_edge(seg_key, exon_chain.front(), seg_edge);
 
-        // EXON_TO_EXON chain edges (one per adjacent exon pair in this segment)
         for (size_t i = 0; i + 1 < exon_chain.size(); ++i) {
-            edge_metadata exon_edge(edge_id, edge_metadata::edge_type::EXON_TO_EXON);
+            edge_metadata exon_edge(segment_count, edge_metadata::edge_type::EXON_TO_EXON);
             grove.add_edge(exon_chain[i], exon_chain[i + 1], exon_edge);
         }
     }
     segment_count++;
 
     segment_cache[structure_key] = seg_key;
+
+    // Step 5: Register in gene segment index
+    gene_index[gene_id].push_back({seg_key, exon_chain, structure_key});
+
+    // Step 6: Reverse absorption — absorb existing shorter segments into this new one
+    try_reverse_absorption(gene_index, gene_id, seg_key, exon_chain, segment_cache);
+}
+
+bool build_gff::is_contiguous_subsequence(
+    const std::vector<key_ptr>& sub,
+    const std::vector<key_ptr>& parent
+) {
+    if (sub.empty() || sub.size() >= parent.size()) return false;
+
+    for (size_t start = 0; start <= parent.size() - sub.size(); ++start) {
+        if (parent[start] == sub[0]) {
+            bool all_match = true;
+            for (size_t j = 1; j < sub.size(); ++j) {
+                if (parent[start + j] != sub[j]) {
+                    all_match = false;
+                    break;
+                }
+            }
+            if (all_match) return true;
+        }
+    }
+    return false;
+}
+
+void build_gff::merge_into_segment(
+    key_ptr target_seg,
+    const std::string& transcript_id,
+    std::optional<uint32_t> sample_id,
+    const std::string& gff_source,
+    float expression_value,
+    const std::string& transcript_biotype
+) {
+    auto& seg = get_segment(target_seg->get_data());
+    uint32_t tx_id = transcript_registry::instance().intern(transcript_id);
+    seg.transcript_ids.insert(tx_id);
+    if (!transcript_biotype.empty()) {
+        seg.transcript_biotypes[tx_id] = transcript_biotype;
+    }
+    if (sample_id.has_value()) {
+        seg.add_sample(*sample_id);
+        if (expression_value >= 0.0f) {
+            // Accumulate expression per-sample (ISM reads belong to same isoform)
+            float current = seg.has_expression(*sample_id)
+                ? seg.get_expression(*sample_id) : 0.0f;
+            seg.set_expression(*sample_id, current + expression_value);
+        }
+    }
+    if (!gff_source.empty()) {
+        seg.add_source(gff_source);
+    }
+}
+
+void build_gff::try_reverse_absorption(
+    gene_segment_index_type& gene_index,
+    const std::string& gene_id,
+    key_ptr new_seg,
+    const std::vector<key_ptr>& new_exon_chain,
+    segment_cache_type& segment_cache
+) {
+    auto gene_it = gene_index.find(gene_id);
+    if (gene_it == gene_index.end()) return;
+
+    auto& parent_seg = get_segment(new_seg->get_data());
+
+    for (auto& entry : gene_it->second) {
+        if (entry.segment == new_seg) continue;
+
+        auto& candidate_seg = get_segment(entry.segment->get_data());
+        if (candidate_seg.absorbed) continue;
+        if (entry.exon_chain.size() >= new_exon_chain.size()) continue;
+
+        if (is_contiguous_subsequence(entry.exon_chain, new_exon_chain)) {
+            // Merge candidate's metadata into new parent
+            for (const auto& tx : candidate_seg.transcript_ids)
+                parent_seg.transcript_ids.insert(tx);
+            for (const auto& [tx, bt] : candidate_seg.transcript_biotypes)
+                parent_seg.transcript_biotypes[tx] = bt;
+            for (auto sid : candidate_seg.sample_idx)
+                parent_seg.add_sample(sid);
+            for (const auto& [sid, expr] : candidate_seg.expression) {
+                float current = parent_seg.has_expression(sid)
+                    ? parent_seg.get_expression(sid) : 0.0f;
+                parent_seg.set_expression(sid, current + expr);
+            }
+            for (const auto& src : candidate_seg.sources)
+                parent_seg.add_source(src);
+            parent_seg.absorbed_count += candidate_seg.absorbed_count + 1;
+
+            // Tombstone the absorbed segment
+            candidate_seg.absorbed = true;
+
+            // Remove from segment_cache so no future exact matches find it
+            segment_cache.erase(entry.structure_key);
+        }
+    }
 }
 
 void build_gff::annotate_exons(

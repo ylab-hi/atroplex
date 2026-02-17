@@ -13,6 +13,7 @@
 
 // standard
 #include <cstdint>
+#include <stdexcept>
 #include <string>
 #include <unordered_set>
 #include <unordered_map>
@@ -29,12 +30,44 @@ namespace gdt = genogrove::data_type;
 namespace gst = genogrove::structure;
 
 /**
+ * Transcript ID string pool (intern strings → uint32_t)
+ * Singleton; all transcript ID strings are stored once and referenced by index.
+ */
+class transcript_registry {
+    std::unordered_map<std::string, uint32_t> str_to_id_;
+    std::vector<std::string> id_to_str_;
+public:
+    static transcript_registry& instance() {
+        static transcript_registry reg;
+        return reg;
+    }
+
+    uint32_t intern(const std::string& name) {
+        auto it = str_to_id_.find(name);
+        if (it != str_to_id_.end()) return it->second;
+        uint32_t id = static_cast<uint32_t>(id_to_str_.size());
+        str_to_id_[name] = id;
+        id_to_str_.push_back(name);
+        return id;
+    }
+
+    const std::string& resolve(uint32_t id) const {
+        if (id >= id_to_str_.size()) {
+            throw std::out_of_range("transcript_registry: invalid id");
+        }
+        return id_to_str_[id];
+    }
+
+    size_t size() const { return id_to_str_.size(); }
+};
+
+/**
  * Edge metadata for grove graph
  * Tracks which transcript/segment an edge belongs to
  */
 struct edge_metadata {
-    // Primary identifier for this edge (transcript or segment ID)
-    std::string id;
+    // Numeric segment index identifying which segment this edge belongs to
+    size_t id;
 
     // Type of edge
     enum class edge_type {
@@ -43,10 +76,10 @@ struct edge_metadata {
         SEGMENT_TO_SEGMENT // Transcript path through segments
     } type;
 
-    edge_metadata() : type(edge_type::EXON_TO_EXON) {}
+    edge_metadata() : id(0), type(edge_type::EXON_TO_EXON) {}
 
-    edge_metadata(std::string id, edge_type t)
-        : id(std::move(id)), type(t) {}
+    edge_metadata(size_t id, edge_type t)
+        : id(id), type(t) {}
 };
 
 /**
@@ -61,8 +94,8 @@ struct exon_feature {
     std::string gene_biotype;        // Gene biotype (protein_coding, lncRNA, etc.)
     std::string coordinate;          // Genomic coordinate e.g., chr1:+:100-200
 
-    // Transcript associations
-    std::unordered_set<std::string> transcript_ids;  // Reference transcripts using this exon
+    // Transcript associations (interned via transcript_registry)
+    std::unordered_set<uint32_t> transcript_ids;  // Reference transcripts using this exon
 
     // Source tracking (GFF column 2)
     // Multiple sources can call the same exon (e.g., HAVANA, ENSEMBL, StringTie)
@@ -180,14 +213,13 @@ struct exon_feature {
  */
 struct segment_feature {
     // Core identifiers
-    std::string id;                  // Segment ID
     std::string gene_id;             // Gene identifier
     std::string gene_name;           // Gene name/symbol
     std::string gene_biotype;        // Gene biotype
     std::string coordinate;          // Genomic coordinate e.g., chr1:+:100-500
 
-    // Transcript associations
-    std::unordered_set<std::string> transcript_ids;  // Transcripts using this segment
+    // Transcript associations (interned via transcript_registry)
+    std::unordered_set<uint32_t> transcript_ids;  // Transcripts using this segment
 
     // Source tracking (GFF column 2)
     // Multiple sources can call the same segment (e.g., HAVANA, ENSEMBL, StringTie)
@@ -202,9 +234,9 @@ struct segment_feature {
     // Maps sample registry ID -> expression value (TPM, FPKM, count, etc.)
     std::unordered_map<uint32_t, float> expression;
 
-    // Transcript biotype mapping (transcript_id -> biotype)
+    // Transcript biotype mapping (interned transcript_id -> biotype)
     // e.g., protein_coding, retained_intron, nonsense_mediated_decay
-    std::unordered_map<std::string, std::string> transcript_biotypes;
+    std::unordered_map<uint32_t, std::string> transcript_biotypes;
 
     // Segment structure
     size_t segment_index;            // Unique numeric index (used as edge ID for traversal)
@@ -213,6 +245,10 @@ struct segment_feature {
     // Read support metadata (populated during discovery phase)
     size_t read_coverage;            // Number of reads supporting this segment
     std::vector<std::string> supporting_reads;  // Read IDs that support this segment
+
+    // Absorption tracking (ISM segments absorbed into longer parents)
+    bool absorbed = false;           // Tombstone: this segment was absorbed into a longer parent
+    size_t absorbed_count = 0;       // Number of ISM segments absorbed into this one
 
     // Constructors
     segment_feature()
@@ -334,5 +370,15 @@ using exon_cache_type = std::map<gdt::genomic_coordinate, key_ptr>;
 using segment_cache_type = std::unordered_map<std::string, key_ptr>;
 using chromosome_exon_caches = std::map<std::string, exon_cache_type>;
 using chromosome_segment_caches = std::map<std::string, segment_cache_type>;
+
+// ISM absorption: per-gene index of segments with their exon chains
+struct segment_chain_entry {
+    key_ptr segment;
+    std::vector<key_ptr> exon_chain;
+    std::string structure_key;
+};
+
+using gene_segment_index_type = std::unordered_map<std::string, std::vector<segment_chain_entry>>;
+using chromosome_gene_segment_indices = std::map<std::string, gene_segment_index_type>;
 
 #endif //ATROPLEX_GENOMIC_FEATURE_HPP

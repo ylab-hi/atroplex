@@ -56,6 +56,9 @@ struct index_stats {
     size_t max_exons_per_segment = 0;
     size_t single_exon_segments = 0;
 
+    // ISM absorption
+    size_t absorbed_segments = 0;    // ISM segments absorbed into longer parents
+
     // Exon sharing
     size_t shared_exons = 0;          // exons used by >1 transcript
     double mean_transcripts_per_exon = 0;

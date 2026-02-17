@@ -86,9 +86,9 @@ index_stats index_stats::collect(grove_type& grove, const collect_options& opts)
     }
 
     // --- Phase 1: Traverse B+ tree to collect all segments ---
-    // gene_id -> { set of transcript_ids, biotype }
+    // gene_id -> { set of transcript_ids (interned), biotype }
     struct gene_info {
-        std::unordered_set<std::string> transcript_ids;
+        std::unordered_set<uint32_t> transcript_ids;
         std::string biotype;
     };
     std::unordered_map<std::string, gene_info> genes;
@@ -100,11 +100,11 @@ index_stats index_stats::collect(grove_type& grove, const collect_options& opts)
     // All segment key pointers (needed for exon traversal)
     std::vector<std::pair<std::string, key_ptr>> segment_keys; // (seqid, key)
 
-    // Transcript -> sample mapping (for per-sample hub stats)
-    std::unordered_map<std::string, std::unordered_set<uint32_t>> tx_to_samples;
+    // Transcript -> sample mapping (interned transcript ID -> sample IDs)
+    std::unordered_map<uint32_t, std::unordered_set<uint32_t>> tx_to_samples;
 
-    // Transcript -> biotype mapping (for per-sample biotype counts)
-    std::unordered_map<std::string, std::string> tx_biotypes;
+    // Transcript -> biotype mapping (interned transcript ID -> biotype)
+    std::unordered_map<uint32_t, std::string> tx_biotypes;
 
     auto roots = grove.get_root_nodes();
     stats.total_chromosomes = roots.size();
@@ -127,6 +127,7 @@ index_stats index_stats::collect(grove_type& grove, const collect_options& opts)
                 if (!is_segment(feature)) continue;
 
                 auto& seg = get_segment(feature);
+                if (seg.absorbed) continue;  // Skip tombstoned segments
                 stats.total_segments++;
                 stats.per_chromosome[seqid].segments++;
 
@@ -462,9 +463,9 @@ index_stats index_stats::collect(grove_type& grove, const collect_options& opts)
                 auto& seg = get_segment(seg_key->get_data());
                 if (seg.transcript_ids.empty()) continue;
 
-                std::string edge_id = std::to_string(seg.segment_index);
+                size_t edge_id = seg.segment_index;
                 auto first = grove.get_neighbors_if(seg_key,
-                    [&edge_id](const edge_metadata& e) {
+                    [edge_id](const edge_metadata& e) {
                         return e.type == edge_metadata::edge_type::SEGMENT_TO_EXON
                             && e.id == edge_id;
                     });
@@ -482,7 +483,7 @@ index_stats index_stats::collect(grove_type& grove, const collect_options& opts)
                         break;
                     }
                     auto nxt = grove.get_neighbors_if(cur,
-                        [&edge_id](const edge_metadata& e) {
+                        [edge_id](const edge_metadata& e) {
                             return e.type == edge_metadata::edge_type::EXON_TO_EXON
                                 && e.id == edge_id;
                         });
@@ -505,7 +506,7 @@ index_stats index_stats::collect(grove_type& grove, const collect_options& opts)
     }
 
     std::unordered_map<uint32_t, std::unordered_set<std::string>> sample_gene_ids;
-    std::unordered_map<uint32_t, std::unordered_set<std::string>> sample_transcript_ids;
+    std::unordered_map<uint32_t, std::unordered_set<uint32_t>> sample_transcript_ids;
     std::unordered_map<std::string, std::unordered_set<std::string>> source_gene_ids;
 
     // --- Phase 3: Compute exon sharing and per-sample/per-source exon stats ---
@@ -766,14 +767,14 @@ index_stats index_stats::collect(grove_type& grove, const collect_options& opts)
     for (auto& [seqid, seg_key] : segment_keys) {
         auto& seg = get_segment(seg_key->get_data());
 
-        std::string edge_id = std::to_string(seg.segment_index);
+        size_t edge_id = seg.segment_index;
 
         segment_exon_info sei;
         sei.sample_idx = seg.sample_idx;
 
         // Get first exon via SEGMENT_TO_EXON edge (filter by segment index)
         auto first_exons = grove.get_neighbors_if(seg_key,
-            [&edge_id](const edge_metadata& e) {
+            [edge_id](const edge_metadata& e) {
                 return e.type == edge_metadata::edge_type::SEGMENT_TO_EXON && e.id == edge_id;
             });
 
@@ -787,7 +788,7 @@ index_stats index_stats::collect(grove_type& grove, const collect_options& opts)
         while (found_next) {
             found_next = false;
             auto next = grove.get_neighbors_if(current,
-                [&edge_id](const edge_metadata& e) {
+                [edge_id](const edge_metadata& e) {
                     return e.type == edge_metadata::edge_type::EXON_TO_EXON && e.id == edge_id;
                 });
             if (!next.empty()) {
@@ -1015,6 +1016,10 @@ void index_stats::write(const std::string& path) const {
         << "  (unique transcript IDs across all inputs)\n";
     out << "Segments:           " << total_segments
         << "  (deduplicated by exon structure)\n";
+    if (absorbed_segments > 0) {
+        out << "Absorbed segments:  " << absorbed_segments
+            << "  (ISM fragments merged into longer parents)\n";
+    }
     out << "Unique exons:       " << total_exons << "\n";
     out << "Graph edges:        " << total_edges << "\n";
     out << "\n";
@@ -1309,6 +1314,10 @@ void index_stats::write_summary(const std::string& path) const {
     out << "Transcripts:        " << total_transcripts << "\n";
     out << "Segments:           " << total_segments
         << "  (deduplicated by exon structure)\n";
+    if (absorbed_segments > 0) {
+        out << "Absorbed segments:  " << absorbed_segments
+            << "  (ISM fragments merged into longer parents)\n";
+    }
     out << "Unique exons:       " << total_exons << "\n";
     out << "Graph edges:        " << total_edges << "\n";
     if (deduplication_ratio > 0) {
