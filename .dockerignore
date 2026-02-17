@@ -1,0 +1,9 @@
+build/
+cmake-build-debug/
+.idea/
+ENCODE/
+testout/
+test_data/
+*.gtf
+*.bam
+*.svg
