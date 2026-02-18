@@ -61,7 +61,8 @@ double compute_median(std::vector<size_t>& values) {
 index_stats builder::build_from_samples(grove_type& grove,
                                   const std::vector<sample_info>& samples,
                                   uint32_t threads,
-                                  float min_expression) {
+                                  float min_expression,
+                                  bool absorb) {
     if (samples.empty()) {
         logging::warning("No samples provided to build genogrove");
         return {};
@@ -101,7 +102,7 @@ index_stats builder::build_from_samples(grove_type& grove,
             uint32_t registry_id = sample_registry::instance().register_data(info);
 
             // Build with persistent caches for cross-file deduplication
-            build_gff::build(grove, filepath, registry_id, exon_caches, segment_caches, gene_indices, segment_count, threads, min_expression);
+            build_gff::build(grove, filepath, registry_id, exon_caches, segment_caches, gene_indices, segment_count, threads, min_expression, absorb);
 
             // Estimate grove memory usage after each file
             size_t mem_segments = 0, mem_exons = 0, mem_gene_idx = 0;

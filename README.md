@@ -4,7 +4,23 @@ A pan-transcriptome indexing and analysis toolkit for long-read sequencing data.
 
 ## Installation
 
-Atroplex uses CMake with C++20.
+### Docker (recommended)
+
+```bash
+docker pull <dockerhub-username>/atroplex:latest
+docker run --rm -v $(pwd):/data atroplex build -b /data/annotation.gtf --stats -o /data/output/
+```
+
+Or build the image locally:
+
+```bash
+docker build -t atroplex .
+docker run --rm -v $(pwd):/data atroplex --help
+```
+
+### From source
+
+Requires CMake 3.14+, a C++20 compiler, and htslib installed via pkg-config.
 
 ```bash
 cmake -B build -S .
@@ -14,8 +30,8 @@ cmake --build build
 
 ### Dependencies
 
-- **cxxopts** (v3.2.1): Command-line argument parsing
-- **genogrove** (v0.14.0): Genomic interval data structures and graph structure
+- **cxxopts** (v3.2.1): Command-line argument parsing (fetched automatically)
+- **genogrove** (v0.14.0): Genomic interval data structures and graph structure (fetched automatically)
 - **htslib**: Reading BAM/SAM/FASTQ files (system dependency via pkg-config)
 - **zlib**: Compression support
 
