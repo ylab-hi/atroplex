@@ -1,4 +1,4 @@
-name: Build
+name: Docker
 
 on:
   push:
@@ -7,7 +7,8 @@ on:
     branches: [main]
 
 jobs:
-  build:
+  docker:
+    name: ${{ github.event_name == 'push' && 'Build & Push' || 'Build (test)' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
