@@ -1296,12 +1296,26 @@ void index_stats::write_summary(const std::string& path) const {
     // Input entries
     if (!annotation_sources.empty()) {
         auto& reg = sample_registry::instance();
-        out << "Inputs: " << reg.size() << " entries (";
-        out << total_samples << " samples, "
-            << (reg.size() - total_samples) << " annotations)\n";
+
+        // Count entry types
+        size_t n_annotations = 0, n_replicates = 0;
         for (size_t i = 0; i < reg.size(); ++i) {
             const auto* info = reg.get(static_cast<uint32_t>(i));
-            if (info && !info->id.empty()) {
+            if (!info) continue;
+            if (info->type == "annotation") n_annotations++;
+            else if (info->type == "replicate") n_replicates++;
+        }
+
+        out << "Inputs: " << (reg.size() - n_replicates) << " entries ("
+            << total_samples << " samples, "
+            << n_annotations << " annotations";
+        if (n_replicates > 0) {
+            out << ", " << n_replicates << " replicates merged";
+        }
+        out << ")\n";
+        for (size_t i = 0; i < reg.size(); ++i) {
+            const auto* info = reg.get(static_cast<uint32_t>(i));
+            if (info && !info->id.empty() && info->type != "replicate") {
                 out << "  " << info->id << "  [" << info->type << "]\n";
             }
         }

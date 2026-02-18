@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Biological replicate merging via `--min-replicates N` and manifest `group` column
+- Auto-inference of replicate groups from sample IDs (strips `_repNN` suffix)
 - Subcommand architecture: `build`, `analyze`, `discover`, `dtu`
 - Variant-based genomic feature system (`exon_feature`, `segment_feature`)
 - Edge metadata and graph structure with segment-level edge deduplication
@@ -46,3 +48,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Expression storage via lazy `expression_store` (null pointer for features without expression, flat vector with sentinel)
 - Removed stored coordinate strings from features (computed on demand from `genomic_coordinate`)
 - Removed unused `overlapping_features` field from `exon_feature`
+- `sorted_vec` replaces `unordered_set<uint32_t>` for `transcript_ids` on exons and segments (~13% memory reduction)

@@ -82,7 +82,8 @@ struct sample_info {
 
     // Core identifiers
     std::string id;                     // Unique identifier
-    std::string type = "sample";        // Entry type: "sample" or "annotation"
+    std::string type = "sample";        // Entry type: "sample", "annotation", or "replicate" (merged)
+    std::string group;                  // Replicate group (e.g., ENCSR experiment ID); empty = no group
     std::string description;            // Free-text description
     std::filesystem::path source_file;  // Original input file path
 
@@ -126,6 +127,11 @@ struct sample_info {
         : id(std::move(sample_id)), source_file(std::move(file)) {}
 
     // Builder-style setters for fluent API
+    sample_info& with_group(std::string g) {
+        group = std::move(g);
+        return *this;
+    }
+
     sample_info& with_description(std::string d) {
         description = std::move(d);
         return *this;
@@ -246,6 +252,7 @@ struct sample_info {
         // Core
         write_string(id);
         write_string(type);
+        write_string(group);
         write_string(description);
         write_path(source_file);
 
@@ -302,6 +309,7 @@ struct sample_info {
         // Core
         info.id = read_string();
         info.type = read_string();
+        info.group = read_string();
         info.description = read_string();
         info.source_file = read_path();
 
