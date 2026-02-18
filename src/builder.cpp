@@ -109,25 +109,20 @@ index_stats builder::build_from_samples(grove_type& grove,
                 for (const auto& [key, seg_ptr] : seg_cache) {
                     auto& seg = get_segment(seg_ptr->get_data());
                     mem_segments += sizeof(segment_feature)
-                        + seg.gene_id.capacity()
-                        + seg.gene_name.capacity() + seg.coordinate.capacity()
                         + seg.transcript_ids.size() * 12  // ~12 bytes per set entry (uint32_t + hash node)
-                        + seg.sample_idx.size() * 12
-                        + seg.expression.size() * 12
-                        + seg.transcript_biotypes.size() * 40  // uint32_t key + string value
-                        + seg.sources.size() * 30;
+                        + seg.sample_idx.word_count() * 8  // dynamic bitset words
+                        + seg.expression.data_bytes()      // lazy flat array
+                        + seg.transcript_biotypes.size() * 40;  // uint32_t key + string value
                 }
             }
             for (const auto& [sid, exon_cache] : exon_caches) {
                 for (const auto& [coord, exon_ptr] : exon_cache) {
                     auto& exon = get_exon(exon_ptr->get_data());
                     mem_exons += sizeof(exon_feature)
-                        + exon.id.capacity() + exon.gene_id.capacity()
-                        + exon.gene_name.capacity() + exon.coordinate.capacity()
+                        + exon.id.capacity()
                         + exon.transcript_ids.size() * 12  // uint32_t + hash node
-                        + exon.sample_idx.size() * 12
-                        + exon.expression.size() * 12
-                        + exon.sources.size() * 30;
+                        + exon.sample_idx.word_count() * 8  // dynamic bitset words
+                        + exon.expression.data_bytes();     // lazy flat array
                 }
             }
             for (const auto& [sid, gidx] : gene_indices) {
@@ -176,11 +171,11 @@ index_stats builder::build_from_samples(grove_type& grove,
     stats.total_segments = segment_count;
 
     // Gene info from segment features
-    struct gene_info {
+    struct gene_stats_info {
         std::unordered_set<uint32_t> transcript_ids;
         std::string biotype;
     };
-    std::unordered_map<std::string, gene_info> genes;
+    std::unordered_map<std::string, gene_stats_info> genes;
     std::unordered_map<std::string, std::unordered_set<std::string>> chr_gene_ids;
     std::vector<size_t> exons_per_segment;
 
@@ -194,12 +189,12 @@ index_stats builder::build_from_samples(grove_type& grove,
             auto& seg = get_segment(feature);
             if (seg.absorbed) continue;  // Skip tombstoned segments
 
-            auto& gi = genes[seg.gene_id];
-            gi.biotype = seg.gene_biotype;
+            auto& gi = genes[seg.gene_id()];
+            gi.biotype = seg.gene_biotype();
             for (const auto& tx : seg.transcript_ids) {
                 gi.transcript_ids.insert(tx);
             }
-            chr_gene_ids[seqid].insert(seg.gene_id);
+            chr_gene_ids[seqid].insert(seg.gene_id());
 
             // Collect transcript biotypes
             for (const auto& [tx_id, biotype] : seg.transcript_biotypes) {
