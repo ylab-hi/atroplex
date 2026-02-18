@@ -51,7 +51,8 @@ public:
         grove_type& grove,
         const std::vector<sample_info>& samples,
         uint32_t threads = 1,
-        float min_expression = -1.0f
+        float min_expression = -1.0f,
+        bool absorb = true
     );
 
     /**

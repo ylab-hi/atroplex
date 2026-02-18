@@ -30,7 +30,8 @@ void build_gff::build(grove_type& grove,
     chromosome_gene_segment_indices& gene_indices,
     size_t& segment_count,
     uint32_t /*num_threads*/,
-    float min_expression) {
+    float min_expression,
+    bool absorb) {
 
     gio::gff_reader reader(filepath.string());
 
@@ -65,7 +66,7 @@ void build_gff::build(grove_type& grove,
             process_gene(grove, grove_mutex, current_gene_entries,
                 exon_caches[current_chrom], segment_caches[current_chrom],
                 gene_indices[current_chrom],
-                sample_id, segment_count, min_expression);
+                sample_id, segment_count, min_expression, absorb);
             current_gene_entries.clear();
         }
 
@@ -94,7 +95,8 @@ void build_gff::process_gene(
     gene_segment_index_type& gene_index,
     std::optional<uint32_t> sample_id,
     size_t& segment_count,
-    float min_expression
+    float min_expression,
+    bool absorb
 ) {
     // Group entries by transcript
     std::unordered_map<std::string, std::vector<gio::gff_entry>> transcripts;
@@ -110,7 +112,7 @@ void build_gff::process_gene(
     // Uses chromosome-level caches for cross-file deduplication
     for (auto& [transcript_id, entries] : transcripts) {
         process_transcript(grove, grove_mutex, transcript_id, entries, exon_cache,
-            segment_cache, gene_index, sample_id, segment_count, min_expression);
+            segment_cache, gene_index, sample_id, segment_count, min_expression, absorb);
     }
 
     // TODO: Annotate all exons with overlapping features (CDS, UTR, codons)
@@ -127,7 +129,8 @@ void build_gff::process_transcript(
     gene_segment_index_type& gene_index,
     std::optional<uint32_t> sample_id,
     size_t& segment_count,
-    float min_expression
+    float min_expression,
+    bool absorb
 ) {
     // Step 1: Extract and sort exons in 5'→3' biological order
     std::vector<gio::gff_entry> sorted_exons = extract_sorted_exons(transcript_entries);
@@ -210,7 +213,7 @@ void build_gff::process_transcript(
     create_segment(
         grove, grove_mutex, transcript_id, sorted_exons, exon_coords,
         exon_chain, segment_cache, gene_index, sample_id, gff_source,
-        segment_count, expression_value, transcript_biotype
+        segment_count, expression_value, transcript_biotype, absorb
     );
 }
 
@@ -313,7 +316,8 @@ void build_gff::create_segment(
     const std::string& gff_source,
     size_t& segment_count,
     float expression_value,
-    const std::string& transcript_biotype
+    const std::string& transcript_biotype,
+    bool absorb
 ) {
     std::string seqid = normalize_chromosome(sorted_exons.front().seqid);
     std::string structure_key = make_exon_structure_key(seqid, exon_coords);
@@ -333,31 +337,34 @@ void build_gff::create_segment(
 
     // Step 3: Forward absorption — check if a longer parent segment exists
     const std::string& gene_id = get_exon(exon_chain.front()->get_data()).gene_id();
-    auto gene_it = gene_index.find(gene_id);
 
-    if (gene_it != gene_index.end()) {
-        key_ptr best_parent = nullptr;
-        size_t best_exon_count = 0;
+    if (absorb) {
+        auto gene_it = gene_index.find(gene_id);
 
-        for (const auto& entry : gene_it->second) {
-            auto& candidate_seg = get_segment(entry.segment->get_data());
-            if (candidate_seg.absorbed) continue;
-            if (entry.exon_chain.size() <= exon_chain.size()) continue;
+        if (gene_it != gene_index.end()) {
+            key_ptr best_parent = nullptr;
+            size_t best_exon_count = 0;
 
-            if (is_contiguous_subsequence(exon_chain, entry.exon_chain)) {
-                if (entry.exon_chain.size() > best_exon_count) {
-                    best_parent = entry.segment;
-                    best_exon_count = entry.exon_chain.size();
+            for (const auto& entry : gene_it->second) {
+                auto& candidate_seg = get_segment(entry.segment->get_data());
+                if (candidate_seg.absorbed) continue;
+                if (entry.exon_chain.size() <= exon_chain.size()) continue;
+
+                if (is_contiguous_subsequence(exon_chain, entry.exon_chain)) {
+                    if (entry.exon_chain.size() > best_exon_count) {
+                        best_parent = entry.segment;
+                        best_exon_count = entry.exon_chain.size();
+                    }
                 }
             }
-        }
 
-        if (best_parent != nullptr) {
-            // Absorb: merge this ISM's metadata into the parent segment
-            merge_into_segment(best_parent, transcript_id, sample_id,
-                              gff_source, expression_value, transcript_biotype);
-            get_segment(best_parent->get_data()).absorbed_count++;
-            return;
+            if (best_parent != nullptr) {
+                // Absorb: merge this ISM's metadata into the parent segment
+                merge_into_segment(best_parent, transcript_id, sample_id,
+                                  gff_source, expression_value, transcript_biotype);
+                get_segment(best_parent->get_data()).absorbed_count++;
+                return;
+            }
         }
     }
 
@@ -418,7 +425,9 @@ void build_gff::create_segment(
     gene_index[gene_id].push_back({seg_key, exon_chain, structure_key});
 
     // Step 6: Reverse absorption — absorb existing shorter segments into this new one
-    try_reverse_absorption(gene_index, gene_id, seg_key, exon_chain, segment_cache);
+    if (absorb) {
+        try_reverse_absorption(gene_index, gene_id, seg_key, exon_chain, segment_cache);
+    }
 }
 
 bool build_gff::is_contiguous_subsequence(

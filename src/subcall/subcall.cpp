@@ -41,6 +41,7 @@ void subcall::add_common_options(cxxopts::Options& options) {
             cxxopts::value<int>()->default_value("3"))
         ("min-expression", "Minimum expression value to include a transcript (filters low-count novels)",
             cxxopts::value<float>()->default_value("-1"))
+        ("no-absorb", "Disable ISM (Incomplete Splice Match) segment absorption into longer parents")
         ;
 }
 
@@ -115,12 +116,16 @@ void subcall::setup_grove(const cxxopts::ParseResult& args) {
     // Build grove if we have samples
     if (!all_samples.empty()) {
         float min_expr = args["min-expression"].as<float>();
+        bool absorb = !args.count("no-absorb");
         logging::info("Creating grove with order: " + std::to_string(order));
         if (min_expr >= 0) {
             logging::info("Filtering transcripts with expression < " + std::to_string(min_expr));
         }
+        if (!absorb) {
+            logging::info("ISM segment absorption disabled");
+        }
         grove = std::make_unique<grove_type>(order);
-        build_stats = builder::build_from_samples(*grove, all_samples, threads, min_expr);
+        build_stats = builder::build_from_samples(*grove, all_samples, threads, min_expr, absorb);
         logging::info("Grove ready with spatial index and graph structure");
     }
 }

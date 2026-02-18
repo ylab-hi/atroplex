@@ -60,7 +60,8 @@ public:
                       chromosome_gene_segment_indices& gene_indices,
                       size_t& segment_count,
                       uint32_t num_threads = 0,
-                      float min_expression = -1.0f);
+                      float min_expression = -1.0f,
+                      bool absorb = true);
 
     /**
      * Generate a structure key from ordered exon coordinates
@@ -125,7 +126,8 @@ public:
         gene_segment_index_type& gene_index,
         std::optional<uint32_t> sample_id,
         size_t& segment_count,
-        float min_expression = -1.0f
+        float min_expression = -1.0f,
+        bool absorb = true
     );
 
 private:
@@ -150,7 +152,8 @@ private:
         gene_segment_index_type& gene_index,
         std::optional<uint32_t> sample_id,
         size_t& segment_count,
-        float min_expression = -1.0f
+        float min_expression = -1.0f,
+        bool absorb = true
     );
 
     /**
@@ -209,7 +212,8 @@ private:
         const std::string& gff_source,
         size_t& segment_count,
         float expression_value = -1.0f,
-        const std::string& transcript_biotype = ""
+        const std::string& transcript_biotype = "",
+        bool absorb = true
     );
 
     // ========== ISM absorption helpers ==========
