@@ -12,6 +12,7 @@
 #define ATROPLEX_GENOMIC_FEATURE_HPP
 
 // standard
+#include <algorithm>
 #include <cstdint>
 #include <memory>
 #include <stdexcept>
@@ -251,6 +252,47 @@ public:
 };
 
 /**
+ * Sorted flat vector for compact set storage.
+ * Drop-in replacement for unordered_set<uint32_t> with much lower memory overhead:
+ * unordered_set costs ~40-56 bytes base + ~12 bytes per entry (hash node + bucket pointer).
+ * sorted_vec costs ~24 bytes base + 4 bytes per entry (just the uint32_t).
+ *
+ * Supports insert, count, size, empty, begin/end, and iteration.
+ * Insertions maintain sorted order via binary search + insert.
+ */
+class sorted_vec {
+    std::vector<uint32_t> data_;
+
+public:
+    sorted_vec() = default;
+
+    void insert(uint32_t val) {
+        auto it = std::lower_bound(data_.begin(), data_.end(), val);
+        if (it == data_.end() || *it != val) {
+            data_.insert(it, val);
+        }
+    }
+
+    size_t count(uint32_t val) const {
+        return std::binary_search(data_.begin(), data_.end(), val) ? 1 : 0;
+    }
+
+    size_t size() const { return data_.size(); }
+    bool empty() const { return data_.empty(); }
+
+    auto begin() const { return data_.begin(); }
+    auto end() const { return data_.end(); }
+    auto begin() { return data_.begin(); }
+    auto end() { return data_.end(); }
+
+    /// Reserve capacity (useful when approximate count is known)
+    void reserve(size_t n) { data_.reserve(n); }
+
+    /// Bytes of heap data (for memory estimation)
+    size_t data_bytes() const { return data_.capacity() * sizeof(uint32_t); }
+};
+
+/**
  * Transcript ID string pool (intern strings → uint32_t)
  * Singleton; all transcript ID strings are stored once and referenced by index.
  */
@@ -437,7 +479,7 @@ struct exon_feature {
     const std::string& gene_biotype() const { return gene_registry::instance().resolve(gene_idx).gene_biotype; }
 
     // Transcript associations (interned via transcript_registry)
-    std::unordered_set<uint32_t> transcript_ids;  // Reference transcripts using this exon
+    sorted_vec transcript_ids;  // Reference transcripts using this exon
 
     // Source tracking (GFF column 2) — bitfield indexed by source_registry
     uint16_t sources = 0;
@@ -531,7 +573,7 @@ struct segment_feature {
     const std::string& gene_biotype() const { return gene_registry::instance().resolve(gene_idx).gene_biotype; }
 
     // Transcript associations (interned via transcript_registry)
-    std::unordered_set<uint32_t> transcript_ids;  // Transcripts using this segment
+    sorted_vec transcript_ids;  // Transcripts using this segment
 
     // Source tracking (GFF column 2) — bitfield indexed by source_registry
     uint16_t sources = 0;
