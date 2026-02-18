@@ -4,6 +4,9 @@ set(CMAKE_CXX_STANDARD 20)
 
 configure_file(${CMAKE_CURRENT_SOURCE_DIR}/include/config.hpp.in ${CMAKE_CURRENT_SOURCE_DIR}/include/config.hpp)
 
+# Disable tests from subdependencies (e.g. genogrove)
+set(BUILD_TESTING OFF CACHE BOOL "" FORCE)
+
 # Fetch dependencies
 include(FetchContent)
 
