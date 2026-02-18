@@ -157,7 +157,7 @@ match_result transcript_matcher::match(const read_cluster& cluster) {
             best_score = score;
             best_segment = seg_key;
             best_transcript_id = transcript_registry::instance().resolve(*seg.transcript_ids.begin());
-            best_gene_id = seg.gene_id;
+            best_gene_id = seg.gene_id();
             best_exon_chain = exon_chain;
             best_ref_junctions = static_cast<int>(exon_chain.size()) - 1;
         }
@@ -210,7 +210,7 @@ match_result transcript_matcher::match(const read_cluster& cluster) {
             result.matched_segments.push_back(seg_key);
             result.matched_transcript_ids.push_back(
                 transcript_registry::instance().resolve(*seg.transcript_ids.begin()));
-            result.matched_gene_ids.push_back(seg.gene_id);
+            result.matched_gene_ids.push_back(seg.gene_id());
         }
     }
 
@@ -612,11 +612,6 @@ key_ptr transcript_matcher::create_discovered_segment(const read_cluster& cluste
     // Build segment feature for discovered pattern
     segment_feature new_segment;
     new_segment.add_source("atroplex");  // Mark as discovered by atroplex
-
-    std::ostringstream coord_ss;
-    coord_ss << cluster.seqid << ":" << cluster.strand << ":"
-             << cluster.start << "-" << cluster.end;
-    new_segment.coordinate = coord_ss.str();
 
     new_segment.exon_count = static_cast<int>(cluster.consensus_junctions.size() + 1);
 

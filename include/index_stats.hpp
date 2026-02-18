@@ -99,11 +99,12 @@ struct index_stats {
         std::string gene_id;
         std::string exon_id;
         std::string coordinate;
+        key_ptr exon_key = nullptr;   // key pointer for chain comparison (not for output)
         size_t branches = 0;          // total unique downstream exons
         size_t transcripts = 0;       // transcripts using this exon
         size_t exon_number = 0;       // 1-based position in representative transcript chain
         size_t total_exons = 0;       // total exons in that representative segment
-        std::unordered_set<uint32_t> sample_idx;              // samples containing this exon
+        sample_bitset sample_idx;                                // samples containing this exon
         std::unordered_map<uint32_t, size_t> sample_branches;    // per-sample downstream branch count
         std::unordered_map<uint32_t, size_t> sample_shared;      // branches also in ≥1 other sample
         std::unordered_map<uint32_t, size_t> sample_unique;      // branches only in this sample
@@ -117,7 +118,7 @@ struct index_stats {
         struct branch_target {
             std::string exon_id;
             std::string coordinate;
-            std::unordered_set<uint32_t> sample_idx;
+            sample_bitset sample_idx;
             std::unordered_map<uint32_t, size_t> sample_transcripts; // per-sample tx count through this target
             std::unordered_map<uint32_t, float> sample_expression;   // per-sample expression at target exon
         };

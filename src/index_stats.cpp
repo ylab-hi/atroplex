@@ -87,11 +87,11 @@ index_stats index_stats::collect(grove_type& grove, const collect_options& opts)
 
     // --- Phase 1: Traverse B+ tree to collect all segments ---
     // gene_id -> { set of transcript_ids (interned), biotype }
-    struct gene_info {
+    struct gene_stats_info {
         std::unordered_set<uint32_t> transcript_ids;
         std::string biotype;
     };
-    std::unordered_map<std::string, gene_info> genes;
+    std::unordered_map<std::string, gene_stats_info> genes;
     std::vector<size_t> exons_per_segment;
 
     // Track per-chromosome gene sets
@@ -132,8 +132,8 @@ index_stats index_stats::collect(grove_type& grove, const collect_options& opts)
                 stats.per_chromosome[seqid].segments++;
 
                 // Collect gene info
-                auto& gi = genes[seg.gene_id];
-                gi.biotype = seg.gene_biotype;
+                auto& gi = genes[seg.gene_id()];
+                gi.biotype = seg.gene_biotype();
                 for (const auto& tx : seg.transcript_ids) {
                     gi.transcript_ids.insert(tx);
                     // Build transcript -> sample mapping (for per-sample hub stats)
@@ -141,7 +141,7 @@ index_stats index_stats::collect(grove_type& grove, const collect_options& opts)
                         tx_to_samples[tx].insert(sid);
                     }
                 }
-                chr_gene_ids[seqid].insert(seg.gene_id);
+                chr_gene_ids[seqid].insert(seg.gene_id());
 
                 // Collect transcript biotypes
                 for (const auto& [tx_id, biotype] : seg.transcript_biotypes) {
@@ -263,16 +263,17 @@ index_stats index_stats::collect(grove_type& grove, const collect_options& opts)
                         if (is_exon(feature)) {
                             auto& exon = get_exon(feature);
                             index_stats::branching_exon_info info;
-                            info.gene_name = exon.gene_name;
-                            info.gene_id = exon.gene_id;
+                            info.gene_name = exon.gene_name();
+                            info.gene_id = exon.gene_id();
                             info.exon_id = exon.id;
-                            info.coordinate = exon.coordinate;
+                            info.coordinate = format_coordinate(seqid, current->get_value());
+                            info.exon_key = current;
                             info.branches = unique_targets.size();
                             info.sample_idx = exon.sample_idx;
 
                             // Count transcripts for this gene only (exons can accumulate
                             // transcript_ids from overlapping genes via deduplication)
-                            auto gene_tx_set = genes.find(exon.gene_id);
+                            auto gene_tx_set = genes.find(exon.gene_id());
                             if (gene_tx_set != genes.end()) {
                                 size_t gene_filtered = 0;
                                 for (const auto& tx : exon.transcript_ids) {
@@ -299,12 +300,12 @@ index_stats index_stats::collect(grove_type& grove, const collect_options& opts)
                                     // Store target detail with per-sample transcript counts
                                     index_stats::branching_exon_info::branch_target bt;
                                     bt.exon_id = te.id;
-                                    bt.coordinate = te.coordinate;
+                                    bt.coordinate = format_coordinate(seqid, n->get_value());
                                     bt.sample_idx = te.sample_idx;
 
                                     // Count transcripts through this target per sample
                                     // Only count transcripts that also use the hub exon AND belong to same gene
-                                    auto gene_filter = genes.find(exon.gene_id);
+                                    auto gene_filter = genes.find(exon.gene_id());
                                     for (const auto& tx : te.transcript_ids) {
                                         if (!exon.transcript_ids.count(tx)) continue;
                                         if (gene_filter != genes.end() && !gene_filter->second.transcript_ids.count(tx)) continue;
@@ -316,19 +317,19 @@ index_stats index_stats::collect(grove_type& grove, const collect_options& opts)
                                         }
                                     }
 
-                                    bt.sample_expression = te.expression;
+                                    bt.sample_expression = te.expression.to_map();
                                     info.targets.push_back(std::move(bt));
                                 }
                             }
 
                             // Hub exon expression
-                            info.sample_expression = exon.expression;
+                            info.sample_expression = exon.expression.to_map();
 
                             // Classify branches as shared/unique per sample
                             for (uint32_t sid : exon.sample_idx) {
                                 for (const auto& bt : info.targets) {
-                                    if (!bt.sample_idx.count(sid)) continue;
-                                    if (bt.sample_idx.size() > 1) {
+                                    if (!bt.sample_idx.test(sid)) continue;
+                                    if (bt.sample_idx.count() > 1) {
                                         info.sample_shared[sid]++;
                                     } else {
                                         info.sample_unique[sid]++;
@@ -339,7 +340,7 @@ index_stats index_stats::collect(grove_type& grove, const collect_options& opts)
                             // Count per-sample transcripts using this hub exon
                             // Filter to only transcripts belonging to this gene (exons can
                             // accumulate transcript_ids from overlapping genes via deduplication)
-                            auto gene_it = genes.find(exon.gene_id);
+                            auto gene_it = genes.find(exon.gene_id());
                             for (const auto& tx : exon.transcript_ids) {
                                 if (gene_it != genes.end() && !gene_it->second.transcript_ids.count(tx)) continue;
                                 auto it = tx_to_samples.find(tx);
@@ -369,7 +370,7 @@ index_stats index_stats::collect(grove_type& grove, const collect_options& opts)
                             }
 
                             // Traditional PSI: hub transcripts / gene transcripts per sample
-                            auto gene_tx_it = gene_sample_tx.find(exon.gene_id);
+                            auto gene_tx_it = gene_sample_tx.find(exon.gene_id());
                             if (gene_tx_it != gene_sample_tx.end()) {
                                 for (uint32_t sid : exon.sample_idx) {
                                     auto hub_tx = info.sample_transcripts.find(sid);
@@ -396,7 +397,7 @@ index_stats index_stats::collect(grove_type& grove, const collect_options& opts)
 
                                     for (size_t si = 0; si < stream_sample_ids.size(); ++si) {
                                         uint32_t sid = stream_sample_ids[si];
-                                        if (!target.sample_idx.count(sid)) {
+                                        if (!target.sample_idx.test(sid)) {
                                             *branch_stream << "\t.";
                                             if (stream_is_sample[si]) *branch_stream << "\t.";
                                         } else {
@@ -450,7 +451,7 @@ index_stats index_stats::collect(grove_type& grove, const collect_options& opts)
         std::unordered_map<std::string, std::vector<std::pair<std::string, key_ptr>>> gene_segments;
         for (auto& [seqid, seg_key] : segment_keys) {
             auto& seg = get_segment(seg_key->get_data());
-            gene_segments[seg.gene_id].emplace_back(seqid, seg_key);
+            gene_segments[seg.gene_id()].emplace_back(seqid, seg_key);
         }
 
         for (auto& hub : stats.splicing_hubs) {
@@ -476,7 +477,7 @@ index_stats index_stats::collect(grove_type& grove, const collect_options& opts)
                 key_ptr cur = first.front();
                 while (true) {
                     auto& ef = cur->get_data();
-                    if (is_exon(ef) && get_exon(ef).coordinate == hub.coordinate) {
+                    if (cur == hub.exon_key) {
                         hub.exon_number = pos;
                         hub.total_exons = seg.exon_count;
                         found = true;
@@ -594,7 +595,7 @@ index_stats index_stats::collect(grove_type& grove, const collect_options& opts)
                 }
 
                 // Constitutive vs alternative
-                size_t gene_total = gene_transcript_counts[exon.gene_id];
+                size_t gene_total = gene_transcript_counts[exon.gene_id()];
                 if (gene_total > 0 && tx_count >= gene_total) {
                     stats.constitutive_exons++;
                 } else {
@@ -602,11 +603,11 @@ index_stats index_stats::collect(grove_type& grove, const collect_options& opts)
                 }
 
                 // Per-sample exon stats (cross-sample sharing + transcript-level)
-                bool is_conserved = exon.sample_idx.size() >= total_samples && total_samples > 0;
+                bool is_conserved = exon.sample_idx.count() >= total_samples && total_samples > 0;
                 for (uint32_t sid : exon.sample_idx) {
                     auto& ss = stats.per_sample[sid];
                     ss.exons++;
-                    if (exon.sample_idx.size() == 1) {
+                    if (exon.sample_idx.count() == 1) {
                         ss.exclusive_exons++;
                     } else if (is_conserved) {
                         ss.conserved_exons++;
@@ -638,10 +639,10 @@ index_stats index_stats::collect(grove_type& grove, const collect_options& opts)
                     if (conserved_stream && conserved_stream->is_open()) {
                         // Stream directly to file
                         *conserved_stream << exon.id << "\t"
-                            << exon.gene_name << "\t"
-                            << exon.gene_id << "\t"
+                            << exon.gene_name() << "\t"
+                            << exon.gene_id() << "\t"
                             << seqid << "\t"
-                            << exon.coordinate << "\t"
+                            << format_coordinate(seqid, current->get_value()) << "\t"
                             << tx_count << "\t"
                             << (constitutive ? "yes" : "no");
 
@@ -650,9 +651,8 @@ index_stats index_stats::collect(grove_type& grove, const collect_options& opts)
                             auto tx_it = entry_sample_tx.find(sid);
                             *conserved_stream << "\t" << (tx_it != entry_sample_tx.end() ? tx_it->second : size_t{0});
                             if (stream_is_sample[si]) {
-                                auto expr_it = exon.expression.find(sid);
-                                if (expr_it != exon.expression.end()) {
-                                    *conserved_stream << "\t" << std::setprecision(2) << expr_it->second;
+                                if (exon.has_expression(sid)) {
+                                    *conserved_stream << "\t" << std::setprecision(2) << exon.get_expression(sid);
                                 } else {
                                     *conserved_stream << "\t.";
                                 }
@@ -663,26 +663,26 @@ index_stats index_stats::collect(grove_type& grove, const collect_options& opts)
                         // Accumulate in memory (non-streaming path)
                         index_stats::conserved_exon_entry entry;
                         entry.exon_id = exon.id;
-                        entry.gene_name = exon.gene_name;
-                        entry.gene_id = exon.gene_id;
+                        entry.gene_name = exon.gene_name();
+                        entry.gene_id = exon.gene_id();
                         entry.chromosome = seqid;
-                        entry.coordinate = exon.coordinate;
+                        entry.coordinate = format_coordinate(seqid, current->get_value());
                         entry.n_transcripts = tx_count;
                         entry.constitutive = constitutive;
                         entry.sample_transcripts = std::move(entry_sample_tx);
-                        entry.sample_expression = exon.expression;
+                        entry.sample_expression = exon.expression.to_map();
                         stats.conserved_exon_details.push_back(std::move(entry));
                     }
                 }
 
                 // Per-source exon stats
-                for (const auto& src : exon.sources) {
+                source_registry::instance().for_each(exon.sources, [&](const std::string& src) {
                     stats.per_source[src].exons++;
-                    if (exon.sources.size() == 1) {
+                    if (exon.source_count() == 1) {
                         stats.per_source[src].exclusive_exons++;
                     }
-                    source_gene_ids[src].insert(exon.gene_id);
-                }
+                    source_gene_ids[src].insert(exon.gene_id());
+                });
 
                 // Continue chain
                 auto next = grove.get_neighbors_if(current,
@@ -759,7 +759,7 @@ index_stats index_stats::collect(grove_type& grove, const collect_options& opts)
     // For each segment, walk its exon chain to collect the exon pointer set.
     // Group by gene, then compute mean pairwise Jaccard distance.
     struct segment_exon_info {
-        std::unordered_set<uint32_t> sample_idx;
+        sample_bitset sample_idx;
         std::set<const void*> exon_set;
     };
     std::unordered_map<std::string, std::vector<segment_exon_info>> gene_segment_exons;
@@ -798,7 +798,7 @@ index_stats index_stats::collect(grove_type& grove, const collect_options& opts)
             }
         }
 
-        gene_segment_exons[seg.gene_id].push_back(std::move(sei));
+        gene_segment_exons[seg.gene_id()].push_back(std::move(sei));
     }
 
     // Compute global mean pairwise Jaccard distance (averaged per gene, then across genes)
@@ -855,7 +855,7 @@ index_stats index_stats::collect(grove_type& grove, const collect_options& opts)
             // Filter to segments containing this sample
             std::vector<size_t> indices;
             for (size_t k = 0; k < seg_infos.size(); ++k) {
-                if (seg_infos[k].sample_idx.contains(sid)) {
+                if (seg_infos[k].sample_idx.test(sid)) {
                     indices.push_back(k);
                 }
             }
@@ -918,7 +918,7 @@ index_stats index_stats::collect(grove_type& grove, const collect_options& opts)
             auto& ss = stats.per_sample[sid];
             ss.segments++;
 
-            if (seg.sample_idx.size() == 1) {
+            if (seg.sample_idx.count() == 1) {
                 ss.exclusive_segments++;
             } else if (seg.is_conserved(total_samples)) {
                 ss.conserved_segments++;
@@ -926,7 +926,7 @@ index_stats index_stats::collect(grove_type& grove, const collect_options& opts)
                 ss.shared_segments++;
             }
 
-            sample_gene_ids[sid].insert(seg.gene_id);
+            sample_gene_ids[sid].insert(seg.gene_id());
             for (const auto& tx : seg.transcript_ids) {
                 sample_transcript_ids[sid].insert(tx);
             }
@@ -938,13 +938,13 @@ index_stats index_stats::collect(grove_type& grove, const collect_options& opts)
         }
 
         // Per-source segment stats
-        for (const auto& src : seg.sources) {
+        source_registry::instance().for_each(seg.sources, [&](const std::string& src) {
             stats.per_source[src].segments++;
-            if (seg.sources.size() == 1) {
+            if (seg.source_count() == 1) {
                 stats.per_source[src].exclusive_segments++;
             }
-            source_gene_ids[src].insert(seg.gene_id);
-        }
+            source_gene_ids[src].insert(seg.gene_id());
+        });
     }
 
     // Finalize per-sample stats
@@ -1603,7 +1603,7 @@ void index_stats::write_splicing_hubs_tsv(const std::string& path) const {
 
         for (size_t i = 0; i < sample_ids.size(); ++i) {
             uint32_t sid = sample_ids[i];
-            if (!hub.sample_idx.count(sid)) {
+            if (!hub.sample_idx.test(sid)) {
                 out << "\t.\t.\t.\t.\t.\t.";
                 if (is_sample_type[i]) out << "\t.";
             } else {
@@ -1705,7 +1705,7 @@ void index_stats::write_branch_details_tsv(const std::string& path) const {
 
             for (size_t i = 0; i < sample_ids.size(); ++i) {
                 uint32_t sid = sample_ids[i];
-                if (!target.sample_idx.count(sid)) {
+                if (!target.sample_idx.test(sid)) {
                     out << "\t.";
                     if (is_sample_type[i]) out << "\t.";
                 } else {

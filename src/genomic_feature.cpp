@@ -37,13 +37,13 @@ exon_feature exon_feature::from_gff_entry(
         feature.id = get_attribute(attributes, "exon_id");
     }
 
-    feature.gene_id = get_attribute(attributes, "gene_id");
-    feature.gene_name = get_attribute(attributes, "gene_name");
-    feature.gene_biotype = get_attribute(attributes, "gene_type");
-
-    if (feature.gene_biotype.empty()) {
-        feature.gene_biotype = get_attribute(attributes, "gene_biotype");
+    std::string gid = get_attribute(attributes, "gene_id");
+    std::string gname = get_attribute(attributes, "gene_name");
+    std::string gbiotype = get_attribute(attributes, "gene_type");
+    if (gbiotype.empty()) {
+        gbiotype = get_attribute(attributes, "gene_biotype");
     }
+    feature.gene_idx = gene_registry::instance().intern(gid, gname, gbiotype);
 
     // Transcript information
     std::string transcript_id = get_attribute(attributes, "transcript_id");
@@ -65,11 +65,6 @@ exon_feature exon_feature::from_gff_entry(
             feature.exon_number = -1;
         }
     }
-
-    // Build coordinate string: chr:strand:start-end
-    feature.coordinate = seqid + ":" + strand + ":" +
-                        std::to_string(interval.get_start()) + "-" +
-                        std::to_string(interval.get_end());
 
     return feature;
 }

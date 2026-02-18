@@ -332,7 +332,7 @@ void build_gff::create_segment(
     }
 
     // Step 3: Forward absorption — check if a longer parent segment exists
-    const std::string& gene_id = get_exon(exon_chain.front()->get_data()).gene_id;
+    const std::string& gene_id = get_exon(exon_chain.front()->get_data()).gene_id();
     auto gene_it = gene_index.find(gene_id);
 
     if (gene_it != gene_index.end()) {
@@ -374,10 +374,6 @@ void build_gff::create_segment(
         max_it->interval.get_end()
     );
 
-    std::string coordinate_str = seqid + ":" + strand + ":" +
-        std::to_string(segment_coord.get_start()) + "-" +
-        std::to_string(segment_coord.get_end());
-
     segment_feature new_segment;
     new_segment.segment_index = segment_count;
     uint32_t tx_id = transcript_registry::instance().intern(transcript_id);
@@ -386,12 +382,9 @@ void build_gff::create_segment(
         new_segment.transcript_biotypes[tx_id] = transcript_biotype;
     }
     new_segment.exon_count = static_cast<int>(sorted_exons.size());
-    new_segment.coordinate = coordinate_str;
 
     const auto& first_exon_data = get_exon(exon_chain.front()->get_data());
-    new_segment.gene_id = first_exon_data.gene_id;
-    new_segment.gene_name = first_exon_data.gene_name;
-    new_segment.gene_biotype = first_exon_data.gene_biotype;
+    new_segment.gene_idx = first_exon_data.gene_idx;
 
     if (sample_id.has_value()) {
         new_segment.add_sample(*sample_id);
@@ -466,10 +459,7 @@ void build_gff::merge_into_segment(
     if (sample_id.has_value()) {
         seg.add_sample(*sample_id);
         if (expression_value >= 0.0f) {
-            // Accumulate expression per-sample (ISM reads belong to same isoform)
-            float current = seg.has_expression(*sample_id)
-                ? seg.get_expression(*sample_id) : 0.0f;
-            seg.set_expression(*sample_id, current + expression_value);
+            seg.expression.accumulate(*sample_id, expression_value);
         }
     }
     if (!gff_source.empty()) {
@@ -502,15 +492,9 @@ void build_gff::try_reverse_absorption(
                 parent_seg.transcript_ids.insert(tx);
             for (const auto& [tx, bt] : candidate_seg.transcript_biotypes)
                 parent_seg.transcript_biotypes[tx] = bt;
-            for (auto sid : candidate_seg.sample_idx)
-                parent_seg.add_sample(sid);
-            for (const auto& [sid, expr] : candidate_seg.expression) {
-                float current = parent_seg.has_expression(sid)
-                    ? parent_seg.get_expression(sid) : 0.0f;
-                parent_seg.set_expression(sid, current + expr);
-            }
-            for (const auto& src : candidate_seg.sources)
-                parent_seg.add_source(src);
+            parent_seg.sample_idx.merge(candidate_seg.sample_idx);
+            parent_seg.expression.merge(candidate_seg.expression);
+            parent_seg.merge_sources(candidate_seg.sources);
             parent_seg.absorbed_count += candidate_seg.absorbed_count + 1;
 
             // Tombstone the absorbed segment
@@ -523,32 +507,12 @@ void build_gff::try_reverse_absorption(
 }
 
 void build_gff::annotate_exons(
-    grove_type& grove,
-    const std::map<gdt::genomic_coordinate, key_ptr>& exon_keys,
-    const std::vector<gio::gff_entry>& annotations
+    grove_type& /*grove*/,
+    const std::map<gdt::genomic_coordinate, key_ptr>& /*exon_keys*/,
+    const std::vector<gio::gff_entry>& /*annotations*/
 ) {
-    // For each annotation feature (CDS, UTR, codon)
-    for (const auto& annot : annotations) {
-        // Find overlapping exons
-        for (const auto& [exon_coord, exon_key] : exon_keys) {
-            // Check for overlap (ignoring strand for now - annotations should match exon strand)
-            if (exon_coord.get_end() < annot.interval.get_start() ||
-                exon_coord.get_start() > annot.interval.get_end()) {
-                continue; // No overlap
-            }
-
-            // Compute overlapping interval
-            gdt::interval overlap;
-            overlap.set_start(std::max(exon_coord.get_start(), annot.interval.get_start()));
-            overlap.set_end(std::min(exon_coord.get_end(), annot.interval.get_end()));
-
-            // Add to exon's overlapping features using public getter
-            auto& feature_data = exon_key->get_data();
-            if (is_exon(feature_data)) {
-                get_exon(feature_data).overlapping_features[annot.type].push_back(overlap);
-            }
-        }
-    }
+    // TODO: CDS/UTR overlap annotation not yet implemented.
+    // Requires adding an appropriate storage field to exon_feature.
 }
 
 std::string build_gff::make_exon_structure_key(
