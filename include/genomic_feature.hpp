@@ -66,6 +66,13 @@ public:
         return (words_[wi] & bit_mask(id)) != 0;
     }
 
+    void clear(uint32_t id) {
+        size_t wi = word_index(id);
+        if (wi < words_.size()) {
+            words_[wi] &= ~bit_mask(id);
+        }
+    }
+
     size_t count() const {
         size_t n = 0;
         for (uint64_t w : words_) n += static_cast<size_t>(__builtin_popcountll(w));
@@ -208,6 +215,13 @@ public:
     }
 
     bool empty() const { return !data_; }
+
+    /// Remove expression for a specific sample (reset to sentinel)
+    void remove(uint32_t sid) {
+        if (data_ && sid < data_->size()) {
+            (*data_)[sid] = SENTINEL;
+        }
+    }
 
     /// Accumulate: add value to existing (or set if not present)
     void accumulate(uint32_t sid, float value) {

@@ -62,7 +62,8 @@ index_stats builder::build_from_samples(grove_type& grove,
                                   const std::vector<sample_info>& samples,
                                   uint32_t threads,
                                   float min_expression,
-                                  bool absorb) {
+                                  bool absorb,
+                                  int min_replicates) {
     if (samples.empty()) {
         logging::warning("No samples provided to build genogrove");
         return {};
@@ -152,6 +153,11 @@ index_stats builder::build_from_samples(grove_type& grove,
     }
 
     logging::info("Grove construction complete: " + std::to_string(segment_count) + " segments");
+
+    // --- Post-build replicate merging ---
+    if (min_replicates > 0) {
+        merge_replicates(exon_caches, segment_caches, min_replicates);
+    }
 
     // --- Compute basic index statistics from caches ---
     index_stats stats;
@@ -301,6 +307,122 @@ index_stats builder::build_from_samples(grove_type& grove,
     }
 
     return stats;
+}
+
+void builder::merge_replicates(
+    chromosome_exon_caches& exon_caches,
+    chromosome_segment_caches& segment_caches,
+    int min_replicates
+) {
+    auto& registry = sample_registry::instance();
+
+    // Step 1: Build group -> replicate ID mapping
+    std::map<std::string, std::vector<uint32_t>> groups;
+    for (size_t i = 0; i < registry.size(); ++i) {
+        uint32_t rid = static_cast<uint32_t>(i);
+        const auto* info = registry.get(rid);
+        if (!info || info->type != "sample" || info->group.empty()) continue;
+        groups[info->group].push_back(rid);
+    }
+
+    if (groups.empty()) {
+        logging::warning("No replicate groups found; skipping merge");
+        return;
+    }
+
+    // Step 2: Register merged sample_info for each group
+    std::map<std::string, uint32_t> group_merged_ids;
+    for (auto& [group_name, replicate_ids] : groups) {
+        const auto* first = registry.get(replicate_ids[0]);
+        sample_info merged(*first);
+        merged.id = group_name;
+        merged.group = group_name;
+        merged.description = "Merged from " + std::to_string(replicate_ids.size()) + " replicates";
+        merged.source_file.clear();
+
+        uint32_t merged_id = registry.register_data(std::move(merged));
+        group_merged_ids[group_name] = merged_id;
+
+        if (replicate_ids.size() == 1 && min_replicates > 1) {
+            logging::warning("Group '" + group_name + "' has only 1 replicate "
+                "but min_replicates=" + std::to_string(min_replicates) +
+                "; threshold capped to 1");
+        }
+
+        logging::info("Replicate group '" + group_name + "': " +
+            std::to_string(replicate_ids.size()) + " replicates");
+    }
+
+    // Step 3: Walk caches and merge bits/expression
+    // Lambda that works on both exon_feature and segment_feature via std::visit
+    auto merge_feature = [&](genomic_feature& feature) {
+        std::visit([&](auto& f) {
+            for (const auto& [group_name, replicate_ids] : groups) {
+                size_t rep_count = 0;
+                float expr_sum = 0.0f;
+                size_t expr_count = 0;
+
+                for (uint32_t rid : replicate_ids) {
+                    if (f.sample_idx.test(rid)) {
+                        rep_count++;
+                        if (f.expression.has(rid)) {
+                            expr_sum += f.expression.get(rid);
+                            expr_count++;
+                        }
+                    }
+                }
+
+                // Cap threshold at group size (singletons always pass)
+                size_t threshold = std::min(
+                    static_cast<size_t>(min_replicates),
+                    replicate_ids.size());
+
+                uint32_t merged_id = group_merged_ids.at(group_name);
+                if (rep_count >= threshold) {
+                    f.add_sample(merged_id);
+                    if (expr_count > 0) {
+                        f.set_expression(merged_id,
+                            expr_sum / static_cast<float>(expr_count));
+                    }
+                }
+
+                // Clear replicate bits and expression
+                for (uint32_t rid : replicate_ids) {
+                    f.sample_idx.clear(rid);
+                    f.expression.remove(rid);
+                }
+            }
+        }, feature);
+    };
+
+    // Walk exon caches
+    for (auto& [seqid, exon_cache] : exon_caches) {
+        for (auto& [coord, exon_ptr] : exon_cache) {
+            merge_feature(exon_ptr->get_data());
+        }
+    }
+
+    // Walk segment caches
+    for (auto& [seqid, seg_cache] : segment_caches) {
+        for (auto& [key, seg_ptr] : seg_cache) {
+            auto& feature = seg_ptr->get_data();
+            if (!is_segment(feature)) continue;
+            if (get_segment(feature).absorbed) continue;
+            merge_feature(feature);
+        }
+    }
+
+    // Step 4: Mark replicate entries as type="replicate" so they're excluded from stats
+    for (const auto& [group_name, replicate_ids] : groups) {
+        for (uint32_t rid : replicate_ids) {
+            auto* info = registry.get(rid);
+            if (info) info->type = "replicate";
+        }
+    }
+
+    logging::info("Replicate merging complete: " +
+        std::to_string(group_merged_ids.size()) + " groups, min_replicates=" +
+        std::to_string(min_replicates));
 }
 
 index_stats builder::build_from_files(grove_type& grove,

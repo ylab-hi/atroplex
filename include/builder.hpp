@@ -52,7 +52,8 @@ public:
         const std::vector<sample_info>& samples,
         uint32_t threads = 1,
         float min_expression = -1.0f,
-        bool absorb = true
+        bool absorb = true,
+        int min_replicates = 0
     );
 
     /**
@@ -73,6 +74,15 @@ public:
     // Future extension methods for Phase 2/3:
     // static void add_discovered_transcripts(grove_type& grove, const std::vector<alignment_entry>& reads);
     // static void add_fusion_segments(grove_type& grove, const fusion_data& fusions);
+
+private:
+    /// Post-build merge of biological replicates within groups.
+    /// Iterates exon and segment caches (no grove traversal).
+    static void merge_replicates(
+        chromosome_exon_caches& exon_caches,
+        chromosome_segment_caches& segment_caches,
+        int min_replicates
+    );
 };
 
 #endif //ATROPLEX_GENOGROVE_BUILDER_HPP

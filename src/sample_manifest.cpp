@@ -15,6 +15,25 @@
 #include <algorithm>
 #include <stdexcept>
 
+// Infer replicate group from sample ID by stripping _repNN suffix
+// e.g., ENCSR583KAF_rep01 -> ENCSR583KAF
+static std::string infer_group(const std::string& id) {
+    auto pos = id.rfind("_rep");
+    if (pos != std::string::npos && pos + 4 < id.size()) {
+        bool all_digits = true;
+        for (size_t i = pos + 4; i < id.size(); ++i) {
+            if (!std::isdigit(static_cast<unsigned char>(id[i]))) {
+                all_digits = false;
+                break;
+            }
+        }
+        if (all_digits) {
+            return id.substr(0, pos);
+        }
+    }
+    return id;  // No replicate suffix; group = id (singleton group)
+}
+
 sample_manifest::sample_manifest(const std::filesystem::path& manifest_path)
     : manifest_path_(manifest_path) {
 
@@ -58,6 +77,15 @@ sample_manifest::sample_manifest(const std::filesystem::path& manifest_path)
         } catch (const std::exception& e) {
             throw std::runtime_error("Error parsing manifest line " +
                 std::to_string(line_num) + ": " + e.what());
+        }
+    }
+
+    // Auto-infer groups from IDs when no 'group' column exists
+    if (col_indices.find("group") == col_indices.end()) {
+        for (auto& info : samples_) {
+            if (info.type == "sample" && info.group.empty()) {
+                info.group = infer_group(info.id);
+            }
         }
     }
 }
@@ -132,6 +160,9 @@ sample_info sample_manifest::parse_row(
     if (!type_val.empty()) {
         info.type = to_lower(type_val);
     }
+
+    // Replicate group
+    info.group = get_field("group");
 
     // Description
     info.description = get_field("description");
