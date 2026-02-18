@@ -110,7 +110,7 @@ index_stats builder::build_from_samples(grove_type& grove,
                 for (const auto& [key, seg_ptr] : seg_cache) {
                     auto& seg = get_segment(seg_ptr->get_data());
                     mem_segments += sizeof(segment_feature)
-                        + seg.transcript_ids.size() * 12  // ~12 bytes per set entry (uint32_t + hash node)
+                        + seg.transcript_ids.data_bytes()  // sorted flat vector
                         + seg.sample_idx.word_count() * 8  // dynamic bitset words
                         + seg.expression.data_bytes()      // lazy flat array
                         + seg.transcript_biotypes.size() * 40;  // uint32_t key + string value
@@ -121,7 +121,7 @@ index_stats builder::build_from_samples(grove_type& grove,
                     auto& exon = get_exon(exon_ptr->get_data());
                     mem_exons += sizeof(exon_feature)
                         + exon.id.capacity()
-                        + exon.transcript_ids.size() * 12  // uint32_t + hash node
+                        + exon.transcript_ids.data_bytes()  // sorted flat vector
                         + exon.sample_idx.word_count() * 8  // dynamic bitset words
                         + exon.expression.data_bytes();     // lazy flat array
                 }
