@@ -128,6 +128,10 @@ struct index_stats {
     static constexpr size_t MIN_HUB_BRANCHES = 10;
     static constexpr size_t MAX_DISPLAY_HUBS = 20;
 
+    // B+ tree structure
+    int tree_order = 0;
+    std::map<std::string, int> tree_depth_per_chromosome;  // per-index depth (root→leaf)
+
     // Per-chromosome summary
     struct chromosome_stats {
         size_t genes = 0;
