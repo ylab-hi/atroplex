@@ -29,6 +29,15 @@
 
 namespace gio = genogrove::io;
 
+/// Classification of how a subsequence aligns within a parent exon chain.
+/// Uses SQANTI3 ISM sub-classification terminology.
+enum class subsequence_type {
+    NONE,               ///< Not a contiguous subsequence
+    ISM_5PRIME,         ///< 5' fragment: 5' intact, 3' truncated → KEEP (97% CAGE support)
+    ISM_3PRIME,         ///< 3' fragment: 5' truncated, 3' intact → ABSORB (34% CAGE support)
+    INTERNAL_FRAGMENT   ///< Internal fragment: both ends truncated → ABSORB
+};
+
 /**
  * GFF/GTF-specific grove builder
  * Handles construction of grove structures from GFF/GTF annotation files
@@ -219,10 +228,14 @@ private:
     // ========== ISM absorption helpers ==========
 
     /**
-     * Check if sub is a contiguous subsequence of parent (pointer comparison)
-     * Used to detect ISM transcripts that are truncated versions of full-length segments
+     * Classify how sub aligns within parent's exon chain (pointer comparison).
+     * Returns ISM sub-type per SQANTI3 terminology:
+     *   ISM_5PRIME         — 5' fragment (5' intact, 3' truncated)
+     *   ISM_3PRIME         — 3' fragment (5' truncated, 3' intact)
+     *   INTERNAL_FRAGMENT  — internal fragment (both ends truncated)
+     *   NONE               — not a contiguous subsequence
      */
-    static bool is_contiguous_subsequence(
+    static subsequence_type classify_subsequence(
         const std::vector<key_ptr>& sub,
         const std::vector<key_ptr>& parent
     );
