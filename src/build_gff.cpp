@@ -350,7 +350,9 @@ void build_gff::create_segment(
                 if (candidate_seg.absorbed) continue;
                 if (entry.exon_chain.size() <= exon_chain.size()) continue;
 
-                if (is_contiguous_subsequence(exon_chain, entry.exon_chain)) {
+                auto match = classify_subsequence(exon_chain, entry.exon_chain);
+                if (match == subsequence_type::ISM_3PRIME ||
+                    match == subsequence_type::INTERNAL_FRAGMENT) {
                     if (entry.exon_chain.size() > best_exon_count) {
                         best_parent = entry.segment;
                         best_exon_count = entry.exon_chain.size();
@@ -430,11 +432,11 @@ void build_gff::create_segment(
     }
 }
 
-bool build_gff::is_contiguous_subsequence(
+subsequence_type build_gff::classify_subsequence(
     const std::vector<key_ptr>& sub,
     const std::vector<key_ptr>& parent
 ) {
-    if (sub.empty() || sub.size() >= parent.size()) return false;
+    if (sub.empty() || sub.size() >= parent.size()) return subsequence_type::NONE;
 
     for (size_t start = 0; start <= parent.size() - sub.size(); ++start) {
         if (parent[start] == sub[0]) {
@@ -445,10 +447,16 @@ bool build_gff::is_contiguous_subsequence(
                     break;
                 }
             }
-            if (all_match) return true;
+            if (all_match) {
+                bool shares_first = (start == 0);
+                bool shares_last  = (start + sub.size() == parent.size());
+                if (shares_first) return subsequence_type::ISM_5PRIME;
+                if (shares_last)  return subsequence_type::ISM_3PRIME;
+                return subsequence_type::INTERNAL_FRAGMENT;
+            }
         }
     }
-    return false;
+    return subsequence_type::NONE;
 }
 
 void build_gff::merge_into_segment(
@@ -495,7 +503,9 @@ void build_gff::try_reverse_absorption(
         if (candidate_seg.absorbed) continue;
         if (entry.exon_chain.size() >= new_exon_chain.size()) continue;
 
-        if (is_contiguous_subsequence(entry.exon_chain, new_exon_chain)) {
+        auto match = classify_subsequence(entry.exon_chain, new_exon_chain);
+        if (match == subsequence_type::ISM_3PRIME ||
+            match == subsequence_type::INTERNAL_FRAGMENT) {
             // Merge candidate's metadata into new parent
             for (const auto& tx : candidate_seg.transcript_ids)
                 parent_seg.transcript_ids.insert(tx);

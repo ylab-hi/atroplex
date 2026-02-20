@@ -23,6 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Expression type tracking per sample in output column headers
 - `--min-expression` filter for excluding low-count transcripts during build
 - `--no-absorb` flag to disable ISM segment absorption
+- Position-aware ISM absorption: only 3' fragments (5' truncated) and internal fragments are absorbed; 5' fragments (5' intact, 97% CAGE support) are preserved as independent segments
 - ISM segment absorption: contiguous exon-chain subsets merged into parent segments (forward + reverse)
 - Mono-exon transcript filtering during build
 - Two-tier statistics: quick `--stats` from builder caches, full `atroplex analyze` via tree traversal
