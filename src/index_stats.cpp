@@ -204,6 +204,9 @@ index_stats index_stats::collect(grove_type& grove, const collect_options& opts)
         branch_stream = std::make_unique<std::ofstream>(bd_path.string());
 
         if (branch_stream->is_open()) {
+            *branch_stream << "# Branch details: one row per (hub exon x downstream target) pair\n"
+                           << "# Per-entry columns: .fraction = target_transcripts / hub_transcripts;"
+                           << " .{expr_type} = expression at target (samples only)\n";
             *branch_stream << "hub_gene_name\thub_gene_id\thub_exon_id\thub_coordinate"
                            << "\ttarget_exon_id\ttarget_coordinate";
             for (size_t i = 0; i < stream_sample_ids.size(); ++i) {
@@ -547,6 +550,11 @@ index_stats index_stats::collect(grove_type& grove, const collect_options& opts)
         conserved_stream = std::make_unique<std::ofstream>(ce_path.string());
 
         if (conserved_stream->is_open()) {
+            *conserved_stream << "# Conserved exons: exons present in ALL samples\n"
+                              << "# n_transcripts = total transcripts using this exon; "
+                              << "constitutive = 1 if present in all transcripts of its gene\n"
+                              << "# Per-entry: .transcripts = transcript count; "
+                              << ".{expr_type} = expression (samples only)\n";
             *conserved_stream << "exon_id\tgene_name\tgene_id\tchromosome\tcoordinate\tn_transcripts\tconstitutive";
             for (size_t i = 0; i < stream_sample_ids.size(); ++i) {
                 *conserved_stream << "\t" << stream_labels[i] << ".transcripts";
@@ -1396,18 +1404,38 @@ void index_stats::write_summary(const std::string& path) const {
         out << std::setprecision(2) << "\n";
     }
 
+    // B+ tree structure
+    if (tree_order > 0) {
+        out << "B+ tree:\n";
+        out << "  Order:            " << tree_order << "  (max " << (tree_order - 1) << " keys/node)\n";
+        if (!tree_depth_per_chromosome.empty()) {
+            int max_depth = 0;
+            for (const auto& [chr, d] : tree_depth_per_chromosome) {
+                if (d > max_depth) max_depth = d;
+            }
+            out << "  Max tree depth:   " << max_depth << " levels\n";
+        }
+        out << "\n";
+    }
+
     // Per chromosome
     if (!per_chromosome.empty()) {
         out << "Per chromosome:\n";
         out << "  " << std::left << std::setw(10) << "Chrom"
             << std::right << std::setw(8) << "Genes"
             << std::setw(10) << "Segments"
-            << std::setw(10) << "Exons" << "\n";
+            << std::setw(10) << "Exons"
+            << std::setw(8) << "Depth" << "\n";
         for (const auto& [seqid, cs] : per_chromosome) {
             out << "  " << std::left << std::setw(10) << seqid
                 << std::right << std::setw(8) << cs.genes
                 << std::setw(10) << cs.segments
-                << std::setw(10) << cs.exons << "\n";
+                << std::setw(10) << cs.exons;
+            auto depth_it = tree_depth_per_chromosome.find(seqid);
+            if (depth_it != tree_depth_per_chromosome.end()) {
+                out << std::setw(8) << depth_it->second;
+            }
+            out << "\n";
         }
         out << "\n";
     }
@@ -1588,7 +1616,24 @@ void index_stats::write_splicing_hubs_tsv(const std::string& path) const {
         expr_labels.push_back(is_sample ? expr_type_label(info->expr_type) : "");
     }
 
-    // Header — per sample: branches, shared, unique, transcripts, entropy, psi + expression for samples
+    // Comment header describing column semantics
+    out << "# Splicing hubs: exons with >" << MIN_HUB_BRANCHES << " unique downstream exon targets\n"
+        << "# Global columns:\n"
+        << "#   gene_name, gene_id      — gene containing this hub exon\n"
+        << "#   exon_id, coordinate     — hub exon identity and genomic position\n"
+        << "#   exon_number, total_exons — 1-based position and length of representative segment chain\n"
+        << "#   total_branches          — total unique downstream exon targets (across all samples)\n"
+        << "#   total_transcripts       — total transcripts using this hub exon (across all samples)\n"
+        << "# Per-entry columns ({label}.X):\n"
+        << "#   .branches    — downstream exon targets present in this sample\n"
+        << "#   .shared      — targets also found in at least one other sample (conserved splicing)\n"
+        << "#   .unique      — targets found only in this sample (sample-specific splicing)\n"
+        << "#   .transcripts — transcripts in this sample that traverse this hub exon\n"
+        << "#   .entropy     — Shannon entropy of branch usage: H = -sum(p_i * log2(p_i)), higher = more uniform\n"
+        << "#   .psi         — Percent Spliced In: hub_transcripts / gene_transcripts (hub inclusion ratio)\n"
+        << "#   .{expr_type} — expression value at hub exon (samples only; omitted for annotations)\n";
+
+    // Header row
     out << "gene_name\tgene_id\texon_id\tcoordinate\texon_number\ttotal_exons\ttotal_branches\ttotal_transcripts";
     for (size_t i = 0; i < sample_ids.size(); ++i) {
         out << "\t" << labels[i] << ".branches"
@@ -1695,7 +1740,17 @@ void index_stats::write_branch_details_tsv(const std::string& path) const {
         expr_labels.push_back(is_sample ? expr_type_label(info->expr_type) : "");
     }
 
-    // Header — sample columns show branch usage fraction + expression for samples
+    // Comment header describing column semantics
+    out << "# Branch details: one row per (hub exon x downstream target) pair\n"
+        << "# Global columns:\n"
+        << "#   hub_gene_name, hub_gene_id — gene containing the hub exon\n"
+        << "#   hub_exon_id, hub_coordinate — hub exon identity and genomic position\n"
+        << "#   target_exon_id, target_coordinate — downstream target exon identity and position\n"
+        << "# Per-entry columns ({label}.X):\n"
+        << "#   .fraction    — branch usage: target_transcripts / hub_transcripts (0-1 scale)\n"
+        << "#   .{expr_type} — expression value at target exon (samples only; omitted for annotations)\n";
+
+    // Header row
     out << "hub_gene_name\thub_gene_id\thub_exon_id\thub_coordinate"
         << "\ttarget_exon_id\ttarget_coordinate";
     for (size_t i = 0; i < sample_ids.size(); ++i) {
