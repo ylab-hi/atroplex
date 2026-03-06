@@ -204,8 +204,8 @@ void build_gff::process_transcript(
 
         char strand = exon_entry.strand.value_or('+');
         exon_coords.emplace_back(strand,
-            exon_entry.interval.get_start(),
-            exon_entry.interval.get_end()
+            exon_entry.start,
+            exon_entry.end
         );
     }
 
@@ -237,9 +237,9 @@ std::vector<gio::gff_entry> build_gff::extract_sorted_exons(
         [strand](const gio::gff_entry& a, const gio::gff_entry& b) {
             if (a.seqid != b.seqid) return a.seqid < b.seqid;
             if (strand == '-') {
-                return a.interval.get_start() > b.interval.get_start();
+                return a.start > b.start;
             }
-            return a.interval.get_start() < b.interval.get_start();
+            return a.start < b.start;
         });
 
     return exons;
@@ -257,8 +257,8 @@ key_ptr build_gff::insert_exon(
     char strand = exon_entry.strand.value_or('+');
     gdt::genomic_coordinate coord(
         strand,
-        exon_entry.interval.get_start(),
-        exon_entry.interval.get_end()
+        exon_entry.start,
+        exon_entry.end
     );
 
     auto cached = exon_cache.find(coord);
@@ -281,7 +281,7 @@ key_ptr build_gff::insert_exon(
     exon_feature new_exon = exon_feature::from_gff_entry(
         exon_entry.attributes,
         normalized_seqid,
-        exon_entry.interval,
+        gdt::interval(exon_entry.start, exon_entry.end),
         strand
     );
     new_exon.transcript_ids.insert(transcript_registry::instance().intern(transcript_id));
@@ -373,14 +373,14 @@ void build_gff::create_segment(
     // Step 4: Create new segment (no exact match, no parent found)
     auto [min_it, max_it] = std::minmax_element(sorted_exons.begin(), sorted_exons.end(),
         [](const gio::gff_entry& a, const gio::gff_entry& b) {
-            return a.interval.get_start() < b.interval.get_start();
+            return a.start < b.start;
         });
 
     char strand = sorted_exons.front().strand.value_or('+');
     gdt::genomic_coordinate segment_coord(
         strand,
-        min_it->interval.get_start(),
-        max_it->interval.get_end()
+        min_it->start,
+        max_it->end
     );
 
     segment_feature new_segment;
@@ -563,7 +563,7 @@ std::string build_gff::make_exon_structure_key(
 }
 
 std::optional<std::string> build_gff::extract_gene_id(
-    const std::map<std::string, std::string>& attributes) {
+    const std::map<std::string, std::string, std::less<>>& attributes) {
     auto it = attributes.find("gene_id");
     if (it != attributes.end()) {
         return it->second;
@@ -572,7 +572,7 @@ std::optional<std::string> build_gff::extract_gene_id(
 }
 
 std::optional<std::string> build_gff::extract_transcript_id(
-    const std::map<std::string, std::string>& attributes) {
+    const std::map<std::string, std::string, std::less<>>& attributes) {
     auto it = attributes.find("transcript_id");
     if (it != attributes.end()) {
         return it->second;
@@ -581,7 +581,7 @@ std::optional<std::string> build_gff::extract_transcript_id(
 }
 
 std::optional<std::string> build_gff::extract_attribute(
-    const std::map<std::string, std::string>& attributes,
+    const std::map<std::string, std::string, std::less<>>& attributes,
     const std::string& key
 ) {
     auto it = attributes.find(key);

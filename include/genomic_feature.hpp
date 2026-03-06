@@ -117,7 +117,10 @@ public:
         void advance() {
             while (remaining_ == 0) {
                 wi_++;
-                if (wi_ >= bs_->words_.size()) return;
+                if (wi_ >= bs_->words_.size()) {
+                    bs_ = nullptr;  // exhausted — become end sentinel
+                    return;
+                }
                 remaining_ = bs_->words_[wi_];
             }
             uint32_t bit = static_cast<uint32_t>(__builtin_ctzll(remaining_));
@@ -512,7 +515,7 @@ struct exon_feature {
 
     // Create exon from GFF entry
     static exon_feature from_gff_entry(
-        const std::map<std::string, std::string>& attributes,
+        const std::map<std::string, std::string, std::less<>>& attributes,
         const std::string& seqid,
         const gdt::interval& interval,
         char strand

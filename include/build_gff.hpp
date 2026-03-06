@@ -266,13 +266,13 @@ private:
     // ========== Attribute extraction helpers ==========
 
     static std::optional<std::string> extract_gene_id(
-        const std::map<std::string, std::string>& attributes);
+        const std::map<std::string, std::string, std::less<>>& attributes);
 
     static std::optional<std::string> extract_transcript_id(
-        const std::map<std::string, std::string>& attributes);
+        const std::map<std::string, std::string, std::less<>>& attributes);
 
     static std::optional<std::string> extract_attribute(
-        const std::map<std::string, std::string>& attributes,
+        const std::map<std::string, std::string, std::less<>>& attributes,
         const std::string& key
     );
 };

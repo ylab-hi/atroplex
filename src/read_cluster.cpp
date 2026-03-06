@@ -13,11 +13,11 @@ processed_read processed_read::from_sam_entry(const gio::sam_entry& entry) {
     read.read_id = entry.qname;
     read.seqid = entry.chrom;
     read.strand = entry.get_strand();
-    read.interval = entry.interval;
+    read.interval = gdt::interval(entry.start, entry.end);
     read.mapq = entry.mapq;
 
     // Extract splice junctions from CIGAR N (REF_SKIP) operations
-    size_t ref_pos = entry.interval.get_start();
+    size_t ref_pos = entry.start;
 
     for (const auto& op : entry.cigar) {
         if (op.op == gio::cigar_op::REF_SKIP) {

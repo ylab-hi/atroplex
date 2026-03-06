@@ -14,7 +14,7 @@ include(FetchContent)
 FetchContent_Declare(
         cxxopts
         GIT_REPOSITORY https://github.com/jarro2783/cxxopts.git
-        GIT_TAG v3.2.1
+        GIT_TAG v3.3.1
 )
 FetchContent_MakeAvailable(cxxopts)
 
@@ -22,7 +22,7 @@ FetchContent_MakeAvailable(cxxopts)
 FetchContent_Declare(
         genogrove
         GIT_REPOSITORY https://github.com/genogrove/genogrove.git
-        GIT_TAG 6c9aa5b289087411418270eef8da5a2a7b1c54f6
+        GIT_TAG v0.17.0
 )
 FetchContent_MakeAvailable(genogrove)
 

@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- Updated genogrove dependency to v0.17.0 (fixes B+ tree `split_node` corruption)
+- Updated cxxopts dependency to v3.3.1
+- Adapted to genogrove v0.17.0 API: `gff_entry` and `sam_entry` use direct `start`/`end` fields instead of `interval` member
+- Adapted to genogrove v0.17.0 `gff_entry.attributes` using `std::less<>` transparent comparator
+
+### Fixed
+- Fixed infinite loop in `sample_bitset` iterator: `advance()` did not mark iterator as exhausted when all bits were consumed, causing range-based for loops over `sample_idx` to hang
+
 ### Added
 - Biological replicate merging via `--min-replicates N` and manifest `group` column
 - Auto-inference of replicate groups from sample IDs (strips `_repNN` suffix)

@@ -16,7 +16,7 @@
  * Helper to extract attribute from map, return empty string if not found
  */
 static std::string get_attribute(
-    const std::map<std::string, std::string>& attributes,
+    const std::map<std::string, std::string, std::less<>>& attributes,
     const std::string& key
 ) {
     auto it = attributes.find(key);
@@ -24,7 +24,7 @@ static std::string get_attribute(
 }
 
 exon_feature exon_feature::from_gff_entry(
-    const std::map<std::string, std::string>& attributes,
+    const std::map<std::string, std::string, std::less<>>& attributes,
     const std::string& seqid,
     const gdt::interval& interval,
     char strand
