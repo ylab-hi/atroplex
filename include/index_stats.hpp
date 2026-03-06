@@ -34,7 +34,7 @@ struct index_stats {
     size_t total_segments = 0;
     size_t total_exons = 0;
     size_t total_edges = 0;
-    size_t total_samples = 0;       // entries with type == "sample" (excludes annotations)
+    size_t total_entries = 0;       // all entries (annotations + samples, excludes replicates)
 
     // Gene biotype breakdown
     std::map<std::string, size_t> genes_by_biotype;

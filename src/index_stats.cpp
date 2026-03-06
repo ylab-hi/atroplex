@@ -100,6 +100,25 @@ index_stats index_stats::collect(grove_type& grove, const collect_options& opts)
     // All segment key pointers (needed for exon traversal)
     std::vector<std::pair<std::string, key_ptr>> segment_keys; // (seqid, key)
 
+    // Gene complexity: gene_id -> segment counts for reference vs pan
+    struct gene_complexity_info {
+        std::string gene_name;
+        std::string biotype;
+        std::string chromosome;
+        size_t pan_total = 0;       // total unique segments
+        size_t ref_segments = 0;    // segments present in any annotation entry
+    };
+    std::unordered_map<std::string, gene_complexity_info> gene_complexity;
+
+    // Pre-collect annotation entry IDs
+    std::unordered_set<uint32_t> annotation_entry_ids;
+    for (size_t i = 0; i < registry.size(); ++i) {
+        const auto* info = registry.get(static_cast<uint32_t>(i));
+        if (info && info->type == "annotation") {
+            annotation_entry_ids.insert(static_cast<uint32_t>(i));
+        }
+    }
+
     // Transcript -> sample mapping (interned transcript ID -> sample IDs)
     std::unordered_map<uint32_t, std::unordered_set<uint32_t>> tx_to_samples;
 
@@ -150,6 +169,22 @@ index_stats index_stats::collect(grove_type& grove, const collect_options& opts)
                     }
                 }
 
+                // Gene complexity: count ref vs pan segments per gene
+                {
+                    auto& gc = gene_complexity[seg.gene_id()];
+                    gc.gene_name = seg.gene_name();
+                    gc.biotype = seg.gene_biotype();
+                    gc.chromosome = seqid;
+                    gc.pan_total++;
+                    // Check if this segment is in any annotation entry
+                    for (uint32_t aid : annotation_entry_ids) {
+                        if (seg.sample_idx.test(aid)) {
+                            gc.ref_segments++;
+                            break;
+                        }
+                    }
+                }
+
                 exons_per_segment.push_back(static_cast<size_t>(seg.exon_count));
                 if (seg.exon_count == 1) {
                     stats.single_exon_segments++;
@@ -159,6 +194,51 @@ index_stats index_stats::collect(grove_type& grove, const collect_options& opts)
             }
             node = node->get_next();
         }
+    }
+
+    // Stream gene complexity TSV into sharing/ subfolder
+    if (streaming && !gene_complexity.empty()) {
+        auto sharing_dir = std::filesystem::path(opts.output_dir) / "sharing";
+        std::filesystem::create_directories(sharing_dir);
+        auto gc_path = sharing_dir / (opts.basename + ".gene_complexity.tsv");
+        std::ofstream gc_out(gc_path.string());
+
+        if (gc_out.is_open()) {
+            // Header
+            gc_out << "gene_id\tgene_name\tbiotype\tchromosome"
+                   << "\tref_segments\tpan_segments\tnovel_segments\tcomplexity_gain\n";
+
+            // Sort genes by chromosome then gene_id
+            std::vector<std::pair<std::string, const gene_complexity_info*>> sorted_genes;
+            sorted_genes.reserve(gene_complexity.size());
+            for (const auto& [gid, gc] : gene_complexity) {
+                sorted_genes.emplace_back(gid, &gc);
+            }
+            std::sort(sorted_genes.begin(), sorted_genes.end(),
+                [](const auto& a, const auto& b) {
+                    if (a.second->chromosome != b.second->chromosome)
+                        return a.second->chromosome < b.second->chromosome;
+                    return a.first < b.first;
+                });
+
+            for (const auto& [gid, gc] : sorted_genes) {
+                size_t novel = gc->pan_total > gc->ref_segments
+                    ? gc->pan_total - gc->ref_segments : 0;
+                double gain = gc->ref_segments > 0
+                    ? static_cast<double>(gc->pan_total) / static_cast<double>(gc->ref_segments)
+                    : 0.0;
+
+                gc_out << gid << "\t" << gc->gene_name << "\t" << gc->biotype
+                       << "\t" << gc->chromosome
+                       << "\t" << gc->ref_segments
+                       << "\t" << gc->pan_total
+                       << "\t" << novel
+                       << "\t" << std::fixed << std::setprecision(2) << gain
+                       << "\n";
+            }
+            logging::info("Gene complexity written to: " + gc_path.string());
+        }
+        gene_complexity.clear();
     }
 
     // Build per-sample per-gene transcript counts (for traditional PSI)
@@ -351,17 +431,26 @@ index_stats index_stats::collect(grove_type& grove, const collect_options& opts)
                                 }
                             }
 
-                            // Compute Shannon entropy per sample from branch PSI distribution
+                            // Compute Shannon entropy per sample from branch usage distribution
+                            // Use sum of per-target transcript counts as denominator (not hub total)
+                            // because a transcript can appear in multiple target exons' transcript_ids
+                            // due to exon-level deduplication across segments
                             for (uint32_t sid : exon.sample_idx) {
-                                auto tx_it = info.sample_transcripts.find(sid);
-                                if (tx_it == info.sample_transcripts.end() || tx_it->second == 0) continue;
-                                double total_tx = static_cast<double>(tx_it->second);
+                                // Sum actual branch counts for this sample
+                                double branch_total = 0.0;
+                                for (const auto& bt : info.targets) {
+                                    auto bt_tx_it = bt.sample_transcripts.find(sid);
+                                    if (bt_tx_it != bt.sample_transcripts.end()) {
+                                        branch_total += static_cast<double>(bt_tx_it->second);
+                                    }
+                                }
+                                if (branch_total == 0.0) continue;
 
                                 double entropy = 0.0;
                                 for (const auto& bt : info.targets) {
                                     auto bt_tx_it = bt.sample_transcripts.find(sid);
                                     if (bt_tx_it == bt.sample_transcripts.end() || bt_tx_it->second == 0) continue;
-                                    double psi = static_cast<double>(bt_tx_it->second) / total_tx;
+                                    double psi = static_cast<double>(bt_tx_it->second) / branch_total;
                                     if (psi > 0.0) {
                                         entropy -= psi * std::log2(psi);
                                     }
@@ -517,15 +606,15 @@ index_stats index_stats::collect(grove_type& grove, const collect_options& opts)
         gene_transcript_counts[gene_id] = gi.transcript_ids.size();
     }
 
-    // Count only experimental samples (type == "sample") for conserved/sharing stats
-    size_t total_samples = 0;
+    // Count all entries (annotations + samples) for conserved/sharing stats, excluding replicates
+    size_t total_entries = 0;
     for (size_t i = 0; i < registry.size(); ++i) {
         const auto* info = registry.get(static_cast<uint32_t>(i));
-        if (info && info->type == "sample") {
-            total_samples++;
+        if (info && info->type != "replicate") {
+            total_entries++;
         }
     }
-    stats.total_samples = total_samples;
+    stats.total_entries = total_entries;
 
     // Compute global + per-sample transcript biotype counts
     for (const auto& [tx_id, biotype] : tx_biotypes) {
@@ -603,7 +692,7 @@ index_stats index_stats::collect(grove_type& grove, const collect_options& opts)
                 }
 
                 // Per-sample exon stats (cross-sample sharing + transcript-level)
-                bool is_conserved = exon.sample_idx.count() >= total_samples && total_samples > 0;
+                bool is_conserved = exon.sample_idx.count() >= total_entries && total_entries > 0;
                 for (uint32_t sid : exon.sample_idx) {
                     auto& ss = stats.per_sample[sid];
                     ss.exons++;
@@ -906,7 +995,7 @@ index_stats index_stats::collect(grove_type& grove, const collect_options& opts)
         auto& seg = get_segment(seg_key->get_data());
 
         // Segment sharing distribution
-        if (seg.is_conserved(total_samples)) {
+        if (seg.is_conserved(total_entries)) {
             stats.conserved_segments++;
         } else if (seg.is_sample_specific()) {
             stats.sample_specific_segments++;
@@ -920,7 +1009,7 @@ index_stats index_stats::collect(grove_type& grove, const collect_options& opts)
 
             if (seg.sample_idx.count() == 1) {
                 ss.exclusive_segments++;
-            } else if (seg.is_conserved(total_samples)) {
+            } else if (seg.is_conserved(total_entries)) {
                 ss.conserved_segments++;
             } else {
                 ss.shared_segments++;
@@ -1159,12 +1248,10 @@ void index_stats::write(const std::string& path) const {
     // ── Segment sharing ──
     if (!per_sample.empty()) {
         section("Segment sharing");
-        out << "   Distribution across experimental samples (annotations excluded).\n";
-        out << "   Conserved = all samples; shared = 2+ but not all; sample-specific = exactly 1.\n\n";
+        out << "   Distribution across all entries (annotations + samples).\n";
+        out << "   Conserved = all entries; shared = 2+ but not all; exclusive = exactly 1.\n\n";
 
-        out << "Samples:            " << total_samples
-            << "  (" << per_sample.size() << " entries total, "
-            << (per_sample.size() - total_samples) << " annotations)\n";
+        out << "Entries:             " << total_entries << "\n";
         out << "Conserved:          " << conserved_segments;
         if (total_segments > 0) {
             double pct = 100.0 * static_cast<double>(conserved_segments) / static_cast<double>(total_segments);
@@ -1307,7 +1394,7 @@ void index_stats::write_summary(const std::string& path) const {
         }
 
         out << "Inputs: " << (reg.size() - n_replicates) << " entries ("
-            << total_samples << " samples, "
+            << total_entries << " samples, "
             << n_annotations << " annotations";
         if (n_replicates > 0) {
             out << ", " << n_replicates << " replicates merged";
@@ -1947,7 +2034,7 @@ void index_stats::write_conserved_exons_tsv(const std::string& path) const {
     }
 
     logging::info("Conserved exons (" + std::to_string(sorted.size())
-        + " exons in all " + std::to_string(total_samples) + " samples) written to: " + path);
+        + " exons in all " + std::to_string(total_entries) + " samples) written to: " + path);
 }
 
 void index_stats::write_overview_tsv(const std::string& path) const {
@@ -1965,7 +2052,7 @@ void index_stats::write_overview_tsv(const std::string& path) const {
     out << "segments\t" << total_segments << "\n";
     out << "exons\t" << total_exons << "\n";
     out << "edges\t" << total_edges << "\n";
-    out << "samples\t" << total_samples << "\n";
+    out << "samples\t" << total_entries << "\n";
 
     out << std::fixed << std::setprecision(2);
     out << "mean_transcripts_per_gene\t" << mean_transcripts_per_gene << "\n";

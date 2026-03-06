@@ -169,8 +169,8 @@ index_stats builder::build_from_samples(grove_type& grove,
         if (info && !info->id.empty()) {
             stats.annotation_sources.push_back(info->id);
         }
-        if (info && info->type == "sample") {
-            stats.total_samples++;
+        if (info && info->type != "replicate") {
+            stats.total_entries++;
         }
     }
 
