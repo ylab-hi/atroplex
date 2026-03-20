@@ -19,7 +19,7 @@
 #include <type_traits>
 
 // genogrove
-#include <genogrove/data_type/data_registry.hpp>
+#include <genogrove/data_type/registry.hpp>
 
 namespace gdt = genogrove::data_type;
 
@@ -210,6 +210,6 @@ struct sequence_variant {
 };
 
 // Type alias for the variant registry singleton
-using variant_registry = gdt::data_registry<sequence_variant>;
+using variant_registry = gdt::registry<sequence_variant>;
 
 #endif //ATROPLEX_SEQUENCE_VARIANT_HPP

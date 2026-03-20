@@ -19,7 +19,7 @@
 #include <type_traits>
 
 // genogrove
-#include <genogrove/data_type/data_registry.hpp>
+#include <genogrove/data_type/registry.hpp>
 
 namespace gdt = genogrove::data_type;
 
@@ -354,6 +354,6 @@ struct sample_info {
 };
 
 // Type alias for the sample registry singleton
-using sample_registry = gdt::data_registry<sample_info>;
+using sample_registry = gdt::registry<sample_info>;
 
 #endif //ATROPLEX_SAMPLE_INFO_HPP

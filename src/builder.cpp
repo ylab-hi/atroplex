@@ -165,11 +165,11 @@ index_stats builder::build_from_samples(grove_type& grove,
     // Annotation sources and sample count from registry
     auto& registry = sample_registry::instance();
     for (size_t i = 0; i < registry.size(); ++i) {
-        const auto* info = registry.get(static_cast<uint32_t>(i));
-        if (info && !info->id.empty()) {
-            stats.annotation_sources.push_back(info->id);
+        const auto& info = registry.get(static_cast<uint32_t>(i));
+        if (!info.id.empty()) {
+            stats.annotation_sources.push_back(info.id);
         }
-        if (info && info->type != "replicate") {
+        if (info.type != "replicate") {
             stats.total_entries++;
         }
     }
@@ -320,9 +320,9 @@ void builder::merge_replicates(
     std::map<std::string, std::vector<uint32_t>> groups;
     for (size_t i = 0; i < registry.size(); ++i) {
         uint32_t rid = static_cast<uint32_t>(i);
-        const auto* info = registry.get(rid);
-        if (!info || info->type != "sample" || info->group.empty()) continue;
-        groups[info->group].push_back(rid);
+        const auto& info = registry.get(rid);
+        if (info.type != "sample" || info.group.empty()) continue;
+        groups[info.group].push_back(rid);
     }
 
     if (groups.empty()) {
@@ -333,8 +333,8 @@ void builder::merge_replicates(
     // Step 2: Register merged sample_info for each group
     std::map<std::string, uint32_t> group_merged_ids;
     for (auto& [group_name, replicate_ids] : groups) {
-        const auto* first = registry.get(replicate_ids[0]);
-        sample_info merged(*first);
+        const auto& first = registry.get(replicate_ids[0]);
+        sample_info merged(first);
         merged.id = group_name;
         merged.group = group_name;
         merged.description = "Merged from " + std::to_string(replicate_ids.size()) + " replicates";
@@ -415,8 +415,7 @@ void builder::merge_replicates(
     // Step 4: Mark replicate entries as type="replicate" so they're excluded from stats
     for (const auto& [group_name, replicate_ids] : groups) {
         for (uint32_t rid : replicate_ids) {
-            auto* info = registry.get(rid);
-            if (info) info->type = "replicate";
+            registry.get(rid).type = "replicate";
         }
     }
 

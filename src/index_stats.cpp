@@ -79,9 +79,9 @@ index_stats index_stats::collect(grove_type& grove, const collect_options& opts)
     // Collect annotation sources from sample_registry
     auto& registry = sample_registry::instance();
     for (size_t i = 0; i < registry.size(); ++i) {
-        const auto* info = registry.get(static_cast<uint32_t>(i));
-        if (info && !info->id.empty()) {
-            stats.annotation_sources.push_back(info->id);
+        const auto& info = registry.get(static_cast<uint32_t>(i));
+        if (!info.id.empty()) {
+            stats.annotation_sources.push_back(info.id);
         }
     }
 
@@ -113,8 +113,8 @@ index_stats index_stats::collect(grove_type& grove, const collect_options& opts)
     // Pre-collect annotation entry IDs
     std::unordered_set<uint32_t> annotation_entry_ids;
     for (size_t i = 0; i < registry.size(); ++i) {
-        const auto* info = registry.get(static_cast<uint32_t>(i));
-        if (info && info->type == "annotation") {
+        const auto& info = registry.get(static_cast<uint32_t>(i));
+        if (info.type == "annotation") {
             annotation_entry_ids.insert(static_cast<uint32_t>(i));
         }
     }
@@ -271,11 +271,11 @@ index_stats index_stats::collect(grove_type& grove, const collect_options& opts)
             stream_sample_ids.push_back(static_cast<uint32_t>(i));
         }
         for (uint32_t sid : stream_sample_ids) {
-            const auto* info = registry.get(sid);
-            stream_labels.push_back((info && !info->id.empty()) ? info->id : std::to_string(sid));
-            bool is_samp = info && info->type == "sample";
+            const auto& info = registry.get(sid);
+            stream_labels.push_back((!info.id.empty()) ? info.id : std::to_string(sid));
+            bool is_samp = info.type == "sample";
             stream_is_sample.push_back(is_samp);
-            stream_expr_labels.push_back(is_samp ? expr_type_label(info->expr_type) : "");
+            stream_expr_labels.push_back(is_samp ? expr_type_label(info.expr_type) : "");
         }
 
         auto hubs_dir = std::filesystem::path(opts.output_dir) / "splicing_hubs";
@@ -609,8 +609,8 @@ index_stats index_stats::collect(grove_type& grove, const collect_options& opts)
     // Count all entries (annotations + samples) for conserved/sharing stats, excluding replicates
     size_t total_entries = 0;
     for (size_t i = 0; i < registry.size(); ++i) {
-        const auto* info = registry.get(static_cast<uint32_t>(i));
-        if (info && info->type != "replicate") {
+        const auto& info = registry.get(static_cast<uint32_t>(i));
+        if (info.type != "replicate") {
             total_entries++;
         }
     }
@@ -1090,9 +1090,9 @@ void index_stats::write(const std::string& path) const {
         out << "\nInput entries:\n";
         auto& reg = sample_registry::instance();
         for (size_t i = 0; i < reg.size(); ++i) {
-            const auto* info = reg.get(static_cast<uint32_t>(i));
-            if (info && !info->id.empty()) {
-                out << "  " << info->id << "  [" << info->type << "]\n";
+            const auto& info = reg.get(static_cast<uint32_t>(i));
+            if (!info.id.empty()) {
+                out << "  " << info.id << "  [" << info.type << "]\n";
             }
         }
     }
@@ -1230,10 +1230,10 @@ void index_stats::write(const std::string& path) const {
         out << "   Exclusive = exons only in this entry, not shared with any other.\n\n";
         for (uint32_t sid : exon_ids) {
             const auto& ss = per_sample.at(sid);
-            const auto* info = reg_exon.get(sid);
-            std::string label = (info && !info->id.empty()) ? info->id : std::to_string(sid);
-            if (info && info->type != "sample") {
-                label += " [" + info->type + "]";
+            const auto& info = reg_exon.get(sid);
+            std::string label = (!info.id.empty()) ? info.id : std::to_string(sid);
+            if (info.type != "sample") {
+                label += " [" + info.type + "]";
             }
             double pct = ss.exons > 0 ?
                 100.0 * static_cast<double>(ss.exclusive_exons) / static_cast<double>(ss.exons) : 0;
@@ -1301,10 +1301,10 @@ void index_stats::write(const std::string& path) const {
 
         for (uint32_t sid : sorted_ids) {
             const auto& ss = per_sample.at(sid);
-            const auto* info = registry.get(sid);
-            std::string label = (info && !info->id.empty()) ? info->id : std::to_string(sid);
-            if (info && info->type != "sample") {
-                label += " [" + info->type + "]";
+            const auto& info = registry.get(sid);
+            std::string label = (!info.id.empty()) ? info.id : std::to_string(sid);
+            if (info.type != "sample") {
+                label += " [" + info.type + "]";
             }
 
             out << std::left << std::setw(30) << label
@@ -1387,10 +1387,9 @@ void index_stats::write_summary(const std::string& path) const {
         // Count entry types
         size_t n_annotations = 0, n_replicates = 0;
         for (size_t i = 0; i < reg.size(); ++i) {
-            const auto* info = reg.get(static_cast<uint32_t>(i));
-            if (!info) continue;
-            if (info->type == "annotation") n_annotations++;
-            else if (info->type == "replicate") n_replicates++;
+            const auto& info = reg.get(static_cast<uint32_t>(i));
+            if (info.type == "annotation") n_annotations++;
+            else if (info.type == "replicate") n_replicates++;
         }
 
         out << "Inputs: " << (reg.size() - n_replicates) << " entries ("
@@ -1401,9 +1400,9 @@ void index_stats::write_summary(const std::string& path) const {
         }
         out << ")\n";
         for (size_t i = 0; i < reg.size(); ++i) {
-            const auto* info = reg.get(static_cast<uint32_t>(i));
-            if (info && !info->id.empty() && info->type != "replicate") {
-                out << "  " << info->id << "  [" << info->type << "]\n";
+            const auto& info = reg.get(static_cast<uint32_t>(i));
+            if (!info.id.empty() && info.type != "replicate") {
+                out << "  " << info.id << "  [" << info.type << "]\n";
             }
         }
         out << "\n";
@@ -1528,8 +1527,8 @@ void index_stats::write_sample_csv(const std::string& path) const {
     // Header row: metric, sample1, sample2, ...
     out << "metric";
     for (uint32_t sid : sample_ids) {
-        const auto* info = registry.get(sid);
-        out << "," << (info && !info->id.empty() ? info->id : std::to_string(sid));
+        const auto& info = registry.get(sid);
+        out << "," << (!info.id.empty() ? info.id : std::to_string(sid));
     }
     out << "\n";
 
@@ -1537,20 +1536,20 @@ void index_stats::write_sample_csv(const std::string& path) const {
     auto write_metadata_row = [&](const std::string& label, auto getter) {
         out << label;
         for (uint32_t sid : sample_ids) {
-            const auto* info = registry.get(sid);
-            out << "," << (info ? getter(info) : "");
+            const auto& info = registry.get(sid);
+            out << "," << getter(info);
         }
         out << "\n";
     };
 
-    write_metadata_row("type", [](const sample_info* i) -> const std::string& { return i->type; });
-    write_metadata_row("source_file", [](const sample_info* i) { return i->source_file.filename().string(); });
-    write_metadata_row("assay", [](const sample_info* i) -> const std::string& { return i->assay; });
-    write_metadata_row("biosample", [](const sample_info* i) -> const std::string& { return i->biosample; });
-    write_metadata_row("condition", [](const sample_info* i) -> const std::string& { return i->condition; });
-    write_metadata_row("species", [](const sample_info* i) -> const std::string& { return i->species; });
-    write_metadata_row("platform", [](const sample_info* i) -> const std::string& { return i->platform; });
-    write_metadata_row("pipeline", [](const sample_info* i) -> const std::string& { return i->pipeline; });
+    write_metadata_row("type", [](const sample_info& i) -> const std::string& { return i.type; });
+    write_metadata_row("source_file", [](const sample_info& i) { return i.source_file.filename().string(); });
+    write_metadata_row("assay", [](const sample_info& i) -> const std::string& { return i.assay; });
+    write_metadata_row("biosample", [](const sample_info& i) -> const std::string& { return i.biosample; });
+    write_metadata_row("condition", [](const sample_info& i) -> const std::string& { return i.condition; });
+    write_metadata_row("species", [](const sample_info& i) -> const std::string& { return i.species; });
+    write_metadata_row("platform", [](const sample_info& i) -> const std::string& { return i.platform; });
+    write_metadata_row("pipeline", [](const sample_info& i) -> const std::string& { return i.pipeline; });
 
     // Stat rows
     auto write_stat_row = [&](const std::string& label, auto getter) {
@@ -1668,11 +1667,11 @@ void index_stats::write_splicing_hubs_tsv(const std::string& path) const {
     std::vector<std::string> labels;
     std::vector<std::string> expr_labels;
     for (uint32_t sid : sample_ids) {
-        const auto* info = registry.get(sid);
-        labels.push_back((info && !info->id.empty()) ? info->id : std::to_string(sid));
-        bool is_sample = info && info->type == "sample";
+        const auto& info = registry.get(sid);
+        labels.push_back((!info.id.empty()) ? info.id : std::to_string(sid));
+        bool is_sample = info.type == "sample";
         is_sample_type.push_back(is_sample);
-        expr_labels.push_back(is_sample ? expr_type_label(info->expr_type) : "");
+        expr_labels.push_back(is_sample ? expr_type_label(info.expr_type) : "");
     }
 
     // Header — per sample: branches, shared, unique, transcripts, entropy, psi + expression for samples
@@ -1775,11 +1774,11 @@ void index_stats::write_branch_details_tsv(const std::string& path) const {
     std::vector<std::string> labels;
     std::vector<std::string> expr_labels;
     for (uint32_t sid : sample_ids) {
-        const auto* info = registry.get(sid);
-        labels.push_back((info && !info->id.empty()) ? info->id : std::to_string(sid));
-        bool is_sample = info && info->type == "sample";
+        const auto& info = registry.get(sid);
+        labels.push_back((!info.id.empty()) ? info.id : std::to_string(sid));
+        bool is_sample = info.type == "sample";
         is_sample_type.push_back(is_sample);
-        expr_labels.push_back(is_sample ? expr_type_label(info->expr_type) : "");
+        expr_labels.push_back(is_sample ? expr_type_label(info.expr_type) : "");
     }
 
     // Header — sample columns show branch usage fraction + expression for samples
@@ -1857,8 +1856,8 @@ void index_stats::write_exon_sharing_tsv(const std::string& path) const {
     // Resolve sample labels
     std::vector<std::string> labels;
     for (uint32_t sid : sample_ids) {
-        const auto* info = registry.get(sid);
-        labels.push_back((info && !info->id.empty()) ? info->id : std::to_string(sid));
+        const auto& info = registry.get(sid);
+        labels.push_back((!info.id.empty()) ? info.id : std::to_string(sid));
     }
 
     // Header
@@ -1918,8 +1917,8 @@ void index_stats::write_segment_sharing_tsv(const std::string& path) const {
     // Resolve sample labels
     std::vector<std::string> labels;
     for (uint32_t sid : sample_ids) {
-        const auto* info = registry.get(sid);
-        labels.push_back((info && !info->id.empty()) ? info->id : std::to_string(sid));
+        const auto& info = registry.get(sid);
+        labels.push_back((!info.id.empty()) ? info.id : std::to_string(sid));
     }
 
     // Header
@@ -1982,11 +1981,11 @@ void index_stats::write_conserved_exons_tsv(const std::string& path) const {
     std::vector<std::string> labels;
     std::vector<std::string> expr_labels;
     for (uint32_t sid : sample_ids) {
-        const auto* info = registry.get(sid);
-        labels.push_back((info && !info->id.empty()) ? info->id : std::to_string(sid));
-        bool is_sample = info && info->type == "sample";
+        const auto& info = registry.get(sid);
+        labels.push_back((!info.id.empty()) ? info.id : std::to_string(sid));
+        bool is_sample = info.type == "sample";
         is_sample_type.push_back(is_sample);
-        expr_labels.push_back(is_sample ? expr_type_label(info->expr_type) : "");
+        expr_labels.push_back(is_sample ? expr_type_label(info.expr_type) : "");
     }
 
     // Header: .transcripts for all, .expression_type for sample-type entries only
@@ -2135,9 +2134,9 @@ void index_stats::write_per_sample_tsv(const std::string& path) const {
     out << std::fixed;
     for (uint32_t sid : sample_ids) {
         const auto& ss = per_sample.at(sid);
-        const auto* info = registry.get(sid);
-        std::string label = (info && !info->id.empty()) ? info->id : std::to_string(sid);
-        std::string type = (info ? info->type : "sample");
+        const auto& info = registry.get(sid);
+        std::string label = (!info.id.empty()) ? info.id : std::to_string(sid);
+        std::string type = info.type;
 
         out << label << "\t" << type
             << "\t" << ss.genes
@@ -2183,8 +2182,8 @@ void index_stats::write_biotype_tsv(const std::string& path) const {
     // Resolve sample labels
     std::vector<std::string> labels;
     for (uint32_t sid : sample_ids) {
-        const auto* info = registry.get(sid);
-        labels.push_back((info && !info->id.empty()) ? info->id : std::to_string(sid));
+        const auto& info = registry.get(sid);
+        labels.push_back((!info.id.empty()) ? info.id : std::to_string(sid));
     }
 
     // Header

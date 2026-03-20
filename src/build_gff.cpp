@@ -159,9 +159,11 @@ void build_gff::process_transcript(
                         // Set expr_type on sample_info if not already set
                         if (sample_id.has_value()) {
                             auto& registry = sample_registry::instance();
-                            auto* info = registry.get(*sample_id);
-                            if (info && !info->has_expression_type()) {
-                                info->expr_type = expr_type;
+                            if (registry.contains(*sample_id)) {
+                                auto& info = registry.get(*sample_id);
+                                if (!info.has_expression_type()) {
+                                    info.expr_type = expr_type;
+                                }
                             }
                         }
                     } catch (...) {}
