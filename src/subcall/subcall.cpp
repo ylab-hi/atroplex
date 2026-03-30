@@ -11,6 +11,7 @@
 #include "subcall/subcall.hpp"
 
 #include <filesystem>
+#include <fstream>
 
 #include "utility.hpp"
 #include "builder.hpp"
@@ -23,15 +24,16 @@ void subcall::add_common_options(cxxopts::Options& options) {
     options.add_options("Common")
         ("o,output-dir", "Output directory for results (default: input file directory)",
             cxxopts::value<std::string>())
+        ("p,prefix", "Output file prefix (default: derived from manifest or first input file)",
+            cxxopts::value<std::string>())
         ("t,threads", "Number of threads (0 = auto-detect)",
             cxxopts::value<uint32_t>()->default_value("1"))
-        ("s,stats", "Write index statistics to output directory")
         ("progress", "Show progress output")
         ("h,help", "Show help message")
         ;
 
     options.add_options("Grove")
-        ("g,genogrove", "Pre-built genogrove index (.gg)",
+        ("g,genogrove", "Pre-built genogrove index (.ggx)",
             cxxopts::value<std::string>())
         ("m,manifest", "Sample manifest file (TSV with metadata)",
             cxxopts::value<std::string>())
@@ -75,7 +77,7 @@ void subcall::run(const cxxopts::ParseResult& args) {
     validate(args);
     apply_common_options(args);
     setup_grove(args);
-    write_index_stats(args);
+    write_build_summary(args);
     execute(args);
 }
 
@@ -84,6 +86,7 @@ void subcall::setup_grove(const cxxopts::ParseResult& args) {
         std::string gg_path = args["genogrove"].as<std::string>();
         logging::info("Loading grove from: " + gg_path);
         load_grove(gg_path);
+        return;  // Grove loaded from file, skip building
     }
 
     int order = args["order"].as<int>();
@@ -131,14 +134,67 @@ void subcall::setup_grove(const cxxopts::ParseResult& args) {
             logging::info("Replicate merging enabled: min_replicates = " + std::to_string(min_reps));
         }
         grove = std::make_unique<grove_type>(order);
-        build_stats = builder::build_from_samples(*grove, all_samples, threads, min_expr, absorb, min_reps);
+        build_stats = builder::build_from_samples(*grove, all_samples, threads, min_expr, absorb, min_reps, &exon_caches_);
         logging::info("Grove ready with spatial index and graph structure");
     }
 }
 
+std::string subcall::resolve_prefix(const cxxopts::ParseResult& args) const {
+    if (args.count("prefix")) {
+        return args["prefix"].as<std::string>();
+    }
+
+    // Derive from manifest filename
+    if (args.count("manifest")) {
+        return std::filesystem::path(args["manifest"].as<std::string>()).stem().string();
+    }
+
+    // Derive from first build-from file
+    if (args.count("build-from")) {
+        return std::filesystem::path(
+            args["build-from"].as<std::vector<std::string>>().front()).stem().string();
+    }
+
+    // Derive from genogrove index (strip .ggx extension)
+    if (args.count("genogrove")) {
+        return std::filesystem::path(args["genogrove"].as<std::string>()).stem().string();
+    }
+
+    return "atroplex";
+}
+
 void subcall::load_grove(const std::string& path) {
-    // TODO: Implement genogrove deserialization
-    throw std::runtime_error("Genogrove deserialization not yet implemented: " + path);
+    std::ifstream ifs(path, std::ios::binary);
+    if (!ifs.is_open()) {
+        throw std::runtime_error("Cannot open index file: " + path);
+    }
+
+    // Read magic bytes + version
+    char magic[4];
+    ifs.read(magic, 4);
+    if (std::string(magic, 4) != "AGRX") {
+        throw std::runtime_error("Invalid .ggx file (bad magic): " + path);
+    }
+    uint16_t version;
+    ifs.read(reinterpret_cast<char*>(&version), sizeof(version));
+    if (version != 1) {
+        throw std::runtime_error("Unsupported .ggx version: " + std::to_string(version));
+    }
+
+    // Deserialize registries (order must match save_grove)
+    gene_registry::instance().deserialize_into(ifs);
+    source_registry::instance().deserialize_into(ifs);
+    transcript_registry::instance().deserialize_into(ifs);
+    (void)sample_registry::deserialize(ifs);
+
+    // Deserialize grove (handles its own zlib decompression)
+    grove = std::make_unique<grove_type>(grove_type::deserialize(ifs));
+
+    logging::info("Loaded index from: " + path);
+    logging::info("  Genes: " + std::to_string(gene_registry::instance().size()) +
+                  ", Sources: " + std::to_string(source_registry::instance().size()) +
+                  ", Transcripts: " + std::to_string(transcript_registry::instance().size()) +
+                  ", Samples: " + std::to_string(sample_registry::instance().size()));
 }
 
 void subcall::build_grove(const std::vector<std::string>& files, int order, uint32_t threads) {
@@ -149,31 +205,47 @@ void subcall::build_grove(const std::vector<std::string>& files, int order, uint
 }
 
 void subcall::save_grove(const std::string& path) {
-    // TODO: Implement genogrove serialization
-    logging::warning("Genogrove serialization not yet implemented, skipping save to: " + path);
+    if (!grove) {
+        logging::warning("No grove to save");
+        return;
+    }
+
+    std::ofstream ofs(path, std::ios::binary);
+    if (!ofs.is_open()) {
+        throw std::runtime_error("Cannot create index file: " + path);
+    }
+
+    // Write magic bytes + version
+    ofs.write("AGRX", 4);  // Atroplex GRove indeX
+    uint16_t version = 1;
+    ofs.write(reinterpret_cast<const char*>(&version), sizeof(version));
+
+    // Serialize registries (order must match load_grove)
+    gene_registry::instance().serialize(ofs);
+    source_registry::instance().serialize(ofs);
+    transcript_registry::instance().serialize(ofs);
+    sample_registry::instance().serialize(ofs);
+
+    // Serialize grove (handles its own zlib compression)
+    grove->serialize(ofs);
+
+    logging::info("Index saved to: " + path + " (" +
+                  std::to_string(std::filesystem::file_size(path) / 1024) + " KB)");
 }
 
-void subcall::write_index_stats(const cxxopts::ParseResult& args) {
-    if (!args.count("stats") || !build_stats) return;
+void subcall::write_build_summary(const cxxopts::ParseResult& args) {
+    if (!build_stats) return;
 
-    // Determine output path
+    std::string prefix = resolve_prefix(args);
     std::string fallback;
-    if (args.count("input")) {
-        fallback = args["input"].as<std::string>();
+    if (args.count("manifest")) {
+        fallback = args["manifest"].as<std::string>();
     } else if (args.count("build-from")) {
         fallback = args["build-from"].as<std::vector<std::string>>().front();
-    } else if (args.count("manifest")) {
-        fallback = args["manifest"].as<std::string>();
     }
 
     auto out_dir = resolve_output_dir(args, fallback);
-
-    std::string basename = fallback.empty()
-        ? "atroplex"
-        : std::filesystem::path(fallback).stem().string();
-
-    // Write compact summary (no CSVs — those are produced by analyze subcommand)
-    std::string summary_path = (out_dir / (basename + ".index_stats.txt")).string();
+    std::string summary_path = (out_dir / (prefix + ".ggx.summary")).string();
     build_stats->write_summary(summary_path);
 }
 

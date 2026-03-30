@@ -195,8 +195,10 @@ public:
         size_t segments_created = 0;
     };
 
-    explicit transcript_matcher(grove_type& grove) : transcript_matcher(grove, config{}) {}
-    transcript_matcher(grove_type& grove, const config& cfg);
+    explicit transcript_matcher(grove_type& grove)
+        : transcript_matcher(grove, config{}, {}) {}
+    transcript_matcher(grove_type& grove, const config& cfg,
+                       const chromosome_exon_caches& exon_caches);
 
     /**
      * Match a read cluster to reference transcripts
@@ -241,9 +243,9 @@ private:
     std::unordered_set<size_t> known_acceptor_sites_; // 3' splice sites
 
     /**
-     * Build index of known splice sites from grove
+     * Build index of known splice sites from exon caches
      */
-    void index_splice_sites();
+    void index_splice_sites(const chromosome_exon_caches& exon_caches);
 
     /**
      * Check if a splice site is known (within tolerance)

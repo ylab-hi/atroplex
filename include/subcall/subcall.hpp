@@ -51,7 +51,7 @@ public:
     virtual void execute(const cxxopts::ParseResult& args) = 0;
 
     /**
-     * Template method: validate → apply_common_options → setup_grove → execute.
+     * Template method: validate → apply_common_options → setup_grove → write_build_summary → execute.
      */
     void run(const cxxopts::ParseResult& args);
 
@@ -74,6 +74,7 @@ public:
 protected:
     std::unique_ptr<grove_type> grove;
     std::optional<index_stats> build_stats;
+    chromosome_exon_caches exon_caches_;
     std::filesystem::path output_dir;
 
     /**
@@ -84,12 +85,18 @@ protected:
                                              const std::string& fallback_input_path) const;
 
     /**
+     * Resolve the output prefix (basename for .ggx and .ggx.summary files).
+     * Uses --prefix if provided, otherwise derives from manifest or first build-from file.
+     */
+    std::string resolve_prefix(const cxxopts::ParseResult& args) const;
+
+    /**
      * Load or build grove from common options (--genogrove, --build-from, --order).
      */
     void setup_grove(const cxxopts::ParseResult& args);
 
     /**
-     * Load grove from .gg file
+     * Load grove from .ggx file
      */
     void load_grove(const std::string& path);
 
@@ -99,7 +106,7 @@ protected:
     void build_grove(const std::vector<std::string>& files, int order, uint32_t threads);
 
     /**
-     * Save grove to .gg file
+     * Save grove to .ggx file
      */
     void save_grove(const std::string& path);
 
@@ -110,9 +117,9 @@ private:
     static void apply_common_options(const cxxopts::ParseResult& args);
 
     /**
-     * Collect and write index statistics if --stats is set and grove exists.
+     * Always write build summary (.ggx.summary) when grove was built.
      */
-    void write_index_stats(const cxxopts::ParseResult& args);
+    void write_build_summary(const cxxopts::ParseResult& args);
 };
 
 } // namespace subcall

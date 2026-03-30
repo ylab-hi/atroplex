@@ -63,7 +63,8 @@ index_stats builder::build_from_samples(grove_type& grove,
                                   uint32_t threads,
                                   float min_expression,
                                   bool absorb,
-                                  int min_replicates) {
+                                  int min_replicates,
+                                  chromosome_exon_caches* out_exon_caches) {
     if (samples.empty()) {
         logging::warning("No samples provided to build genogrove");
         return {};
@@ -319,6 +320,11 @@ index_stats builder::build_from_samples(grove_type& grove,
             std::to_string(cs.segments) + " segments");
     }
 
+    // Move exon caches to caller if requested (for splice site indexing in discovery)
+    if (out_exon_caches) {
+        *out_exon_caches = std::move(exon_caches);
+    }
+
     return stats;
 }
 
@@ -439,7 +445,8 @@ void builder::merge_replicates(
 
 index_stats builder::build_from_files(grove_type& grove,
                                 const std::vector<std::string>& files,
-                                uint32_t threads) {
+                                uint32_t threads,
+                                chromosome_exon_caches* out_exon_caches) {
     // Parse headers to extract metadata from each file
     std::vector<sample_info> samples;
     samples.reserve(files.size());
@@ -450,5 +457,5 @@ index_stats builder::build_from_files(grove_type& grove,
         samples.push_back(std::move(info));
     }
 
-    return build_from_samples(grove, samples, threads);
+    return build_from_samples(grove, samples, threads, -1.0f, true, 0, out_exon_caches);
 }

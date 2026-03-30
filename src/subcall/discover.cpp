@@ -154,7 +154,7 @@ void discover::process_reads(const cxxopts::ParseResult& args) {
     match_cfg.min_junction_score = min_junction_score;
     match_cfg.min_overlap_bp = min_overlap_bp;
 
-    transcript_matcher matcher(*grove, match_cfg);
+    transcript_matcher matcher(*grove, match_cfg, exon_caches_);
     auto results = matcher.match_batch(clusters);
 
     // Step 3: Update grove with read support
