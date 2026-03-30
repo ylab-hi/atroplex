@@ -176,6 +176,19 @@ index_stats builder::build_from_samples(grove_type& grove,
 
     stats.total_chromosomes = segment_caches.size();
     stats.total_segments = segment_count;
+    stats.tree_order = grove.get_order();
+
+    // Measure B+ tree depth per chromosome (root→leaf traversal)
+    for (const auto& [index_name, root_node] : grove.get_root_nodes()) {
+        int depth = 0;
+        auto* current = root_node;
+        while (current && !current->get_is_leaf()) {
+            current = current->get_children().empty() ? nullptr : current->get_children()[0];
+            depth++;
+        }
+        if (current) depth++;  // count the leaf level
+        stats.tree_depth_per_chromosome[index_name] = depth;
+    }
 
     // Gene info from segment features
     struct gene_stats_info {
