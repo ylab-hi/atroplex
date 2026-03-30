@@ -50,19 +50,19 @@ void build::validate(const cxxopts::ParseResult& args) {
 }
 
 void build::execute(const cxxopts::ParseResult& args) {
-    // Determine output path from first input source
-    std::string first_input;
+    std::string prefix = resolve_prefix(args);
+
+    std::string fallback;
     if (args.count("manifest")) {
-        first_input = args["manifest"].as<std::string>();
+        fallback = args["manifest"].as<std::string>();
     } else if (args.count("build-from")) {
-        first_input = args["build-from"].as<std::vector<std::string>>().front();
+        fallback = args["build-from"].as<std::vector<std::string>>().front();
     }
 
-    auto out_dir = resolve_output_dir(args, first_input);
-    std::string basename = std::filesystem::path(first_input).stem().string();
-    std::string output_path = (out_dir / (basename + ".gg")).string();
+    auto out_dir = resolve_output_dir(args, fallback);
+    std::string output_path = (out_dir / (prefix + ".ggx")).string();
 
-    // Grove already built by setup_grove()
+    // Grove already built by setup_grove(), summary already written by write_build_summary()
     logging::info("Saving grove to: " + output_path);
     save_grove(output_path);
 

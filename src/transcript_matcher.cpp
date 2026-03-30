@@ -81,18 +81,36 @@ std::string match_result::category_string() const {
 // transcript_matcher implementation
 // ============================================================================
 
-transcript_matcher::transcript_matcher(grove_type& grove, const config& cfg)
+transcript_matcher::transcript_matcher(grove_type& grove, const config& cfg,
+                                       const chromosome_exon_caches& exon_caches)
     : grove_(grove), cfg_(cfg) {
-    // Index known splice sites from reference
-    index_splice_sites();
+    // Index known splice sites from exon caches
+    index_splice_sites(exon_caches);
 }
 
-void transcript_matcher::index_splice_sites() {
-    // TODO: Iterate through all exons in grove and record splice sites
-    // For now this is a placeholder - would need grove iteration support
-    // This would be populated from exon boundaries:
-    // - donor = exon end (5' splice site)
-    // - acceptor = exon start (3' splice site)
+void transcript_matcher::index_splice_sites(const chromosome_exon_caches& exon_caches) {
+    size_t donor_count = 0;
+    size_t acceptor_count = 0;
+
+    for (const auto& [seqid, exon_cache] : exon_caches) {
+        size_t seqid_hash = std::hash<std::string>{}(seqid);
+
+        for (const auto& [coord, exon_ptr] : exon_cache) {
+            // Donor = exon end (5' splice site of downstream intron)
+            size_t donor_pos = coord.get_end();
+            known_donor_sites_.insert(seqid_hash ^ (donor_pos << 1));
+            ++donor_count;
+
+            // Acceptor = exon start (3' splice site of upstream intron)
+            size_t acceptor_pos = coord.get_start();
+            known_acceptor_sites_.insert(seqid_hash ^ (acceptor_pos << 1));
+            ++acceptor_count;
+        }
+    }
+
+    logging::info("Indexed " + std::to_string(donor_count) + " donor and " +
+                  std::to_string(acceptor_count) + " acceptor splice sites from " +
+                  std::to_string(exon_caches.size()) + " chromosome(s)");
 }
 
 bool transcript_matcher::is_known_donor(const std::string& seqid, size_t position) const {

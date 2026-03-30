@@ -55,20 +55,18 @@ void analyze::execute(const cxxopts::ParseResult& args) {
     }
 
     // Determine output path
-    std::string first_input;
+    std::string fallback;
     if (args.count("manifest")) {
-        first_input = args["manifest"].as<std::string>();
+        fallback = args["manifest"].as<std::string>();
     } else if (args.count("build-from")) {
-        first_input = args["build-from"].as<std::vector<std::string>>().front();
+        fallback = args["build-from"].as<std::vector<std::string>>().front();
     }
 
-    auto out_dir = resolve_output_dir(args, first_input);
+    auto out_dir = resolve_output_dir(args, fallback);
     auto analysis_dir = out_dir / "analysis";
     std::filesystem::create_directories(analysis_dir);
 
-    std::string basename = first_input.empty()
-        ? "atroplex"
-        : std::filesystem::path(first_input).stem().string();
+    std::string basename = resolve_prefix(args);
 
     // Full collection including Jaccard diversity (Phase 4b)
     // Stream large outputs (conserved exons, branch details) directly to files

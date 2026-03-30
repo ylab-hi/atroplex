@@ -53,7 +53,8 @@ public:
         uint32_t threads = 1,
         float min_expression = -1.0f,
         bool absorb = true,
-        int min_replicates = 0
+        int min_replicates = 0,
+        chromosome_exon_caches* out_exon_caches = nullptr
     );
 
     /**
@@ -68,7 +69,8 @@ public:
     static index_stats build_from_files(
         grove_type& grove,
         const std::vector<std::string>& files,
-        uint32_t threads = 1
+        uint32_t threads = 1,
+        chromosome_exon_caches* out_exon_caches = nullptr
     );
 
     // Future extension methods for Phase 2/3:

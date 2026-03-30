@@ -22,7 +22,7 @@ FetchContent_MakeAvailable(cxxopts)
 FetchContent_Declare(
         genogrove
         GIT_REPOSITORY https://github.com/genogrove/genogrove.git
-        GIT_TAG v0.18.0
+        GIT_TAG v0.19.0
 )
 FetchContent_MakeAvailable(genogrove)
 

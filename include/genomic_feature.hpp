@@ -26,6 +26,7 @@
 // genogrove
 #include <genogrove/data_type/interval.hpp>
 #include <genogrove/data_type/genomic_coordinate.hpp>
+#include <genogrove/data_type/serialization_traits.hpp>
 #include <genogrove/structure/grove/grove.hpp>
 
 namespace gdt = genogrove::data_type;
@@ -166,6 +167,10 @@ public:
 
     /// Number of 64-bit words allocated (for memory estimation)
     size_t word_count() const { return words_.size(); }
+
+    // Serialization
+    void serialize(std::ostream& os) const;
+    [[nodiscard]] static sample_bitset deserialize(std::istream& is);
 };
 
 /**
@@ -266,6 +271,10 @@ public:
     size_t data_bytes() const {
         return data_ ? data_->capacity() * sizeof(float) : 0;
     }
+
+    // Serialization
+    void serialize(std::ostream& os) const;
+    [[nodiscard]] static expression_store deserialize(std::istream& is);
 };
 
 /**
@@ -307,6 +316,10 @@ public:
 
     /// Bytes of heap data (for memory estimation)
     size_t data_bytes() const { return data_.capacity() * sizeof(uint32_t); }
+
+    // Serialization
+    void serialize(std::ostream& os) const;
+    [[nodiscard]] static sorted_vec deserialize(std::istream& is);
 };
 
 /**
@@ -339,6 +352,9 @@ public:
     }
 
     size_t size() const { return id_to_str_.size(); }
+
+    void serialize(std::ostream& os) const;
+    void deserialize_into(std::istream& is);
 };
 
 /**
@@ -383,6 +399,9 @@ public:
     }
 
     size_t size() const { return entries_.size(); }
+
+    void serialize(std::ostream& os) const;
+    void deserialize_into(std::istream& is);
 };
 
 /**
@@ -428,6 +447,9 @@ public:
 
     size_t size() const { return bit_to_str_.size(); }
 
+    void serialize(std::ostream& os) const;
+    void deserialize_into(std::istream& is);
+
     /// Iterate over set bits in a bitfield, calling fn(const string&) for each
     template<typename Fn>
     void for_each(uint16_t bitfield, Fn&& fn) const {
@@ -464,6 +486,9 @@ struct edge_metadata {
 
     edge_metadata(size_t id, edge_type t)
         : id(id), type(t) {}
+
+    void serialize(std::ostream& os) const;
+    [[nodiscard]] static edge_metadata deserialize(std::istream& is);
 };
 
 /// Format a coordinate string from seqid + genomic_coordinate: "chr1:+:100-200"
@@ -574,6 +599,10 @@ struct exon_feature {
     bool is_sample_specific() const {
         return sample_idx.count() == 1;
     }
+
+    // Serialization
+    void serialize(std::ostream& os) const;
+    [[nodiscard]] static exon_feature deserialize(std::istream& is);
 };
 
 /**
@@ -685,6 +714,10 @@ struct segment_feature {
     bool is_sample_specific() const {
         return sample_idx.count() == 1;
     }
+
+    // Serialization
+    void serialize(std::ostream& os) const;
+    [[nodiscard]] static segment_feature deserialize(std::istream& is);
 };
 
 /**
@@ -719,6 +752,18 @@ inline segment_feature& get_segment(genomic_feature& feature) {
 inline const segment_feature& get_segment(const genomic_feature& feature) {
     return std::get<segment_feature>(feature);
 }
+
+// ========== Serialization for genomic_feature variant ==========
+
+namespace genogrove::data_type {
+
+template<>
+struct serialization_traits<genomic_feature> {
+    static void serialize(std::ostream& os, const genomic_feature& feature);
+    static genomic_feature deserialize(std::istream& is);
+};
+
+} // namespace genogrove::data_type
 
 // ========== Grove type aliases ==========
 // Canonical definitions used throughout the codebase
