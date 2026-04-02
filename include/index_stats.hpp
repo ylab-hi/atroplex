@@ -128,6 +128,9 @@ struct index_stats {
     static constexpr size_t MIN_HUB_BRANCHES = 10;
     static constexpr size_t MAX_DISPLAY_HUBS = 20;
 
+    // Build timing
+    double build_time_seconds = 0;  // wall-clock time for grove construction
+
     // B+ tree structure
     int tree_order = 0;
     std::map<std::string, int> tree_depth_per_chromosome;  // per-index depth (root→leaf)

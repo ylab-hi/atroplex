@@ -134,7 +134,10 @@ void subcall::setup_grove(const cxxopts::ParseResult& args) {
             logging::info("Replicate merging enabled: min_replicates = " + std::to_string(min_reps));
         }
         grove = std::make_unique<grove_type>(order);
+        auto build_start = std::chrono::steady_clock::now();
         build_stats = builder::build_from_samples(*grove, all_samples, threads, min_expr, absorb, min_reps, &exon_caches_);
+        auto build_elapsed = std::chrono::duration<double>(std::chrono::steady_clock::now() - build_start).count();
+        build_stats->build_time_seconds = build_elapsed;
         logging::info("Grove ready with spatial index and graph structure");
     }
 }
@@ -200,7 +203,10 @@ void subcall::load_grove(const std::string& path) {
 void subcall::build_grove(const std::vector<std::string>& files, int order, uint32_t threads) {
     logging::info("Creating grove with order: " + std::to_string(order));
     grove = std::make_unique<grove_type>(order);
+    auto build_start = std::chrono::steady_clock::now();
     build_stats = builder::build_from_files(*grove, files, threads);
+    auto build_elapsed = std::chrono::duration<double>(std::chrono::steady_clock::now() - build_start).count();
+    build_stats->build_time_seconds = build_elapsed;
     logging::info("Grove ready with spatial index and graph structure");
 }
 

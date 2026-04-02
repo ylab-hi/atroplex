@@ -1388,6 +1388,20 @@ void index_stats::write_summary(const std::string& path) const {
     out << "Index Summary\n";
     out << "=============\n\n";
 
+    // Build time
+    if (build_time_seconds > 0) {
+        if (build_time_seconds >= 60) {
+            int minutes = static_cast<int>(build_time_seconds) / 60;
+            double seconds = build_time_seconds - minutes * 60;
+            out << "Build time:         " << minutes << "m " << std::setprecision(1)
+                << seconds << "s\n";
+        } else {
+            out << "Build time:         " << std::setprecision(1)
+                << build_time_seconds << "s\n";
+        }
+        out << std::setprecision(2) << "\n";
+    }
+
     // Input entries
     if (!annotation_sources.empty()) {
         auto& reg = sample_registry::instance();
