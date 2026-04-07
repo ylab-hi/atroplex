@@ -283,14 +283,165 @@ std::vector<query_result> query::classify_transcripts(const std::string& input_p
 std::vector<dtu_result> query::run_dtu(
     const query_contrast& contrast,
     const std::vector<query_result>& results,
-    const cxxopts::ParseResult& /*args*/) {
+    const cxxopts::ParseResult& args) {
 
-    // TODO: Implement proper DTU statistical testing
-    // For now, compute per-group proportions using expression from matched segments
+    std::string group_field = args["group-by"].as<std::string>();
+    float min_expr = args.count("min-expression")
+        ? args["min-expression"].as<float>()
+        : 0.0f;
+
+    auto& registry = sample_registry::instance();
+
+    // Map sample IDs to their group values
+    std::set<uint32_t> group_a_samples, group_b_samples;
+    for (size_t i = 0; i < registry.size(); ++i) {
+        auto sid = static_cast<uint32_t>(i);
+        const auto& info = registry.get(sid);
+        if (info.type != "sample") continue;
+
+        std::string group_value;
+        if (group_field == "condition") group_value = info.condition;
+        else if (group_field == "biosample") group_value = info.biosample;
+        else if (group_field == "biosample_type") group_value = info.biosample_type;
+        else if (group_field == "treatment") group_value = info.treatment;
+        else if (group_field == "assay") group_value = info.assay;
+        else group_value = info.get_attribute(group_field);
+
+        if (group_value == contrast.group_a) group_a_samples.insert(sid);
+        else if (group_value == contrast.group_b) group_b_samples.insert(sid);
+    }
+
+    if (group_a_samples.empty() || group_b_samples.empty()) {
+        logging::warning("No samples found for contrast " +
+                         contrast.group_a + " vs " + contrast.group_b +
+                         " (group-by: " + group_field + ")");
+        return {};
+    }
+
+    logging::info("  Group " + contrast.group_a + ": " +
+                  std::to_string(group_a_samples.size()) + " samples");
+    logging::info("  Group " + contrast.group_b + ": " +
+                  std::to_string(group_b_samples.size()) + " samples");
+
+    // Group classified transcripts by gene
+    std::map<std::string, std::vector<const query_result*>> by_gene;
+    for (const auto& r : results) {
+        if (r.gene_id.empty() || r.gene_id == ".") continue;
+        by_gene[r.gene_id].push_back(&r);
+    }
+
     std::vector<dtu_result> dtu_results;
 
-    logging::warning("DTU statistical testing not yet implemented — "
-                     "proportions computed but p-values are placeholders");
+    // For each gene, compute per-transcript proportions and test
+    for (const auto& [gene_id, gene_transcripts] : by_gene) {
+        if (gene_transcripts.size() < 2) continue;
+
+        // Compute mean expression per transcript per group
+        struct tx_expr {
+            std::string transcript_id;
+            std::string gene_name;
+            double mean_a = 0.0;
+            double mean_b = 0.0;
+            size_t count_a = 0;
+            size_t count_b = 0;
+        };
+
+        std::vector<tx_expr> tx_data;
+        double gene_total_a = 0.0;
+        double gene_total_b = 0.0;
+
+        for (const auto* qr : gene_transcripts) {
+            tx_expr te;
+            te.transcript_id = qr->transcript_id;
+            te.gene_name = qr->gene_name;
+
+            // Sum expression across samples in each group
+            double sum_a = 0.0, sum_b = 0.0;
+            size_t n_a = 0, n_b = 0;
+
+            for (const auto& [sid, expr] : qr->sample_expression) {
+                if (expr < min_expr) continue;
+                if (group_a_samples.count(sid)) {
+                    sum_a += expr;
+                    n_a++;
+                } else if (group_b_samples.count(sid)) {
+                    sum_b += expr;
+                    n_b++;
+                }
+            }
+
+            te.mean_a = (n_a > 0) ? sum_a / n_a : 0.0;
+            te.mean_b = (n_b > 0) ? sum_b / n_b : 0.0;
+            te.count_a = n_a;
+            te.count_b = n_b;
+
+            gene_total_a += te.mean_a;
+            gene_total_b += te.mean_b;
+
+            tx_data.push_back(te);
+        }
+
+        // Skip genes with no expression in either group
+        if (gene_total_a <= 0.0 && gene_total_b <= 0.0) continue;
+
+        // Compute proportions and chi-squared statistic
+        // H0: transcript proportions are the same in both groups
+        // Chi-squared on 2×k contingency table (2 groups × k transcripts)
+        double chi2 = 0.0;
+        int df = 0;
+
+        for (auto& te : tx_data) {
+            double prop_a = (gene_total_a > 0) ? te.mean_a / gene_total_a : 0.0;
+            double prop_b = (gene_total_b > 0) ? te.mean_b / gene_total_b : 0.0;
+
+            double total = te.mean_a + te.mean_b;
+            double row_total = gene_total_a + gene_total_b;
+
+            if (total <= 0.0 || row_total <= 0.0) continue;
+
+            // Expected values under H0
+            double expected_a = total * gene_total_a / row_total;
+            double expected_b = total * gene_total_b / row_total;
+
+            if (expected_a > 0.0) {
+                chi2 += (te.mean_a - expected_a) * (te.mean_a - expected_a) / expected_a;
+            }
+            if (expected_b > 0.0) {
+                chi2 += (te.mean_b - expected_b) * (te.mean_b - expected_b) / expected_b;
+            }
+
+            dtu_result dr;
+            dr.gene_id = gene_id;
+            dr.gene_name = te.gene_name;
+            dr.transcript_id = te.transcript_id;
+            dr.prop_group_a = prop_a;
+            dr.prop_group_b = prop_b;
+            dr.delta_proportion = prop_a - prop_b;
+            dr.p_value = 1.0;  // Computed below from chi2
+            dr.fdr = 1.0;
+            dr.significant = false;
+
+            dtu_results.push_back(dr);
+            df++;
+        }
+
+        // Compute p-value from chi-squared distribution (df = k-1)
+        // Using Wilson-Hilferty approximation for chi-squared CDF
+        if (df > 1 && chi2 > 0.0) {
+            int k = df - 1;
+            // Approximation: P(X > chi2) for chi-squared with k df
+            double z = std::pow(chi2 / k, 1.0 / 3.0) - (1.0 - 2.0 / (9.0 * k));
+            z /= std::sqrt(2.0 / (9.0 * k));
+            // Standard normal CDF approximation
+            double p = 0.5 * std::erfc(z / std::sqrt(2.0));
+            p = std::max(p, 1e-300);  // Floor to avoid exact zeros
+
+            // Apply same p-value to all transcripts in this gene
+            for (size_t i = dtu_results.size() - df; i < dtu_results.size(); ++i) {
+                dtu_results[i].p_value = p;
+            }
+        }
+    }
 
     return dtu_results;
 }

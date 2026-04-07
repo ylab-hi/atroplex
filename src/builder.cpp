@@ -18,6 +18,7 @@
 // class
 #include "utility.hpp"
 #include "builder.hpp"
+#include "build_bam.hpp"
 #include "build_gff.hpp"
 
 // Natural chromosome sort comparator
@@ -65,7 +66,8 @@ index_stats builder::build_from_samples(grove_type& grove,
                                   bool absorb,
                                   int min_replicates,
                                   size_t fuzzy_tolerance,
-                                  chromosome_exon_caches* out_exon_caches) {
+                                  chromosome_exon_caches* out_exon_caches,
+                                  chromosome_gene_segment_indices* out_gene_indices) {
     if (samples.empty()) {
         logging::warning("No samples provided to build genogrove");
         return {};
@@ -167,6 +169,14 @@ index_stats builder::build_from_samples(grove_type& grove,
                 ", exons: " + fmt_mb(mem_exons) +
                 ", edges: " + fmt_mb(mem_edges) +
                 ", gene_idx: " + fmt_mb(mem_gene_idx) + ")");
+        } else if (ftype == gio::filetype::BAM || ftype == gio::filetype::SAM) {
+            logging::info("[" + std::to_string(current) + "/" + std::to_string(total) + "] Processing BAM: " + filepath.filename().string() +
+                         (info.id.empty() ? "" : " (id: " + info.id + ")"));
+
+            uint32_t registry_id = sample_registry::instance().register_data(info);
+
+            build_bam::build(grove, filepath, registry_id, exon_caches, segment_caches,
+                            gene_indices, segment_count, min_expression, absorb, fuzzy_tolerance);
         } else {
             logging::warning("Unsupported file type for: " + filepath.string());
         }
@@ -339,9 +349,12 @@ index_stats builder::build_from_samples(grove_type& grove,
             std::to_string(cs.segments) + " segments");
     }
 
-    // Move exon caches to caller if requested (for splice site indexing in discovery)
+    // Move caches to caller if requested
     if (out_exon_caches) {
         *out_exon_caches = std::move(exon_caches);
+    }
+    if (out_gene_indices) {
+        *out_gene_indices = std::move(gene_indices);
     }
 
     return stats;
@@ -471,8 +484,15 @@ index_stats builder::build_from_files(grove_type& grove,
     samples.reserve(files.size());
 
     for (const auto& filepath : files) {
-        // Parse metadata from GFF/GTF header (#property: value format)
-        sample_info info = build_gff::parse_header(filepath);
+        gio::filetype_detector detector;
+        auto [ftype, is_gzipped] = detector.detect_filetype(filepath);
+
+        sample_info info;
+        if (ftype == gio::filetype::BAM || ftype == gio::filetype::SAM) {
+            info = build_bam::parse_header(filepath);
+        } else {
+            info = build_gff::parse_header(filepath);
+        }
         samples.push_back(std::move(info));
     }
 

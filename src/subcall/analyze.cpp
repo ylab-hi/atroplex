@@ -13,6 +13,7 @@
 #include <filesystem>
 
 #include "index_stats.hpp"
+#include "splicing_catalog.hpp"
 #include "utility.hpp"
 
 namespace subcall {
@@ -131,6 +132,22 @@ void analyze::execute(const cxxopts::ParseResult& args) {
 
         std::string hubs_path = (hubs_dir / (basename + ".splicing_hubs.tsv")).string();
         stats.write_splicing_hubs_tsv(hubs_path);
+    }
+
+    // Splicing event catalog (requires gene_indices from build)
+    if (!gene_indices_.empty()) {
+        auto events_dir = analysis_dir / "splicing_events";
+        std::filesystem::create_directories(events_dir);
+
+        logging::info("Detecting alternative splicing events...");
+        auto events = splicing_catalog::collect(gene_indices_, *grove);
+        logging::info("Found " + std::to_string(events.size()) + " splicing events");
+
+        std::string events_path = (events_dir / (basename + ".splicing_events.tsv")).string();
+        splicing_catalog::write_events_tsv(events_path, events);
+
+        std::string events_summary = (events_dir / (basename + ".splicing_events.summary.txt")).string();
+        splicing_catalog::write_summary(events_summary, events);
     }
 
     logging::info("Analysis written to: " + analysis_dir.string());

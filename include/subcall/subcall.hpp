@@ -75,6 +75,7 @@ protected:
     std::unique_ptr<grove_type> grove;
     std::optional<index_stats> build_stats;
     chromosome_exon_caches exon_caches_;
+    chromosome_gene_segment_indices gene_indices_;
     std::filesystem::path output_dir;
 
     /**

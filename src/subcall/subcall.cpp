@@ -140,7 +140,7 @@ void subcall::setup_grove(const cxxopts::ParseResult& args) {
         }
         grove = std::make_unique<grove_type>(order);
         auto build_start = std::chrono::steady_clock::now();
-        build_stats = builder::build_from_samples(*grove, all_samples, threads, min_expr, absorb, min_reps, fuzzy_tol, &exon_caches_);
+        build_stats = builder::build_from_samples(*grove, all_samples, threads, min_expr, absorb, min_reps, fuzzy_tol, &exon_caches_, &gene_indices_);
         auto build_elapsed = std::chrono::duration<double>(std::chrono::steady_clock::now() - build_start).count();
         build_stats->build_time_seconds = build_elapsed;
         logging::info("Grove ready with spatial index and graph structure");

@@ -55,7 +55,8 @@ public:
         bool absorb = true,
         int min_replicates = 0,
         size_t fuzzy_tolerance = 5,
-        chromosome_exon_caches* out_exon_caches = nullptr
+        chromosome_exon_caches* out_exon_caches = nullptr,
+        chromosome_gene_segment_indices* out_gene_indices = nullptr
     );
 
     /**
