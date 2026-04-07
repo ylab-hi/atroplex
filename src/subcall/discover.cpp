@@ -28,8 +28,6 @@ cxxopts::Options discover::parse_args(int argc, char** argv) {
         ;
 
     options.add_options("Clustering")
-        ("junction-bin", "Bin size for fuzzy junction clustering (bp)",
-            cxxopts::value<int>()->default_value("10"))
         ("junction-tolerance", "Max junction position difference within cluster (bp)",
             cxxopts::value<int>()->default_value("5"))
         ("min-mapq", "Minimum mapping quality",
@@ -117,7 +115,6 @@ void discover::process_reads(const cxxopts::ParseResult& args) {
     logging::info("Processing reads from: " + input_path);
 
     // Get parameters
-    int junction_bin_size = args["junction-bin"].as<int>();
     int junction_tolerance = args["junction-tolerance"].as<int>();
     int min_mapq = args["min-mapq"].as<int>();
     double min_junction_score = args["min-junction-score"].as<double>();
@@ -128,10 +125,9 @@ void discover::process_reads(const cxxopts::ParseResult& args) {
     opts.min_mapq = min_mapq;
     gio::bam_reader reader(input_path, opts);
 
-    // Step 1: Cluster reads by splice junction signature
-    logging::info("Clustering reads by splice junction signature...");
+    // Step 1: Cluster reads by splice junction similarity
+    logging::info("Clustering reads by splice junction similarity...");
     read_clusterer::config cluster_cfg;
-    cluster_cfg.junction_bin_size = junction_bin_size;
     cluster_cfg.junction_tolerance = junction_tolerance;
     cluster_cfg.min_mapq = min_mapq;
 

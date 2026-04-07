@@ -74,3 +74,7 @@ jobs:
 
       - name: build atroplex
         run: cmake --build ${{ steps.strings.outputs.build-output-dir }} --parallel
+
+      - name: run tests
+        working-directory: ${{ steps.strings.outputs.build-output-dir }}
+        run: ctest --output-on-failure --parallel

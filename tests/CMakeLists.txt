@@ -13,3 +13,5 @@ file(GLOB ATROPLEX_LIB_SOURCES "${CMAKE_SOURCE_DIR}/src/*.cpp" "${CMAKE_SOURCE_D
 list(FILTER ATROPLEX_LIB_SOURCES EXCLUDE REGEX "main\\.cpp$")
 
 add_subdirectory(build)
+add_subdirectory(discover)
+add_subdirectory(query)

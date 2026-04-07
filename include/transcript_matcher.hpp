@@ -11,6 +11,7 @@
 #ifndef ATROPLEX_TRANSCRIPT_MATCHER_HPP
 #define ATROPLEX_TRANSCRIPT_MATCHER_HPP
 
+#include <functional>
 #include <vector>
 #include <string>
 #include <unordered_set>
@@ -239,8 +240,27 @@ private:
     stats stats_;
 
     // Known splice sites from reference (populated during construction)
-    std::unordered_set<size_t> known_donor_sites_;    // 5' splice sites
-    std::unordered_set<size_t> known_acceptor_sites_; // 3' splice sites
+    // Keyed by (seqid, position) to avoid hash collisions across chromosomes.
+    struct splice_site {
+        std::string seqid;
+        size_t position;
+
+        bool operator==(const splice_site& o) const {
+            return position == o.position && seqid == o.seqid;
+        }
+    };
+
+    struct splice_site_hash {
+        size_t operator()(const splice_site& s) const {
+            size_t h = std::hash<std::string>{}(s.seqid);
+            // boost::hash_combine equivalent
+            h ^= std::hash<size_t>{}(s.position) + 0x9e3779b9 + (h << 6) + (h >> 2);
+            return h;
+        }
+    };
+
+    std::unordered_set<splice_site, splice_site_hash> known_donor_sites_;
+    std::unordered_set<splice_site, splice_site_hash> known_acceptor_sites_;
 
     /**
      * Build index of known splice sites from exon caches

@@ -1,0 +1,19 @@
+##id: TEST_REF
+##description: Minimal chr22 reference for SQANTI category testing
+##type: annotation
+##annotation_source: TEST
+chr22	TEST	gene	10000	14500	.	+	.	gene_id "GENE_A"; gene_name "GENE_A"; gene_biotype "protein_coding";
+chr22	TEST	transcript	10000	14500	.	+	.	gene_id "GENE_A"; transcript_id "TX_A1"; transcript_type "protein_coding";
+chr22	TEST	exon	10000	10200	.	+	.	gene_id "GENE_A"; transcript_id "TX_A1"; exon_number "1";
+chr22	TEST	exon	11000	11300	.	+	.	gene_id "GENE_A"; transcript_id "TX_A1"; exon_number "2";
+chr22	TEST	exon	12500	12800	.	+	.	gene_id "GENE_A"; transcript_id "TX_A1"; exon_number "3";
+chr22	TEST	exon	14000	14500	.	+	.	gene_id "GENE_A"; transcript_id "TX_A1"; exon_number "4";
+chr22	TEST	transcript	10000	14500	.	+	.	gene_id "GENE_A"; transcript_id "TX_A2"; transcript_type "protein_coding";
+chr22	TEST	exon	10000	10200	.	+	.	gene_id "GENE_A"; transcript_id "TX_A2"; exon_number "1";
+chr22	TEST	exon	11000	11300	.	+	.	gene_id "GENE_A"; transcript_id "TX_A2"; exon_number "2";
+chr22	TEST	exon	14000	14500	.	+	.	gene_id "GENE_A"; transcript_id "TX_A2"; exon_number "3";
+chr22	TEST	gene	50000	55000	.	+	.	gene_id "GENE_B"; gene_name "GENE_B"; gene_biotype "protein_coding";
+chr22	TEST	transcript	50000	55000	.	+	.	gene_id "GENE_B"; transcript_id "TX_B1"; transcript_type "protein_coding";
+chr22	TEST	exon	50000	50300	.	+	.	gene_id "GENE_B"; transcript_id "TX_B1"; exon_number "1";
+chr22	TEST	exon	52000	52400	.	+	.	gene_id "GENE_B"; transcript_id "TX_B1"; exon_number "2";
+chr22	TEST	exon	54000	55000	.	+	.	gene_id "GENE_B"; transcript_id "TX_B1"; exon_number "3";
