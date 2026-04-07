@@ -44,6 +44,8 @@ void subcall::add_common_options(cxxopts::Options& options) {
         ("min-expression", "Minimum expression value to include a transcript (filters low-count novels)",
             cxxopts::value<float>()->default_value("-1"))
         ("no-absorb", "Disable ISM (Incomplete Splice Match) segment absorption into longer parents")
+        ("fuzzy-tolerance", "Max bp difference for fuzzy exon boundary matching during absorption (0 = exact only)",
+            cxxopts::value<size_t>()->default_value("5"))
         ("min-replicates", "Merge biological replicates within groups; require features in >= N replicates (0 = no merge)",
             cxxopts::value<int>()->default_value("0"))
         ;
@@ -122,6 +124,7 @@ void subcall::setup_grove(const cxxopts::ParseResult& args) {
     if (!all_samples.empty()) {
         float min_expr = args["min-expression"].as<float>();
         bool absorb = !args.count("no-absorb");
+        size_t fuzzy_tol = args["fuzzy-tolerance"].as<size_t>();
         int min_reps = args["min-replicates"].as<int>();
         logging::info("Creating grove with order: " + std::to_string(order));
         if (min_expr >= 0) {
@@ -129,13 +132,15 @@ void subcall::setup_grove(const cxxopts::ParseResult& args) {
         }
         if (!absorb) {
             logging::info("ISM segment absorption disabled");
+        } else if (fuzzy_tol > 0) {
+            logging::info("Fuzzy absorption tolerance: " + std::to_string(fuzzy_tol) + "bp");
         }
         if (min_reps > 0) {
             logging::info("Replicate merging enabled: min_replicates = " + std::to_string(min_reps));
         }
         grove = std::make_unique<grove_type>(order);
         auto build_start = std::chrono::steady_clock::now();
-        build_stats = builder::build_from_samples(*grove, all_samples, threads, min_expr, absorb, min_reps, &exon_caches_);
+        build_stats = builder::build_from_samples(*grove, all_samples, threads, min_expr, absorb, min_reps, fuzzy_tol, &exon_caches_);
         auto build_elapsed = std::chrono::duration<double>(std::chrono::steady_clock::now() - build_start).count();
         build_stats->build_time_seconds = build_elapsed;
         logging::info("Grove ready with spatial index and graph structure");

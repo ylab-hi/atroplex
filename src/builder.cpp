@@ -64,6 +64,7 @@ index_stats builder::build_from_samples(grove_type& grove,
                                   float min_expression,
                                   bool absorb,
                                   int min_replicates,
+                                  size_t fuzzy_tolerance,
                                   chromosome_exon_caches* out_exon_caches) {
     if (samples.empty()) {
         logging::warning("No samples provided to build genogrove");
@@ -122,7 +123,7 @@ index_stats builder::build_from_samples(grove_type& grove,
             uint32_t registry_id = sample_registry::instance().register_data(info);
 
             // Build with persistent caches for cross-file deduplication
-            build_gff::build(grove, filepath, registry_id, exon_caches, segment_caches, gene_indices, segment_count, threads, min_expression, absorb);
+            build_gff::build(grove, filepath, registry_id, exon_caches, segment_caches, gene_indices, segment_count, threads, min_expression, absorb, fuzzy_tolerance);
 
             // Estimate grove memory usage after each file
             size_t mem_segments = 0, mem_exons = 0, mem_gene_idx = 0;
@@ -475,5 +476,5 @@ index_stats builder::build_from_files(grove_type& grove,
         samples.push_back(std::move(info));
     }
 
-    return build_from_samples(grove, samples, threads, -1.0f, true, 0, out_exon_caches);
+    return build_from_samples(grove, samples, threads, -1.0f, true, 0, 5, out_exon_caches);
 }

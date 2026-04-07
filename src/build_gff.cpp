@@ -31,7 +31,8 @@ void build_gff::build(grove_type& grove,
     size_t& segment_count,
     uint32_t /*num_threads*/,
     float min_expression,
-    bool absorb) {
+    bool absorb,
+    size_t fuzzy_tolerance) {
 
     gio::gff_reader reader(filepath.string());
 
@@ -66,7 +67,7 @@ void build_gff::build(grove_type& grove,
             process_gene(grove, grove_mutex, current_gene_entries,
                 exon_caches[current_chrom], segment_caches[current_chrom],
                 gene_indices[current_chrom],
-                sample_id, segment_count, min_expression, absorb);
+                sample_id, segment_count, min_expression, absorb, fuzzy_tolerance);
             current_gene_entries.clear();
         }
 
@@ -80,7 +81,7 @@ void build_gff::build(grove_type& grove,
         process_gene(grove, grove_mutex, current_gene_entries,
             exon_caches[current_chrom], segment_caches[current_chrom],
             gene_indices[current_chrom],
-            sample_id, segment_count, min_expression, absorb);
+            sample_id, segment_count, min_expression, absorb, fuzzy_tolerance);
     }
 
     logging::progress_done(segment_count, "Processed " + filepath.filename().string());
@@ -96,7 +97,8 @@ void build_gff::process_gene(
     std::optional<uint32_t> sample_id,
     size_t& segment_count,
     float min_expression,
-    bool absorb
+    bool absorb,
+    size_t fuzzy_tolerance
 ) {
     // Group entries by transcript
     std::unordered_map<std::string, std::vector<gio::gff_entry>> transcripts;
@@ -127,7 +129,7 @@ void build_gff::process_gene(
     for (const auto& transcript_id : tx_order) {
         process_transcript(grove, grove_mutex, transcript_id, transcripts[transcript_id],
             exon_cache, segment_cache, gene_index, sample_id, segment_count,
-            min_expression, absorb);
+            min_expression, absorb, fuzzy_tolerance);
     }
 }
 
@@ -142,7 +144,8 @@ void build_gff::process_transcript(
     std::optional<uint32_t> sample_id,
     size_t& segment_count,
     float min_expression,
-    bool absorb
+    bool absorb,
+    size_t fuzzy_tolerance
 ) {
     // Step 1: Extract and sort exons in 5'→3' biological order
     std::vector<gio::gff_entry> sorted_exons = extract_sorted_exons(transcript_entries);
@@ -225,7 +228,7 @@ void build_gff::process_transcript(
         grove, grove_mutex, transcript_id, seqid, strand,
         min_it->start, max_it->end, static_cast<int>(sorted_exons.size()),
         exon_coords, exon_chain, segment_cache, gene_index, sample_id,
-        gff_source, segment_count, expression_value, transcript_biotype, absorb
+        gff_source, segment_count, expression_value, transcript_biotype, absorb, fuzzy_tolerance
     );
 }
 

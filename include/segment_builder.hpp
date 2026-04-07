@@ -78,7 +78,8 @@ public:
         size_t& segment_count,
         float expression_value = -1.0f,
         const std::string& transcript_biotype = "",
-        bool absorb = true
+        bool absorb = true,
+        size_t fuzzy_tolerance = 5
     );
 
     /**
@@ -121,7 +122,8 @@ public:
         const std::string& gene_id,
         key_ptr new_seg,
         const std::vector<key_ptr>& new_exon_chain,
-        segment_cache_type& segment_cache
+        segment_cache_type& segment_cache,
+        size_t fuzzy_tolerance = 5
     );
 
     // ── Absorption rule helpers ─────────────────────────────────────

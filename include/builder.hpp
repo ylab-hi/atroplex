@@ -54,6 +54,7 @@ public:
         float min_expression = -1.0f,
         bool absorb = true,
         int min_replicates = 0,
+        size_t fuzzy_tolerance = 5,
         chromosome_exon_caches* out_exon_caches = nullptr
     );
 

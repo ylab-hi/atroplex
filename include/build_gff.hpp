@@ -62,7 +62,8 @@ public:
                       size_t& segment_count,
                       uint32_t num_threads = 0,
                       float min_expression = -1.0f,
-                      bool absorb = true);
+                      bool absorb = true,
+                      size_t fuzzy_tolerance = 5);
 
     /**
      * Parse GTF/GFF header to extract sample metadata
@@ -115,7 +116,8 @@ public:
         std::optional<uint32_t> sample_id,
         size_t& segment_count,
         float min_expression = -1.0f,
-        bool absorb = true
+        bool absorb = true,
+        size_t fuzzy_tolerance = 5
     );
 
 private:
@@ -141,7 +143,8 @@ private:
         std::optional<uint32_t> sample_id,
         size_t& segment_count,
         float min_expression = -1.0f,
-        bool absorb = true
+        bool absorb = true,
+        size_t fuzzy_tolerance = 5
     );
 
     /**

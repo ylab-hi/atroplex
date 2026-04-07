@@ -12,7 +12,7 @@
 
 // Absorption rule thresholds (see absorption_rules.txt)
 static constexpr size_t TERMINAL_TOLERANCE_BP = 50;
-static constexpr size_t FUZZY_TOLERANCE_BP = 5;
+// fuzzy_tolerance removed — now passed as parameter through the call chain
 static constexpr size_t MAX_ISM_MISSING_EXONS = 2;
 
 static size_t abs_diff(size_t a, size_t b) {
@@ -62,7 +62,8 @@ void segment_builder::create_segment(
     size_t& segment_count,
     float expression_value,
     const std::string& transcript_biotype,
-    bool absorb
+    bool absorb,
+    size_t fuzzy_tolerance
 ) {
     std::string structure_key = make_exon_structure_key(seqid, exon_coords);
 
@@ -124,7 +125,7 @@ void segment_builder::create_segment(
 
                 auto match = classify_subsequence(exon_chain, entry.exon_chain);
                 if (match == subsequence_type::NONE) {
-                    match = fuzzy_classify_subsequence(exon_chain, entry.exon_chain, FUZZY_TOLERANCE_BP);
+                    match = fuzzy_classify_subsequence(exon_chain, entry.exon_chain, fuzzy_tolerance);
                 }
 
                 if (match == subsequence_type::NONE) continue;
@@ -203,7 +204,7 @@ void segment_builder::create_segment(
 
     // Step 6: Reverse absorption
     if (absorb) {
-        try_reverse_absorption(gene_index, gene_id, seg_key, exon_chain, segment_cache);
+        try_reverse_absorption(gene_index, gene_id, seg_key, exon_chain, segment_cache, fuzzy_tolerance);
     }
 }
 
@@ -313,7 +314,8 @@ void segment_builder::try_reverse_absorption(
     const std::string& gene_id,
     key_ptr new_seg,
     const std::vector<key_ptr>& new_exon_chain,
-    segment_cache_type& segment_cache
+    segment_cache_type& segment_cache,
+    size_t fuzzy_tolerance
 ) {
     auto gene_it = gene_index.find(gene_id);
     if (gene_it == gene_index.end()) return;
@@ -356,7 +358,7 @@ void segment_builder::try_reverse_absorption(
         // Rules 1/2/3/4: Subsequence (pointer, then fuzzy)
         auto match = classify_subsequence(entry.exon_chain, new_exon_chain);
         if (match == subsequence_type::NONE) {
-            match = fuzzy_classify_subsequence(entry.exon_chain, new_exon_chain, FUZZY_TOLERANCE_BP);
+            match = fuzzy_classify_subsequence(entry.exon_chain, new_exon_chain, fuzzy_tolerance);
         }
 
         if (match == subsequence_type::NONE) continue;

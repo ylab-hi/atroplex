@@ -4,7 +4,10 @@ set(CMAKE_CXX_STANDARD 20)
 
 configure_file(${CMAKE_CURRENT_SOURCE_DIR}/include/config.hpp.in ${CMAKE_CURRENT_SOURCE_DIR}/include/config.hpp)
 
-# Disable tests from subdependencies (e.g. genogrove)
+# Save user's BUILD_TESTING preference, then disable for subdependencies
+if(NOT DEFINED ATROPLEX_BUILD_TESTING)
+    set(ATROPLEX_BUILD_TESTING ON)
+endif()
 set(BUILD_TESTING OFF CACHE BOOL "" FORCE)
 
 # Fetch dependencies
@@ -45,8 +48,10 @@ target_link_libraries(atroplex
         ZLIB::ZLIB
 )
 
-# Re-enable testing after dependencies (was OFF to suppress genogrove/cxxopts tests)
-set(BUILD_TESTING ON CACHE BOOL "" FORCE)
-enable_testing()
-add_subdirectory(tests)
+# Restore testing if user didn't explicitly disable it and tests/ exists
+if(ATROPLEX_BUILD_TESTING AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests")
+    set(BUILD_TESTING ON CACHE BOOL "" FORCE)
+    enable_testing()
+    add_subdirectory(tests)
+endif()
 
