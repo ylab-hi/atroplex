@@ -7,10 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Changed
+### Fixed
+- **Splice site hash collisions**: replaced weak XOR-based hash (`seqid_hash ^ position<<1`) with proper `(seqid, position)` composite keys using boost::hash_combine pattern — eliminates false positive "known" splice site hits across chromosomes that caused NIC/NNC misclassification
+- Fixed potential `size_t` underflow in splice site tolerance window when position is near zero
+- Fixed infinite loop in `sample_bitset` iterator: `advance()` did not mark iterator as exhausted when all bits were consumed, causing range-based for loops over `sample_idx` to hang
+- Fixed missing `absorb` parameter in final `process_gene()` call per GTF file (last gene always skipped absorption)
+
+### Added
+- Discover test suite: 11 unit tests constructing `read_cluster` objects directly for each SQANTI category (FSM, ISM prefix/suffix, NIC, NNC, GENIC_INTRON, GENIC_GENOMIC, INTERGENIC), plus 6 integration tests exercising the full SAM → cluster → classify pipeline
+- Query classification test suite: 8 tests verifying per-sample presence tracking (shared, annotation-only, sample-only, novel), expression propagation, and gene assignment
+- Test fixtures: minimal chr22 reference GTF (2 genes, 3 transcripts), sample GTF with expression, query GTF, and 23-read SAM file covering all classification categories
 - Updated genogrove dependency to v0.20.0 (fixes B+ tree `split_node` corruption, adds grove iteration API and serialization)
 - Updated cxxopts dependency to v3.3.1
 - Adapted to genogrove v0.17.0+ API: `gff_entry`/`sam_entry` use direct `start`/`end` fields; `gff_entry.attributes` uses `std::less<>` transparent comparator
+
+### Changed
+- **Read clustering**: replaced binned clustering with sort+sweep algorithm — eliminates boundary artifacts where reads 1bp apart could land in different bins and never be compared; sorts by `(strand, junction_count, first_donor)` then sweeps within `junction_tolerance`
+- Removed `--junction-bin` CLI option (binning is no longer used internally)
+- Single-pass candidate scoring in `transcript_matcher::match()` — avoids redundant graph traversals for ambiguity detection
+- CI workflow now runs `ctest` after build (tests were compiled but never executed)
 - **Absorption rules v2**: rewrote ISM absorption as 9 structured rules (0-8) with ref/sample distinction, fuzzy subsequence matching, and proper mono-exon classification (see `absorption_rules.txt`)
 - Annotations are now always processed before samples during grove construction (sorted in `builder::build_from_samples`)
 - Transcripts within a gene are sorted by exon count (descending) before processing, ensuring multi-exon segments exist before mono-exon fragments are checked
@@ -22,12 +37,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Named constants for absorption thresholds (`TERMINAL_TOLERANCE_BP`, `FUZZY_TOLERANCE_BP`, `MAX_ISM_MISSING_EXONS`)
 - Hoisted `gene_index.find()` lookup in `create_segment()` — single lookup shared across Steps 2/3/4
 - Eliminated unnecessary vector copy in `process_gene()` transcript sorting (sort keys only, not full entry vectors)
-
-### Fixed
-- Fixed infinite loop in `sample_bitset` iterator: `advance()` did not mark iterator as exhausted when all bits were consumed, causing range-based for loops over `sample_idx` to hang
-- Fixed missing `absorb` parameter in final `process_gene()` call per GTF file (last gene always skipped absorption)
-
-### Added
 - **Absorption rule 0 (FSM)**: identical exon coordinates merged (pointer identity, then fuzzy ≤5bp fallback)
 - **Absorption rule 1 (5' ISM)**: contiguous subset at 5' end kept as separate segment (potential APA)
 - **Absorption rule 2 (3' ISM)**: contiguous subset at 3' end, missing 1-2 exons, absorbed (RT dropout)
