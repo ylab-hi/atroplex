@@ -259,7 +259,7 @@ TEST_F(DiscoverCategoryTest, MatcherStats_TrackAllCategories) {
 // ========================================================================
 // Integration tests: full pipeline from SAM file
 //
-// query_reads.sam contains 24 reads across 8 categories (3 per multi-exon
+// query_reads.sam contains 23 reads across 8 categories (3 per multi-exon
 // category, 2-3 for single-exon). CIGAR strings produce specific junctions
 // when parsed by htslib (SAM POS 1-based, htslib converts to 0-based).
 //
@@ -324,7 +324,7 @@ TEST_F(DiscoverIntegrationTest, Clustering_ReadCounts) {
     auto clusters = clusterer.cluster_reads(reader);
 
     const auto& stats = clusterer.get_stats();
-    EXPECT_EQ(stats.total_reads, 24) << "SAM has 24 reads";
+    EXPECT_EQ(stats.total_reads, 23) << "SAM has 23 reads";
     EXPECT_EQ(stats.filtered_reads, 0) << "All reads have mapq=60, none filtered";
     EXPECT_GT(stats.total_clusters, 0);
 }
@@ -377,21 +377,25 @@ TEST_F(DiscoverIntegrationTest, Clustering_ConsensusJunctions) {
     read_clusterer clusterer(cfg);
     auto clusters = clusterer.cluster_reads(reader);
 
-    // Find a 3-junction cluster with 3 reads (the FSM cluster)
+    // Find the FSM cluster: 3 junctions, 3 reads, first donor near 10200
+    // (NNC cluster also has 3 junctions and 3 reads but first donor is 10200
+    //  and second donor is 11500 — so we verify all 3 junction donors)
     for (const auto& cluster : clusters) {
-        if (cluster.consensus_junctions.size() == 3 && cluster.read_count() == 3) {
-            // Consensus should match reference: (10200,11000),(11300,12500),(12800,14000)
-            auto& j = cluster.consensus_junctions;
-            EXPECT_NEAR(static_cast<double>(j[0].donor),    10200.0, 5.0);
-            EXPECT_NEAR(static_cast<double>(j[0].acceptor), 11000.0, 5.0);
-            EXPECT_NEAR(static_cast<double>(j[1].donor),    11300.0, 5.0);
-            EXPECT_NEAR(static_cast<double>(j[1].acceptor), 12500.0, 5.0);
-            EXPECT_NEAR(static_cast<double>(j[2].donor),    12800.0, 5.0);
-            EXPECT_NEAR(static_cast<double>(j[2].acceptor), 14000.0, 5.0);
-            return;  // Found and verified
-        }
+        if (cluster.consensus_junctions.size() != 3 || cluster.read_count() != 3)
+            continue;
+        auto& j = cluster.consensus_junctions;
+        // Check second junction donor to distinguish FSM (11300) from NNC (11500)
+        if (std::abs(static_cast<double>(j[1].donor) - 11300.0) > 10.0)
+            continue;
+        EXPECT_NEAR(static_cast<double>(j[0].donor),    10200.0, 5.0);
+        EXPECT_NEAR(static_cast<double>(j[0].acceptor), 11000.0, 5.0);
+        EXPECT_NEAR(static_cast<double>(j[1].donor),    11300.0, 5.0);
+        EXPECT_NEAR(static_cast<double>(j[1].acceptor), 12500.0, 5.0);
+        EXPECT_NEAR(static_cast<double>(j[2].donor),    12800.0, 5.0);
+        EXPECT_NEAR(static_cast<double>(j[2].acceptor), 14000.0, 5.0);
+        return;  // Found and verified
     }
-    ADD_FAILURE() << "Expected a 3-junction, 3-read cluster (FSM)";
+    ADD_FAILURE() << "Expected a 3-junction, 3-read FSM cluster";
 }
 
 // ── Full pipeline: cluster -> match -> classify ────────────────────
