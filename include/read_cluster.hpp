@@ -162,10 +162,9 @@ struct read_cluster {
 class read_clusterer {
 public:
     struct config {
-        int junction_bin_size = 10;    // Binning for initial clustering (bp)
         int junction_tolerance = 5;    // Max bp difference within cluster
         uint8_t min_mapq = 20;         // Minimum mapping quality
-        int single_exon_bin_size = 100; // Larger bins for single-exon reads
+        size_t single_exon_distance = 100; // Max start-position distance for single-exon grouping
     };
 
     read_clusterer() : read_clusterer(config{}) {}
@@ -203,7 +202,6 @@ private:
     // Per-chromosome state
     std::string current_seqid_;
     std::vector<processed_read> read_storage_;
-    std::unordered_map<std::string, std::vector<size_t>> signature_to_reads_;
 
     /**
      * Add a single read to current chromosome state
@@ -217,10 +215,11 @@ private:
     std::vector<read_cluster> finalize_chromosome();
 
     /**
-     * Refine coarse clusters into final clusters
-     * Verifies junction compatibility within bins
+     * Cluster reads using sort+sweep (no binning boundary artifacts).
+     * Sorts by (strand, junction_count, first_donor), then sweeps forward
+     * collecting compatible reads within junction_tolerance.
      */
-    std::vector<read_cluster> refine_clusters();
+    std::vector<read_cluster> build_clusters();
 };
 
 #endif // ATROPLEX_READ_CLUSTER_HPP

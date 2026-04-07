@@ -184,16 +184,11 @@ void read_clusterer::add_read(const gio::sam_entry& entry) {
         stats_.multi_exon_reads++;
     }
 
-    // Store read and index by signature
-    size_t idx = read_storage_.size();
     read_storage_.push_back(std::move(read));
-
-    std::string sig = read_storage_.back().get_binned_signature(cfg_.junction_bin_size);
-    signature_to_reads_[sig].push_back(idx);
 }
 
 std::vector<read_cluster> read_clusterer::finalize_chromosome() {
-    auto clusters = refine_clusters();
+    auto clusters = build_clusters();
 
     // Update stats
     for (const auto& cluster : clusters) {
@@ -211,78 +206,85 @@ std::vector<read_cluster> read_clusterer::finalize_chromosome() {
     // Clear state for next chromosome
     current_seqid_.clear();
     read_storage_.clear();
-    signature_to_reads_.clear();
 
     return clusters;
 }
 
-std::vector<read_cluster> read_clusterer::refine_clusters() {
+std::vector<read_cluster> read_clusterer::build_clusters() {
+    if (read_storage_.empty()) return {};
+
+    // Build index sorted by (strand, junction_count, first_donor) so that
+    // compatible reads are adjacent. Sweep forward collecting reads whose
+    // first junction is within tolerance — no binning boundary artifacts.
+    std::vector<size_t> indices(read_storage_.size());
+    std::iota(indices.begin(), indices.end(), 0);
+
+    std::sort(indices.begin(), indices.end(), [&](size_t a, size_t b) {
+        auto& ra = read_storage_[a];
+        auto& rb = read_storage_[b];
+        if (ra.strand != rb.strand) return ra.strand < rb.strand;
+        if (ra.junctions.size() != rb.junctions.size())
+            return ra.junctions.size() < rb.junctions.size();
+        if (!ra.junctions.empty() && !rb.junctions.empty()) {
+            if (ra.junctions[0].donor != rb.junctions[0].donor)
+                return ra.junctions[0].donor < rb.junctions[0].donor;
+        }
+        return ra.interval.get_start() < rb.interval.get_start();
+    });
+
     std::vector<read_cluster> clusters;
+    std::vector<bool> assigned(indices.size(), false);
 
-    for (auto& [signature, read_indices] : signature_to_reads_) {
-        if (read_indices.empty()) continue;
+    for (size_t i = 0; i < indices.size(); ++i) {
+        if (assigned[i]) continue;
 
-        // For each bin, we need to verify junction compatibility
-        // and potentially split into sub-clusters
+        auto& seed = read_storage_[indices[i]];
 
-        // Simple approach: treat each bin as one cluster
-        // More sophisticated: check junction tolerance and split if needed
+        read_cluster cluster;
+        cluster.add_read(&seed);
+        assigned[i] = true;
 
-        // Get first read to determine junction count
-        const processed_read& first_read = read_storage_[read_indices[0]];
-
-        if (first_read.is_single_exon()) {
-            // Single-exon reads: just group by bin
-            read_cluster cluster;
-            for (size_t idx : read_indices) {
-                cluster.add_read(&read_storage_[idx]);
+        if (seed.is_single_exon()) {
+            // Single-exon: sweep by start position proximity
+            for (size_t j = i + 1; j < indices.size(); ++j) {
+                if (assigned[j]) continue;
+                auto& cand = read_storage_[indices[j]];
+                if (cand.strand != seed.strand) break;
+                if (!cand.is_single_exon()) break;
+                if (cand.interval.get_start() - seed.interval.get_start()
+                    > cfg_.single_exon_distance) break;
+                cluster.add_read(&cand);
+                assigned[j] = true;
             }
-            cluster.finalize();
-            clusters.push_back(std::move(cluster));
         } else {
-            // Multi-exon reads: verify junction compatibility
-            // Group reads with matching junctions within tolerance
+            // Multi-exon: sweep while first donor is within tolerance
+            for (size_t j = i + 1; j < indices.size(); ++j) {
+                if (assigned[j]) continue;
+                auto& cand = read_storage_[indices[j]];
+                if (cand.strand != seed.strand) break;
+                if (cand.junctions.size() != seed.junctions.size()) break;
+                // First donor beyond tolerance → no more candidates
+                if (cand.junctions[0].donor > seed.junctions[0].donor
+                    + static_cast<size_t>(cfg_.junction_tolerance)) break;
 
-            std::vector<bool> assigned(read_indices.size(), false);
-
-            for (size_t i = 0; i < read_indices.size(); ++i) {
-                if (assigned[i]) continue;
-
-                const processed_read& seed = read_storage_[read_indices[i]];
-                read_cluster cluster;
-                cluster.add_read(&seed);
-                assigned[i] = true;
-
-                // Find compatible reads
-                for (size_t j = i + 1; j < read_indices.size(); ++j) {
-                    if (assigned[j]) continue;
-
-                    const processed_read& candidate = read_storage_[read_indices[j]];
-
-                    // Check junction compatibility
-                    bool compatible = true;
-                    if (seed.junctions.size() == candidate.junctions.size()) {
-                        for (size_t k = 0; k < seed.junctions.size(); ++k) {
-                            if (!seed.junctions[k].matches(candidate.junctions[k],
-                                                           cfg_.junction_tolerance)) {
-                                compatible = false;
-                                break;
-                            }
-                        }
-                    } else {
+                // Full junction compatibility check
+                bool compatible = true;
+                for (size_t k = 0; k < seed.junctions.size(); ++k) {
+                    if (!seed.junctions[k].matches(cand.junctions[k],
+                                                   cfg_.junction_tolerance)) {
                         compatible = false;
-                    }
-
-                    if (compatible) {
-                        cluster.add_read(&candidate);
-                        assigned[j] = true;
+                        break;
                     }
                 }
-
-                cluster.finalize();
-                clusters.push_back(std::move(cluster));
+                if (compatible) {
+                    cluster.add_read(&cand);
+                    assigned[j] = true;
+                }
             }
         }
+
+        cluster.finalize();
+        clusters.push_back(std::move(cluster));
     }
 
     // Sort clusters by genomic position
