@@ -15,7 +15,6 @@
 #include <sstream>
 #include <fstream>
 #include <cmath>
-#include <functional>
 
 // ============================================================================
 // Helper functions for category string conversion
@@ -93,17 +92,13 @@ void transcript_matcher::index_splice_sites(const chromosome_exon_caches& exon_c
     size_t acceptor_count = 0;
 
     for (const auto& [seqid, exon_cache] : exon_caches) {
-        size_t seqid_hash = std::hash<std::string>{}(seqid);
-
         for (const auto& [coord, exon_ptr] : exon_cache) {
             // Donor = exon end (5' splice site of downstream intron)
-            size_t donor_pos = coord.get_end();
-            known_donor_sites_.insert(seqid_hash ^ (donor_pos << 1));
+            known_donor_sites_.insert({seqid, coord.get_end()});
             ++donor_count;
 
             // Acceptor = exon start (3' splice site of upstream intron)
-            size_t acceptor_pos = coord.get_start();
-            known_acceptor_sites_.insert(seqid_hash ^ (acceptor_pos << 1));
+            known_acceptor_sites_.insert({seqid, coord.get_start()});
             ++acceptor_count;
         }
     }
@@ -114,13 +109,11 @@ void transcript_matcher::index_splice_sites(const chromosome_exon_caches& exon_c
 }
 
 bool transcript_matcher::is_known_donor(const std::string& seqid, size_t position) const {
-    // Check if position (with tolerance) matches any known donor site
-    // For now, simplified - would use spatial index for efficiency
-    for (int offset = -cfg_.splice_site_window; offset <= cfg_.splice_site_window; ++offset) {
-        size_t check_pos = position + offset;
-        // Hash: combine seqid hash with position
-        size_t key = std::hash<std::string>{}(seqid) ^ (check_pos << 1);
-        if (known_donor_sites_.count(key)) {
+    size_t lo = (static_cast<size_t>(cfg_.splice_site_window) <= position)
+              ? position - cfg_.splice_site_window : 0;
+    size_t hi = position + cfg_.splice_site_window;
+    for (size_t pos = lo; pos <= hi; ++pos) {
+        if (known_donor_sites_.count({seqid, pos})) {
             return true;
         }
     }
@@ -128,10 +121,11 @@ bool transcript_matcher::is_known_donor(const std::string& seqid, size_t positio
 }
 
 bool transcript_matcher::is_known_acceptor(const std::string& seqid, size_t position) const {
-    for (int offset = -cfg_.splice_site_window; offset <= cfg_.splice_site_window; ++offset) {
-        size_t check_pos = position + offset;
-        size_t key = std::hash<std::string>{}(seqid) ^ (check_pos << 1);
-        if (known_acceptor_sites_.count(key)) {
+    size_t lo = (static_cast<size_t>(cfg_.splice_site_window) <= position)
+              ? position - cfg_.splice_site_window : 0;
+    size_t hi = position + cfg_.splice_site_window;
+    for (size_t pos = lo; pos <= hi; ++pos) {
+        if (known_acceptor_sites_.count({seqid, pos})) {
             return true;
         }
     }
@@ -151,13 +145,17 @@ match_result transcript_matcher::match(const read_cluster& cluster) {
         return result;
     }
 
-    // Step 2-3: For each candidate, get exon chain and score junction match
-    double best_score = 0.0;
-    key_ptr best_segment = nullptr;
-    std::string best_transcript_id;
-    std::string best_gene_id;
-    std::vector<key_ptr> best_exon_chain;
-    int best_ref_junctions = 0;
+    // Step 2-3: Score all candidates in a single pass (avoids redundant graph traversals)
+    struct scored_candidate {
+        key_ptr seg_key;
+        double score;
+        std::string transcript_id;
+        std::string gene_id;
+        std::vector<key_ptr> exon_chain;
+        int ref_junctions;
+    };
+    std::vector<scored_candidate> scored;
+    scored.reserve(candidates.size());
 
     for (key_ptr seg_key : candidates) {
         if (!is_segment(seg_key->get_data())) continue;
@@ -165,70 +163,66 @@ match_result transcript_matcher::match(const read_cluster& cluster) {
         const auto& seg = get_segment(seg_key->get_data());
         if (seg.transcript_ids.empty()) continue;
 
-        // All transcripts of a segment share the same exon chain — get it once
         auto exon_chain = get_exon_chain(seg_key, "");
         if (exon_chain.empty()) continue;
 
         double score = score_junction_match(cluster, exon_chain);
+        int ref_juncs = static_cast<int>(exon_chain.size()) - 1;
 
-        if (score > best_score) {
-            best_score = score;
-            best_segment = seg_key;
-            best_transcript_id = transcript_registry::instance().resolve(*seg.transcript_ids.begin());
-            best_gene_id = seg.gene_id();
-            best_exon_chain = exon_chain;
-            best_ref_junctions = static_cast<int>(exon_chain.size()) - 1;
+        scored.push_back({
+            seg_key,
+            score,
+            transcript_registry::instance().resolve(*seg.transcript_ids.begin()),
+            seg.gene_id(),
+            std::move(exon_chain),
+            ref_juncs
+        });
+    }
+
+    // Find best scoring candidate
+    scored_candidate* best = nullptr;
+    for (auto& sc : scored) {
+        if (!best || sc.score > best->score) {
+            best = &sc;
         }
     }
 
     // No matching segment found
-    if (best_segment == nullptr) {
-        // Check if we're within a gene but not matching any transcript
-        // This could be GENIC_INTRON or GENIC_GENOMIC
+    if (best == nullptr) {
         result.category = structural_category::INTERGENIC;
         update_stats(result);
         return result;
     }
 
-    // Populate result with match info
-    result.matched_segments.push_back(best_segment);
-    result.matched_transcript_ids.push_back(best_transcript_id);
-    result.matched_gene_ids.push_back(best_gene_id);
-    result.reference_transcript = best_transcript_id;
-    result.reference_gene = best_gene_id;
-    result.junction_match_score = best_score;
+    // Populate result with best match info
+    result.matched_segments.push_back(best->seg_key);
+    result.matched_transcript_ids.push_back(best->transcript_id);
+    result.matched_gene_ids.push_back(best->gene_id);
+    result.reference_transcript = best->transcript_id;
+    result.reference_gene = best->gene_id;
+    result.junction_match_score = best->score;
     result.total_query_junctions = static_cast<int>(cluster.consensus_junctions.size());
-    result.total_ref_junctions = best_ref_junctions;
-    result.matching_junctions = static_cast<int>(best_score * result.total_query_junctions + 0.5);
+    result.total_ref_junctions = best->ref_junctions;
+    result.matching_junctions = static_cast<int>(best->score * result.total_query_junctions + 0.5);
 
     // Analyze splice sites for NIC/NNC classification
     analyze_splice_sites(result, cluster);
 
     // Find novel junctions
-    result.novel_junctions = find_novel_junctions(cluster, best_exon_chain);
+    result.novel_junctions = find_novel_junctions(cluster, best->exon_chain);
 
     // Classify using SQANTI categories
-    classify_match(result, cluster, best_exon_chain);
+    classify_match(result, cluster, best->exon_chain);
 
-    // Check for ambiguous matches (multiple segments with same best score)
+    // Collect equally-scored candidates from the same pass (no re-traversal)
     int equal_matches = 0;
-    for (key_ptr seg_key : candidates) {
-        if (!is_segment(seg_key->get_data())) continue;
-        if (seg_key == best_segment) continue;
-
-        const auto& seg = get_segment(seg_key->get_data());
-        if (seg.transcript_ids.empty()) continue;
-
-        auto exon_chain = get_exon_chain(seg_key, "");
-        if (exon_chain.empty()) continue;
-
-        double score = score_junction_match(cluster, exon_chain);
-        if (std::abs(score - best_score) < 0.001 && score >= cfg_.min_junction_score) {
+    for (auto& sc : scored) {
+        if (sc.seg_key == best->seg_key) continue;
+        if (std::abs(sc.score - best->score) < 0.001 && sc.score >= cfg_.min_junction_score) {
             equal_matches++;
-            result.matched_segments.push_back(seg_key);
-            result.matched_transcript_ids.push_back(
-                transcript_registry::instance().resolve(*seg.transcript_ids.begin()));
-            result.matched_gene_ids.push_back(seg.gene_id());
+            result.matched_segments.push_back(sc.seg_key);
+            result.matched_transcript_ids.push_back(sc.transcript_id);
+            result.matched_gene_ids.push_back(sc.gene_id);
         }
     }
 
