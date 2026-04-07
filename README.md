@@ -1,17 +1,10 @@
 # Atroplex
 
-A pan-transcriptome indexing and analysis toolkit for long-read sequencing data. Atroplex builds a spatial index with graph structure from multiple annotation sources, tracks features across samples, and provides detailed analysis of exon/segment sharing, splicing complexity, and isoform diversity.
+A pan-transcriptome indexing and analysis toolkit for long-read sequencing data. Atroplex builds a spatial index with graph structure from multiple annotation sources, discovers novel transcripts from BAM input, classifies transcripts against the index, and provides detailed analysis of exon/segment sharing, splicing complexity, and isoform diversity.
 
 ## Installation
 
 ### Docker (recommended)
-
-```bash
-docker pull <dockerhub-username>/atroplex:latest
-docker run --rm -v $(pwd):/data atroplex build -b /data/annotation.gtf --stats -o /data/output/
-```
-
-Or build the image locally:
 
 ```bash
 docker build -t atroplex .
@@ -30,49 +23,64 @@ cmake --build build
 
 ### Dependencies
 
-- **cxxopts** (v3.2.1): Command-line argument parsing (fetched automatically)
-- **genogrove** (v0.14.0): Genomic interval data structures and graph structure (fetched automatically)
-- **htslib**: Reading BAM/SAM/FASTQ files (system dependency via pkg-config)
+- **cxxopts** (v3.3.1): Command-line argument parsing (fetched automatically)
+- **genogrove** (v0.20.0): Genomic interval data structures and graph structure (fetched automatically)
+- **htslib**: Reading BAM/SAM files (system dependency via pkg-config)
 - **zlib**: Compression support
 
 ## Quick Start
 
 ```bash
-# Build index from a single annotation file with summary statistics
-atroplex build -b annotation.gtf --stats
+# Build index from a single annotation file
+atroplex build -b annotation.gtf
 
 # Build pan-transcriptome from multiple sources via manifest
-atroplex build -m manifest.tsv --stats
+atroplex build -m manifest.tsv
+
+# Build with replicate merging and expression filter
+atroplex build -m manifest.tsv --min-replicates 2 --min-expression 3
 
 # Run full per-sample analysis (sharing, splicing hubs, diversity)
 atroplex analyze -m manifest.tsv -o results/
 
+# Classify transcripts against the index
+atroplex query -i transcripts.gtf -m manifest.tsv -o results/
+
+# Classify with differential transcript usage
+atroplex query -i transcripts.gtf -m manifest.tsv --contrast treated:control
+
 # Discover novel transcripts from long-read data
-atroplex discover -i reads.bam -m manifest.tsv
+atroplex discover -i reads.bam -m manifest.tsv -o results/
 ```
 
 ## Subcommands
 
-### `atroplex build` - Build pan-transcriptome index
+### `atroplex build` — Build pan-transcriptome index
 
-Builds a genogrove index from one or more annotation files. Each input file is treated as a separate entry in the pan-transcriptome, with features deduplicated across files and sample/source provenance tracked on every exon and segment.
+Builds a genogrove index from one or more annotation files or BAM files. Each input file is treated as a separate entry in the pan-transcriptome, with features deduplicated across files and sample/source provenance tracked on every exon and segment.
 
 ```bash
 # From manifest (full metadata per sample)
-atroplex build -m ENCODE/manifest.tsv --stats -o results/
+atroplex build -m ENCODE/manifest.tsv -o results/
 
 # From annotation files directly (metadata parsed from GFF headers)
-atroplex build -b gencode.gtf -b sample1.gtf -b sample2.gtf --stats
+atroplex build -b gencode.gtf -b sample1.gtf -b sample2.gtf
 
-# Both combined
-atroplex build -m manifest.tsv -b extra_annotation.gtf --stats
+# With replicate merging (require feature in >= 2 replicates)
+atroplex build -m manifest.tsv --min-replicates 2
+
+# With expression filtering (skip transcripts below threshold)
+atroplex build -m manifest.tsv --min-expression 3
+
+# Disable ISM absorption
+atroplex build -m manifest.tsv --no-absorb
 ```
 
-Use `--stats` to write a compact index summary to the output directory.
+Build always produces a serialized index (`.ggx`) and a build summary (`.ggx.summary`).
 
-### `atroplex analyze` - Full pan-transcriptome analysis
+### `atroplex analyze` — Full pan-transcriptome analysis
 
-Performs detailed per-sample analysis including Jaccard isoform diversity, exon/segment sharing statistics, and splicing hub detection. This is more expensive than `--stats` and produces multiple output files organized in subfolders.
+Performs detailed per-sample analysis including Jaccard isoform diversity, exon/segment sharing statistics, and splicing hub detection.
 
 ```bash
 # Full analysis from manifest
@@ -82,7 +90,22 @@ atroplex analyze -m ENCODE/manifest.tsv -o results/
 atroplex analyze -b gencode.gtf -b sample1.gtf -o results/
 ```
 
-### `atroplex discover` - Discover novel transcripts
+### `atroplex query` — Classify transcripts against the index
+
+Classifies input transcripts (GTF/GFF) against the pan-transcriptome index using SQANTI-like structural categories (FSM, ISM, NIC, NNC, etc.). Optionally performs differential transcript usage (DTU) analysis between sample groups.
+
+```bash
+# Classify transcripts
+atroplex query -i transcripts.gtf -m manifest.tsv -o results/
+
+# With differential transcript usage between conditions
+atroplex query -i transcripts.gtf -m manifest.tsv --contrast treated:control --fdr 0.05
+
+# Group by a different manifest field
+atroplex query -i transcripts.gtf -m manifest.tsv --contrast HeLa:K562 --group-by biosample
+```
+
+### `atroplex discover` — Discover novel transcripts
 
 Clusters aligned long reads by splice junction signature and matches them against the index to classify transcripts as known, compatible, or novel.
 
@@ -90,22 +113,22 @@ Clusters aligned long reads by splice junction signature and matches them agains
 atroplex discover -i reads.bam -m manifest.tsv -o results/
 ```
 
-### `atroplex dtu` - Differential transcript usage
-
-*(Under development)*
-
 ### Common Options
 
 | Option | Description |
 |--------|-------------|
 | `-o, --output-dir` | Output directory (default: input file directory) |
+| `-p, --prefix` | Output file prefix (default: derived from manifest or first input) |
 | `-t, --threads` | Number of threads (default: 1) |
-| `-s, --stats` | Write compact index summary |
 | `--progress` | Show progress output |
 | `-m, --manifest` | Sample manifest file (TSV) |
 | `-b, --build-from` | Build from GFF/GTF file(s) |
-| `-g, --genogrove` | Load pre-built genogrove index (.gg) |
+| `-g, --genogrove` | Load pre-built genogrove index (.ggx) |
 | `-k, --order` | Genogrove tree order (default: 3) |
+| `--min-expression` | Minimum expression to include a transcript (default: -1, disabled) |
+| `--no-absorb` | Disable ISM segment absorption into longer parent segments |
+| `--fuzzy-tolerance` | Max bp difference for fuzzy exon boundary matching (default: 5) |
+| `--min-replicates` | Merge biological replicates; require features in >= N replicates (default: 0, no merge) |
 
 ## Input Files
 
@@ -126,6 +149,7 @@ sample2.gtf	HL60_M1_rep2	sample	RNA-seq	HL-60	M1 macrophage	Homo sapiens	PacBio 
 - Column names are case-insensitive
 - Relative paths resolved from manifest directory
 - `id` auto-generated from filename if not provided
+- Optional `group` column for replicate grouping; if absent, groups are auto-inferred by stripping `_repNN` suffix from sample IDs
 
 The `type` field matters: only entries with `type = "sample"` count toward "conserved" thresholds (features present in ALL samples). Reference annotations participate in structural analysis but don't inflate sample counts.
 
@@ -148,13 +172,13 @@ Each exon feature must have `gene_id` and `transcript_id` in column 9.
 
 #### Expression Auto-Detection
 
-Expression values are automatically parsed from transcript-level GFF entries. Priority order: `counts` > `TPM` > `FPKM` > `RPKM` > `cov`. Detected values are:
-
-1. Stored on segments (transcript-level)
-2. Propagated to exons (accumulated across transcripts sharing the exon)
-3. The expression type (counts, TPM, etc.) is recorded on the sample and appears in output column headers
+Expression values are automatically parsed from transcript-level GFF entries. Priority order: `counts` > `TPM` > `FPKM` > `RPKM` > `cov`. Values are stored per-sample on segment features. The expression type (counts, TPM, etc.) is recorded on the sample and appears in output column headers.
 
 Use `scripts/inject_expression.py` to add expression counts from TALON quantification TSV files into GTF files before building.
+
+### BAM/SAM Files
+
+BAM files can be used as input to `build` (via manifest or `--build-from`). Reads are clustered by splice junction signature, and clusters are converted to exon chains and segments using the same absorption rules as GFF input. Read counts serve as expression values.
 
 #### Chromosome Name Normalization
 
@@ -169,32 +193,53 @@ Atroplex normalizes chromosome names to UCSC/GENCODE style automatically:
 
 This allows mixing annotations from different sources (e.g., GENCODE + Ensembl).
 
+## ISM Absorption
+
+During index construction, Incomplete Splice Match (ISM) transcripts — truncated versions of full-length transcripts — are absorbed into their parent segments rather than creating separate entries. This reduces noise from degradation artifacts and technical truncation in long-read data.
+
+Absorption rules (in execution order):
+
+| Rule | Pattern | Action |
+|------|---------|--------|
+| 0 | Identical exon structure (FSM) | Merge metadata |
+| 5 | Same intron chain, TSS/TES within 50bp | Absorb |
+| 6 | Mono-exon overlapping gene, no intron crossing | Drop |
+| 7 | Mono-exon spanning exon-intron-exon (intron retention) | Keep |
+| 8 | Mono-exon intergenic | Drop |
+| 1 | 5' ISM (contiguous subset at 5' end) | Keep |
+| 2 | 3' ISM (1-2 missing exons from 5' end) | Absorb |
+| 3 | 3' degradation (3+ missing from 5' end) | Drop vs ref, Keep vs sample |
+| 4 | Internal fragment (both ends missing) | Drop vs ref, Keep vs sample |
+
+After creating a new segment, reverse absorption applies the same rules to existing shorter segments. Matching uses pointer identity first, then fuzzy coordinate matching within `--fuzzy-tolerance` bp. Absorption can be disabled with `--no-absorb`.
+
+## Biological Replicate Merging
+
+When `--min-replicates N` is provided, biological replicates within the same experiment group are merged after grove construction:
+
+- Groups are determined by the `group` column in the manifest, or auto-inferred by stripping `_repNN` suffix from sample IDs
+- Features must be present in >= N replicates to survive (threshold capped at group size)
+- Expression values are averaged across replicates
+- Original replicate entries are excluded from downstream statistics
+
 ## Output Files
 
-### `--stats` (compact summary)
+### Build output (all subcommands that build a grove)
 
-Written directly to the output directory:
+| File | Description |
+|------|-------------|
+| `{prefix}.ggx` | Serialized grove index |
+| `{prefix}.ggx.summary` | Build summary (genes, transcripts, segments, exons, biotypes, per-chromosome) |
 
-```
-{basename}.index_stats.txt
-```
-
-A compact text summary with:
-- Overview (chromosomes, genes, transcripts, segments, exons, edges)
-- Input entries listed by name and type
-- Genes by biotype
-- Transcripts per gene / exons per segment distributions
-- Per-chromosome breakdown
-
-### `atroplex analyze` (full analysis)
+### `atroplex analyze` output
 
 All output goes to `{output-dir}/analysis/` with organized subfolders:
 
 ```
 analysis/
   {basename}.analysis.txt            Full text report
-  {basename}.sample_stats.csv        Per-sample metrics (CSV)
-  {basename}.source_stats.csv        Per-source metrics (CSV)
+  {basename}.sample_stats.csv        Per-sample metrics (samples as columns, metrics as rows)
+  {basename}.source_stats.csv        Per-source metrics (sources as columns, metrics as rows)
   sharing/
     {basename}.exon_sharing.tsv      Exon sharing summary
     {basename}.segment_sharing.tsv   Segment sharing summary
@@ -204,21 +249,9 @@ analysis/
     {basename}.branch_details.tsv    Per-branch detail
 ```
 
-#### Full Text Report (`.analysis.txt`)
-
-Human-readable report with all sections: overview, biotype breakdown, distributions, exon sharing (constitutive/alternative), segment sharing (conserved/shared/sample-specific), graph structure, isoform diversity (Jaccard), per-sample comparison table, per-source comparison table, and top splicing hubs.
-
-#### Per-Sample CSV (`.sample_stats.csv`)
-
-Samples as columns, metrics as rows. Includes metadata rows (source_file, assay, biosample, etc.) followed by statistics: segments, exclusive segments, exons, exclusive exons, genes, transcripts, isoform diversity, deduplication ratio, mean expression, expressed segments.
-
-#### Per-Source CSV (`.source_stats.csv`)
-
-GFF sources (column 2: HAVANA, ENSEMBL, TALON, etc.) as columns, metrics as rows: segments, exclusive segments, exons, exclusive exons, genes.
-
 #### Exon Sharing Summary (`.exon_sharing.tsv`)
 
-Metrics as rows, samples as columns, plus a `total` column with global values:
+Metrics as rows, samples as columns, plus a `total` column:
 
 | Metric | Description |
 |--------|-------------|
@@ -231,90 +264,34 @@ Metrics as rows, samples as columns, plus a `total` column with global values:
 
 #### Segment Sharing Summary (`.segment_sharing.tsv`)
 
-Same format as exon sharing:
-
-| Metric | Description |
-|--------|-------------|
-| `total` | Total segments in this sample |
-| `exclusive` | Segments only in this sample |
-| `shared` | Segments in 2+ but not all samples |
-| `conserved` | Segments in ALL samples |
+Same format: `total`, `exclusive`, `shared`, `conserved`.
 
 #### Conserved Exons Detail (`.conserved_exons.tsv`)
 
-One row per exon that is present in **all samples**. Provides per-sample transcript counts and expression values for cross-sample comparison of core exons.
-
-| Column | Description |
-|--------|-------------|
-| `exon_id` | Exon identifier |
-| `gene_name` | Gene symbol |
-| `gene_id` | Gene identifier |
-| `chromosome` | Chromosome |
-| `coordinate` | Genomic coordinate (chr:strand:start-end) |
-| `n_transcripts` | Total transcripts using this exon |
-| `constitutive` | `yes` if present in all transcripts of the gene, `no` if alternative |
-| `{sample}.transcripts` | Number of transcripts using this exon in the sample |
-| `{sample}.{expr_type}` | Expression value (e.g., `.counts`, `.TPM`); only for sample-type entries |
-
-- Expression columns only appear for entries with `type = "sample"` (not annotations)
-- Missing expression shown as `.` (present but not quantified)
-- Sorted by chromosome then coordinate
+One row per exon present in **all samples**. Per-sample columns include transcript counts and expression values (expression columns only for sample-type entries).
 
 #### Splicing Hubs (`.splicing_hubs.tsv`)
 
-Exons with more than 10 unique downstream exon targets, indicating complex alternative splicing decision points. One row per hub exon.
-
-| Column | Description |
-|--------|-------------|
-| `gene_name` | Gene symbol |
-| `gene_id` | Gene identifier |
-| `exon_id` | Hub exon identifier |
-| `coordinate` | Genomic coordinate |
-| `exon_number` | 1-based position in a representative transcript chain |
-| `total_exons` | Total exons in the representative segment |
-| `total_branches` | Total unique downstream targets across all samples |
-| `total_transcripts` | Total transcripts using this hub exon |
-
-Per-sample columns (one set per entry):
-
-| Column | Description |
-|--------|-------------|
-| `{sample}.branches` | Unique downstream targets in this sample |
-| `{sample}.shared` | Branches also present in at least one other sample |
-| `{sample}.unique` | Branches only in this sample |
-| `{sample}.transcripts` | Transcripts using this hub exon in this sample |
-| `{sample}.entropy` | Shannon entropy of branch usage: H = -Sigma(f_i * log2(f_i)) |
-| `{sample}.psi` | Traditional PSI (Percent Spliced In): hub transcripts / gene transcripts |
-| `{sample}.{expr_type}` | Expression at hub exon (sample-type entries only) |
-
-- **Entropy** measures splicing complexity at the junction. Higher entropy means more evenly distributed branch usage; 0 means all transcripts take the same path.
-- **PSI** measures exon inclusion rate. PSI = 1.0 means all transcripts of the gene include this exon.
-- Missing values shown as `.` (hub exon not present in that sample).
+Exons with more than 10 unique downstream exon targets, indicating complex alternative splicing decision points. Per-sample columns include branch counts, shared/unique classification, transcript counts, Shannon entropy, PSI, and expression.
 
 #### Branch Details (`.branch_details.tsv`)
 
-One row per (hub exon, downstream target) pair. Shows how transcript flow is distributed across individual branch targets.
+One row per (hub exon, downstream target) pair with per-sample branch usage fractions and expression.
 
-| Column | Description |
-|--------|-------------|
-| `hub_gene_name` | Gene symbol |
-| `hub_gene_id` | Gene identifier |
-| `hub_exon_id` | Hub exon identifier |
-| `hub_coordinate` | Hub genomic coordinate |
-| `target_exon_id` | Downstream target exon identifier |
-| `target_coordinate` | Target genomic coordinate |
-| `{sample}.fraction` | Branch usage fraction: target transcripts / hub transcripts |
-| `{sample}.{expr_type}` | Expression at target exon (sample-type entries only) |
+### `atroplex query` output
 
-- Fraction values sum to ~1.0 across all targets for a given hub and sample
-- `.` indicates the target is not present in that sample
+| File | Description |
+|------|-------------|
+| `{basename}.query.tsv` | Per-transcript classification with per-sample presence/expression |
+| `{basename}.query.summary.txt` | Classification summary |
+| `{basename}.{group_a}_vs_{group_b}.dtu.tsv` | DTU results (when `--contrast` is provided) |
 
 ### `atroplex discover` output
 
-```
-{input}.atroplex.tsv            Per-cluster match results
-{input}.atroplex.summary.txt    Match statistics
-```
+| File | Description |
+|------|-------------|
+| `{input}.atroplex.tsv` | Per-cluster match results (SQANTI-like) |
+| `{input}.atroplex.summary.txt` | Match statistics |
 
 ## Key Concepts
 
@@ -331,16 +308,22 @@ Atroplex builds a combined index from multiple annotation sources. Each input fi
 
 2. **Exons** are graph-only external keys used for fine-grained verification. They are linked into chains via edges and are not spatially indexed.
 
-The graph connects segments to their first exon (SEGMENT_TO_EXON edge), and exons to subsequent exons (EXON_TO_EXON edges).
+The graph connects segments to their first exon (SEGMENT_TO_EXON edge), and exons to subsequent exons (EXON_TO_EXON edges). Each edge carries a numeric segment index for ID-based traversal at branching exons.
 
-### Expression Handling
+### Structural Categories (SQANTI-like)
 
-Expression values can come from two sources:
+The `query` and `discover` subcommands classify transcripts into structural categories:
 
-1. **Transcript-level** (current): Auto-detected from GFF transcript entries (counts, TPM, FPKM, RPKM, cov). Stored on segments and propagated to exons by accumulation across transcripts.
-2. **Exon-level** (future): Direct per-exon quantification (e.g., from short-read counting). Stored directly on exon features.
-
-When transcript-level expression is propagated to exons, it is **accumulated** — if an exon appears in 3 transcripts with counts 100, 50, and 200, the exon's expression for that sample will be 350. For constitutive exons (present in all transcripts of a gene), this equals total gene expression.
+| Category | Description |
+|----------|-------------|
+| FSM | Full Splice Match — all junctions match a reference transcript |
+| ISM | Incomplete Splice Match — subset of reference junctions |
+| NIC | Novel In Catalog — novel combination of known splice sites |
+| NNC | Novel Not in Catalog — at least one novel splice site |
+| GENIC_INTRON | Mono-exon entirely within an intron |
+| GENIC_GENOMIC | Overlaps both intron and exon regions |
+| ANTISENSE | Overlaps gene on opposite strand |
+| INTERGENIC | No gene overlap |
 
 ### Sample Types
 
@@ -348,7 +331,7 @@ Entries are classified as `"annotation"` (reference catalogs like GENCODE) or `"
 
 - **Conserved/sharing statistics**: Only sample-type entries count toward "all samples" thresholds
 - **Expression output**: Expression columns only appear for sample-type entries in TSV output files
-- **Column headers**: Expression columns include the detected type (e.g., `SAMPLE1.counts`, `SAMPLE2.TPM`)
+- **Absorption rules**: Rules 3 and 4 treat annotation parents differently from sample parents
 
 ## Scripts
 
