@@ -241,13 +241,13 @@ TEST_F(DiscoverCategoryTest, MatcherStats_TrackAllCategories) {
     transcript_matcher matcher(*grove, cfg, exon_caches);
 
     // FSM
-    matcher.match(make_cluster("fsm", "chr22", '+', 10000, 14500,
+    [[maybe_unused]] auto fsm_result = matcher.match(make_cluster("fsm", "chr22", '+', 10000, 14500,
         {{10200, 11000}, {11300, 12500}, {12800, 14000}}));
     // ISM
-    matcher.match(make_cluster("ism", "chr22", '+', 10000, 12800,
+    [[maybe_unused]] auto ism_result = matcher.match(make_cluster("ism", "chr22", '+', 10000, 12800,
         {{10200, 11000}, {11300, 12500}}));
     // Intergenic
-    matcher.match(make_cluster("inter", "chr22", '+', 30000, 30500, {}));
+    [[maybe_unused]] auto inter_result = matcher.match(make_cluster("inter", "chr22", '+', 30000, 30500, {}));
 
     const auto& stats = matcher.get_stats();
     EXPECT_EQ(stats.total_matches, 3);
