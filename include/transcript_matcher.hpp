@@ -204,12 +204,12 @@ public:
     /**
      * Match a read cluster to reference transcripts
      */
-    match_result match(const read_cluster& cluster);
+    [[nodiscard]] match_result match(const read_cluster& cluster);
 
     /**
      * Batch match multiple clusters
      */
-    std::vector<match_result> match_batch(const std::vector<read_cluster>& clusters);
+    [[nodiscard]] std::vector<match_result> match_batch(const std::vector<read_cluster>& clusters);
 
     /**
      * Update grove with match results

@@ -46,7 +46,7 @@ public:
      * Generate a structure key from ordered exon coordinates.
      * Format: seqid:strand:start-end,start-end,...
      */
-    static std::string make_exon_structure_key(
+    [[nodiscard]] static std::string make_exon_structure_key(
         const std::string& seqid,
         const std::vector<gdt::genomic_coordinate>& exon_coords
     );
@@ -86,7 +86,7 @@ public:
      * Classify how sub aligns within parent's exon chain (pointer comparison).
      * Distinguishes ISM_3PRIME (1-2 missing) from DEGRADATION_3PRIME (3+ missing).
      */
-    static subsequence_type classify_subsequence(
+    [[nodiscard]] static subsequence_type classify_subsequence(
         const std::vector<key_ptr>& sub,
         const std::vector<key_ptr>& parent
     );
@@ -95,7 +95,7 @@ public:
      * Fuzzy subsequence matching (fallback when pointer identity fails).
      * Slides a window over the parent chain, checks all exon boundaries within tolerance.
      */
-    static subsequence_type fuzzy_classify_subsequence(
+    [[nodiscard]] static subsequence_type fuzzy_classify_subsequence(
         const std::vector<key_ptr>& sub,
         const std::vector<key_ptr>& parent,
         size_t tolerance_bp = 5
@@ -129,13 +129,13 @@ public:
     // ── Absorption rule helpers ─────────────────────────────────────
 
     /** Rule 5: Check if two exon chains share the same intron chain */
-    static bool has_same_intron_chain(
+    [[nodiscard]] static bool has_same_intron_chain(
         const std::vector<key_ptr>& chain_a,
         const std::vector<key_ptr>& chain_b
     );
 
     /** Rule 5: Check if terminal exon boundaries are within tolerance */
-    static bool terminal_boundaries_within_tolerance(
+    [[nodiscard]] static bool terminal_boundaries_within_tolerance(
         const std::vector<key_ptr>& chain_a,
         const std::vector<key_ptr>& chain_b,
         size_t tolerance_bp = 50
@@ -143,17 +143,17 @@ public:
 
     /** Rules 6/7/8: Classify a mono-exon transcript */
     enum class mono_exon_class { GENE_OVERLAP, INTRON_RETENTION, INTERGENIC };
-    static mono_exon_class classify_mono_exon(
+    [[nodiscard]] static mono_exon_class classify_mono_exon(
         const gdt::genomic_coordinate& mono_coord,
         const gene_segment_index_type& gene_index,
         const std::string& gene_id
     );
 
     /** Check if the given sample_id corresponds to a reference annotation */
-    static bool is_annotation_sample(std::optional<uint32_t> sample_id);
+    [[nodiscard]] static bool is_annotation_sample(std::optional<uint32_t> sample_id);
 
     /** Check if the parent segment belongs to a reference annotation */
-    static bool is_parent_annotation(key_ptr parent_seg);
+    [[nodiscard]] static bool is_parent_annotation(key_ptr parent_seg);
 };
 
 #endif //ATROPLEX_SEGMENT_BUILDER_HPP
