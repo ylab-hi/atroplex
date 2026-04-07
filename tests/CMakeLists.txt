@@ -14,3 +14,4 @@ list(FILTER ATROPLEX_LIB_SOURCES EXCLUDE REGEX "main\\.cpp$")
 
 add_subdirectory(build)
 add_subdirectory(discover)
+add_subdirectory(query)

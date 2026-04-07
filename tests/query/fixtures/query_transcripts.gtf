@@ -1,0 +1,16 @@
+chr22	QUERY	transcript	10000	14500	.	+	.	gene_id "GENE_A"; transcript_id "Q_SHARED";
+chr22	QUERY	exon	10000	10200	.	+	.	gene_id "GENE_A"; transcript_id "Q_SHARED";
+chr22	QUERY	exon	11000	11300	.	+	.	gene_id "GENE_A"; transcript_id "Q_SHARED";
+chr22	QUERY	exon	12500	12800	.	+	.	gene_id "GENE_A"; transcript_id "Q_SHARED";
+chr22	QUERY	exon	14000	14500	.	+	.	gene_id "GENE_A"; transcript_id "Q_SHARED";
+chr22	QUERY	transcript	10000	14500	.	+	.	gene_id "GENE_A"; transcript_id "Q_ANNO_ONLY";
+chr22	QUERY	exon	10000	10200	.	+	.	gene_id "GENE_A"; transcript_id "Q_ANNO_ONLY";
+chr22	QUERY	exon	11000	11300	.	+	.	gene_id "GENE_A"; transcript_id "Q_ANNO_ONLY";
+chr22	QUERY	exon	14000	14500	.	+	.	gene_id "GENE_A"; transcript_id "Q_ANNO_ONLY";
+chr22	QUERY	transcript	10000	12800	.	+	.	gene_id "GENE_A"; transcript_id "Q_SAMPLE_ONLY";
+chr22	QUERY	exon	10000	10200	.	+	.	gene_id "GENE_A"; transcript_id "Q_SAMPLE_ONLY";
+chr22	QUERY	exon	12500	12800	.	+	.	gene_id "GENE_A"; transcript_id "Q_SAMPLE_ONLY";
+chr22	QUERY	transcript	10000	14500	.	+	.	gene_id "GENE_A"; transcript_id "Q_NOVEL";
+chr22	QUERY	exon	10000	10200	.	+	.	gene_id "GENE_A"; transcript_id "Q_NOVEL";
+chr22	QUERY	exon	11500	11800	.	+	.	gene_id "GENE_A"; transcript_id "Q_NOVEL";
+chr22	QUERY	exon	14000	14500	.	+	.	gene_id "GENE_A"; transcript_id "Q_NOVEL";
