@@ -87,8 +87,10 @@ Temporary Items
 # iCloud generated files
 *.icloud
 
-build
+/build
+/cmake-build-*/
 .cache
+.claude/
 CLAUDE.md
 
 # atroplex-specific

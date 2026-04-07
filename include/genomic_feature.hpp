@@ -353,6 +353,9 @@ public:
 
     size_t size() const { return id_to_str_.size(); }
 
+    void clear() { str_to_id_.clear(); id_to_str_.clear(); }
+    static void reset() { instance().clear(); }
+
     void serialize(std::ostream& os) const;
     void deserialize_into(std::istream& is);
 };
@@ -400,6 +403,9 @@ public:
 
     size_t size() const { return entries_.size(); }
 
+    void clear() { id_to_idx_.clear(); entries_.clear(); }
+    static void reset() { instance().clear(); }
+
     void serialize(std::ostream& os) const;
     void deserialize_into(std::istream& is);
 };
@@ -446,6 +452,9 @@ public:
     }
 
     size_t size() const { return bit_to_str_.size(); }
+
+    void clear() { str_to_bit_.clear(); bit_to_str_.clear(); }
+    static void reset() { instance().clear(); }
 
     void serialize(std::ostream& os) const;
     void deserialize_into(std::istream& is);

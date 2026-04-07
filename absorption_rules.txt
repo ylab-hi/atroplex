@@ -1,0 +1,110 @@
+Absorption Rules for Pan-Transcriptome Index Construction
+==========================================================
+
+Prerequisites:
+- Annotations are always processed before samples (sorted in builder)
+- Transcripts within a gene are sorted by exon count (descending) before processing
+- Matching uses pointer identity first, then fuzzy fallback (≤5bp coordinate tolerance)
+
+Actions:
+- Merge:  identical structure, combine metadata into existing segment
+- Absorb: artifact, merge metadata into parent segment
+- Drop:   discard silently (no segment created, no metadata merged)
+- Keep:   create separate segment
+
+Rule 0: FSM (Full Splice Match)
+  Condition: Identical exon coordinates (structure_key match)
+  Matching:  Pointer identity, then fuzzy (≤5bp, same exon count)
+  vs Reference: Merge
+  vs Sample:    Merge
+
+Rule 1: 5' ISM
+  Condition: Contiguous subset aligned at 5' end, missing exons from 3' end
+  Matching:  Pointer identity, then fuzzy
+  vs Reference: Keep
+  vs Sample:    Keep
+  Rationale: Could be genuine alternative polyadenylation (APA) or
+             alternative last exon usage. Kept as separate segment.
+
+Rule 2: 3' ISM
+  Condition: Contiguous subset aligned at 3' end, missing 1-2 exons from 5' end
+  Matching:  Pointer identity, then fuzzy
+  vs Reference: Absorb
+  vs Sample:    Absorb
+  Rationale: Classic RT dropout — reverse transcriptase falls off early,
+             losing 1-2 exons from 5' end. Well-documented technical artifact.
+
+Rule 3: 3' degradation
+  Condition: Contiguous subset aligned at 3' end, missing 3+ exons from 5' end
+  Matching:  Pointer identity, then fuzzy
+  vs Reference: Drop
+  vs Sample:    Keep
+  Rationale: Too many missing exons for RT dropout. Against reference, this is
+             RNA degradation or fragmented cDNA — don't merge expression into
+             parent (corrupts quantification). Against sample, parent may be
+             incomplete — keep as separate segment.
+
+Rule 4: Internal fragment
+  Condition: Contiguous subset missing exons from both ends
+  Matching:  Pointer identity, then fuzzy
+  vs Reference: Drop
+  vs Sample:    Keep
+  Rationale: No biological mechanism produces internal-only fragments. Against
+             reference, clearly degradation. Against sample, parent may have
+             spurious terminal exons.
+
+Rule 5: Terminal variant
+  Condition: Same exon count, same intron chain, TSS/TES differ <50bp
+  Matching:  Intron chain by pointer identity on internal exons + exact junction
+             coordinates at terminals; boundary tolerance for TSS/TES
+  vs Reference: Absorb
+  vs Sample:    Absorb
+  Rationale: Same transcript with slightly different end-calling by aligner or
+             assembler. Not biology — alignment noise.
+
+Rule 6: Mono-exon gene overlap
+  Condition: 1 exon, overlaps a multi-exon gene, does NOT reach into a second exon
+  vs Reference: Drop
+  vs Sample:    Drop
+  Rationale: Novel mono-exon within a gene region without splice evidence.
+             Degradation fragment, mapping artifact, or internal priming on
+             A-rich sequence. Annotated mono-exons are handled by Rule 0
+             (exact match with reference creates segment; sample matches merge).
+
+Rule 7: Mono-exon intron retention
+  Condition: 1 exon, spans from one exon across the intron into the next exon
+  vs Reference: Keep
+  vs Sample:    Keep
+  Rationale: Genuine intron retention event. The intron was not spliced out.
+             Biologically real — NMD targets, nuclear detention, pre-mRNA.
+             Must reach INTO the next exon (not just extend a few bp past
+             one exon boundary into the intron).
+
+Rule 8: Mono-exon intergenic
+  Condition: 1 exon, no gene overlap (no multi-exon segments for this gene)
+  vs Reference: Drop
+  vs Sample:    Drop
+  Rationale: No gene context. Likely DNA contamination, genomic DNA carryover,
+             or mapping artifact.
+
+Fuzzy matching (integrated into Rules 0-4):
+  Each rule tries pointer identity first (fast), then falls back to coordinate
+  proximity (≤5bp on all exon boundaries). The fuzzy match uses the same
+  sliding-window subsequence logic, classifying the match position the same way:
+  - Aligned at 5' end → Rule 1 (Keep)
+  - Aligned at 3' end, 1-2 missing → Rule 2 (Absorb)
+  - Aligned at 3' end, 3+ missing → Rule 3 (Drop/Keep)
+  - Both ends missing → Rule 4 (Drop/Keep)
+  - Same exon count, all within 5bp → Rule 0 (Merge)
+
+Execution order in create_segment():
+  Step 1: Rule 0        (FSM — pointer, then fuzzy)
+  Step 2: Rule 5        (terminal variant)
+  Step 3: Rules 6/7/8   (mono-exon: gene overlap → intron retention → intergenic)
+  Step 4: Rules 1/2/3/4 (subsequence — pointer, then fuzzy)
+  Step 5: Create segment + edges
+  Step 6: Reverse absorption (Steps 1, 2, 4 on existing segments)
+
+Future rules (not yet implemented):
+  Rule 9:  PAS validation — 5' ISM (Rule 1) without PAS hexamer/PolyADB support
+           → Drop. Requires --genome + --polya-db.

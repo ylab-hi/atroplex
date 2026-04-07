@@ -26,17 +26,9 @@
 // class
 #include "genomic_feature.hpp"
 #include "sample_info.hpp"
+#include "segment_builder.hpp"
 
 namespace gio = genogrove::io;
-
-/// Classification of how a subsequence aligns within a parent exon chain.
-/// Uses SQANTI3 ISM sub-classification terminology.
-enum class subsequence_type {
-    NONE,               ///< Not a contiguous subsequence
-    ISM_5PRIME,         ///< 5' fragment: 5' intact, 3' truncated → KEEP (97% CAGE support)
-    ISM_3PRIME,         ///< 3' fragment: 5' truncated, 3' intact → ABSORB (34% CAGE support)
-    INTERNAL_FRAGMENT   ///< Internal fragment: both ends truncated → ABSORB
-};
 
 /**
  * GFF/GTF-specific grove builder
@@ -71,19 +63,6 @@ public:
                       uint32_t num_threads = 0,
                       float min_expression = -1.0f,
                       bool absorb = true);
-
-    /**
-     * Generate a structure key from ordered exon coordinates
-     * Format: seqid:strand:start-end,start-end,...
-     * Example: chr1:+:100-200,300-400,500-600
-     * @param seqid Chromosome/sequence ID
-     * @param exon_coords Ordered vector of exon coordinates (must be in 5'→3' order)
-     * @return Structure key string
-     */
-    static std::string make_exon_structure_key(
-        const std::string& seqid,
-        const std::vector<gdt::genomic_coordinate>& exon_coords
-    );
 
     /**
      * Parse GTF/GFF header to extract sample metadata
@@ -200,67 +179,6 @@ private:
         std::map<gdt::genomic_coordinate, key_ptr>& exon_cache,
         std::optional<uint32_t> sample_id,
         const std::string& gff_source = ""
-    );
-
-    /**
-     * Create new segment or reuse existing one with same exon structure
-     * @param gff_source GFF column 2 value (e.g., HAVANA, ENSEMBL, StringTie)
-     * @param expression_value Expression value from transcript entry (-1 if not available)
-     * @param transcript_biotype Transcript biotype (e.g., protein_coding, retained_intron)
-     */
-    static void create_segment(
-        grove_type& grove,
-        std::mutex& grove_mutex,
-        const std::string& transcript_id,
-        const std::vector<gio::gff_entry>& sorted_exons,
-        const std::vector<gdt::genomic_coordinate>& exon_coords,
-        const std::vector<key_ptr>& exon_chain,
-        std::unordered_map<std::string, key_ptr>& segment_cache,
-        gene_segment_index_type& gene_index,
-        std::optional<uint32_t> sample_id,
-        const std::string& gff_source,
-        size_t& segment_count,
-        float expression_value = -1.0f,
-        const std::string& transcript_biotype = "",
-        bool absorb = true
-    );
-
-    // ========== ISM absorption helpers ==========
-
-    /**
-     * Classify how sub aligns within parent's exon chain (pointer comparison).
-     * Returns ISM sub-type per SQANTI3 terminology:
-     *   ISM_5PRIME         — 5' fragment (5' intact, 3' truncated)
-     *   ISM_3PRIME         — 3' fragment (5' truncated, 3' intact)
-     *   INTERNAL_FRAGMENT  — internal fragment (both ends truncated)
-     *   NONE               — not a contiguous subsequence
-     */
-    static subsequence_type classify_subsequence(
-        const std::vector<key_ptr>& sub,
-        const std::vector<key_ptr>& parent
-    );
-
-    /**
-     * Merge transcript metadata into an existing segment (shared by dedup + absorption)
-     */
-    static void merge_into_segment(
-        key_ptr target_seg,
-        const std::string& transcript_id,
-        std::optional<uint32_t> sample_id,
-        const std::string& gff_source,
-        float expression_value,
-        const std::string& transcript_biotype
-    );
-
-    /**
-     * Reverse absorption: absorb existing shorter segments into a new longer one
-     */
-    static void try_reverse_absorption(
-        gene_segment_index_type& gene_index,
-        const std::string& gene_id,
-        key_ptr new_seg,
-        const std::vector<key_ptr>& new_exon_chain,
-        segment_cache_type& segment_cache
     );
 
     // ========== Attribute extraction helpers ==========

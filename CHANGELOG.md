@@ -8,18 +8,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
-- Updated genogrove dependency to v0.17.0 (fixes B+ tree `split_node` corruption)
+- Updated genogrove dependency to v0.20.0 (fixes B+ tree `split_node` corruption, adds grove iteration API and serialization)
 - Updated cxxopts dependency to v3.3.1
-- Adapted to genogrove v0.17.0 API: `gff_entry` and `sam_entry` use direct `start`/`end` fields instead of `interval` member
-- Adapted to genogrove v0.17.0 `gff_entry.attributes` using `std::less<>` transparent comparator
+- Adapted to genogrove v0.17.0+ API: `gff_entry`/`sam_entry` use direct `start`/`end` fields; `gff_entry.attributes` uses `std::less<>` transparent comparator
+- **Absorption rules v2**: rewrote ISM absorption as 9 structured rules (0-8) with ref/sample distinction, fuzzy subsequence matching, and proper mono-exon classification (see `absorption_rules.txt`)
+- Annotations are now always processed before samples during grove construction (sorted in `builder::build_from_samples`)
+- Transcripts within a gene are sorted by exon count (descending) before processing, ensuring multi-exon segments exist before mono-exon fragments are checked
+- `classify_subsequence()` now distinguishes 3' ISM (1-2 missing exons, absorb) from 3' degradation (3+ missing, drop vs ref / keep vs sample)
+
+### Refactored
+- **Extracted `segment_builder`** from `build_gff`: all segment creation and absorption logic moved to format-agnostic `segment_builder.hpp/cpp`, enabling future BAM input support without duplicating absorption rules
+- `build_gff::process_transcript()` now pre-computes seqid/strand/span and delegates to `segment_builder::create_segment()`
+- Named constants for absorption thresholds (`TERMINAL_TOLERANCE_BP`, `FUZZY_TOLERANCE_BP`, `MAX_ISM_MISSING_EXONS`)
+- Hoisted `gene_index.find()` lookup in `create_segment()` — single lookup shared across Steps 2/3/4
+- Eliminated unnecessary vector copy in `process_gene()` transcript sorting (sort keys only, not full entry vectors)
 
 ### Fixed
 - Fixed infinite loop in `sample_bitset` iterator: `advance()` did not mark iterator as exhausted when all bits were consumed, causing range-based for loops over `sample_idx` to hang
+- Fixed missing `absorb` parameter in final `process_gene()` call per GTF file (last gene always skipped absorption)
 
 ### Added
+- **Absorption rule 0 (FSM)**: identical exon coordinates merged (pointer identity, then fuzzy ≤5bp fallback)
+- **Absorption rule 1 (5' ISM)**: contiguous subset at 5' end kept as separate segment (potential APA)
+- **Absorption rule 2 (3' ISM)**: contiguous subset at 3' end, missing 1-2 exons, absorbed (RT dropout)
+- **Absorption rule 3 (3' degradation)**: contiguous subset at 3' end, missing 3+ exons, dropped vs reference / kept vs sample
+- **Absorption rule 4 (internal fragment)**: contiguous subset missing exons from both ends, dropped vs reference / kept vs sample
+- **Absorption rule 5 (terminal variant)**: same intron chain with TSS/TES differing <50bp, absorbed
+- **Absorption rule 6 (mono-exon gene overlap)**: mono-exon overlapping a multi-exon gene without crossing an intron boundary, dropped
+- **Absorption rule 7 (mono-exon intron retention)**: mono-exon spanning from one exon across an intron into the next exon, kept
+- **Absorption rule 8 (mono-exon intergenic)**: mono-exon with no gene overlap, dropped
+- **Fuzzy subsequence matching**: coordinate-proximity fallback (≤5bp tolerance) integrated into Rules 0-4 when pointer identity fails, handling cross-caller coordinate variation
+- `reset()` methods on `transcript_registry`, `gene_registry`, and `source_registry` for test isolation
+- GoogleTest-based test suite for absorption rules (`tests/build/absorption_test.cpp`)
+- Test fixtures for each absorption rule (`tests/build/fixtures/`)
+- `absorption_rules.txt` documenting all rules with biological rationale, ref/sample distinction, and execution order
 - Biological replicate merging via `--min-replicates N` and manifest `group` column
 - Auto-inference of replicate groups from sample IDs (strips `_repNN` suffix)
-- Subcommand architecture: `build`, `analyze`, `discover`, `dtu`
+- Subcommand architecture: `build`, `analyze`, `discover`, `query`
 - Variant-based genomic feature system (`exon_feature`, `segment_feature`)
 - Edge metadata and graph structure with segment-level edge deduplication
 - Gene-by-gene GFF/GTF processing with cross-file feature deduplication
@@ -32,10 +57,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Expression type tracking per sample in output column headers
 - `--min-expression` filter for excluding low-count transcripts during build
 - `--no-absorb` flag to disable ISM segment absorption
-- Position-aware ISM absorption: only 3' fragments (5' truncated) and internal fragments are absorbed; 5' fragments (5' intact, 97% CAGE support) are preserved as independent segments
-- ISM segment absorption: contiguous exon-chain subsets merged into parent segments (forward + reverse)
-- Mono-exon transcript filtering during build
-- Two-tier statistics: quick `--stats` from builder caches, full `atroplex analyze` via tree traversal
+- Two-tier statistics: quick build summary from builder caches, full `atroplex analyze` via tree traversal
 - Full analysis output: per-sample/per-source CSVs, exon/segment sharing TSVs
 - Conserved exon detail TSV (per-exon rows with per-sample transcripts and expression)
 - Splicing hub analysis: exons with >10 downstream branches, per-sample entropy, PSI, expression
@@ -43,9 +65,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Isoform diversity via Jaccard distance (analyze subcommand)
 - Read clustering by splice junction signature from BAM input
 - Transcript matching with coarse-to-fine spatial + graph queries
-- Match classification (EXACT, COMPATIBLE, NOVEL_JUNCTION, NOVEL_EXON, INTERGENIC, AMBIGUOUS)
+- Splice site indexing from exon caches for NIC/NNC classification
 - Novel segment creation during discovery phase
+- Query subcommand: classify input transcripts against the index with per-sample presence/expression; optional DTU via `--contrast`
+- Index serialization (.ggx format): AGRX magic + version, registries + zlib-compressed grove
 - Per-file memory usage logging during grove construction
+- Build time reporting in index summary
 - R visualization script for statistics (`scripts/visualize_stats.R`)
 - Expression injection script (`scripts/inject_expression.py`)
 - ENCODE test data with expression-injected GTFs

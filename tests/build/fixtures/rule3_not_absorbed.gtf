@@ -1,0 +1,11 @@
+##id: rule3_not_absorbed_test
+##description: Rule 3 negative - Terminal variant NOT absorbed (TES differs by >50bp = potential APA)
+chr1	TEST	gene	1000	5100	.	+	.	gene_id "G1"; gene_name "TestGene"; gene_biotype "protein_coding";
+chr1	TEST	transcript	1000	5000	.	+	.	gene_id "G1"; transcript_id "CANONICAL"; gene_name "TestGene"; gene_biotype "protein_coding";
+chr1	TEST	exon	1000	1200	.	+	.	gene_id "G1"; transcript_id "CANONICAL"; exon_number "1";
+chr1	TEST	exon	2000	2300	.	+	.	gene_id "G1"; transcript_id "CANONICAL"; exon_number "2";
+chr1	TEST	exon	3500	3800	.	+	.	gene_id "G1"; transcript_id "CANONICAL"; exon_number "3";
+chr1	TEST	transcript	1000	5100	.	+	.	gene_id "G1"; transcript_id "APA_VARIANT"; gene_name "TestGene"; gene_biotype "protein_coding";
+chr1	TEST	exon	1000	1200	.	+	.	gene_id "G1"; transcript_id "APA_VARIANT"; exon_number "1";
+chr1	TEST	exon	2000	2300	.	+	.	gene_id "G1"; transcript_id "APA_VARIANT"; exon_number "2";
+chr1	TEST	exon	3500	3900	.	+	.	gene_id "G1"; transcript_id "APA_VARIANT"; exon_number "3";

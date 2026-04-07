@@ -1,0 +1,12 @@
+##id: reverse_test
+##description: Reverse absorption - parent arrives AFTER ISM
+chr1	TEST	gene	1000	5000	.	+	.	gene_id "G1"; gene_name "TestGene"; gene_biotype "protein_coding";
+chr1	TEST	transcript	2000	5000	.	+	.	gene_id "G1"; transcript_id "ISM_FIRST"; gene_name "TestGene"; gene_biotype "protein_coding";
+chr1	TEST	exon	2000	2300	.	+	.	gene_id "G1"; transcript_id "ISM_FIRST"; exon_number "1";
+chr1	TEST	exon	3500	3800	.	+	.	gene_id "G1"; transcript_id "ISM_FIRST"; exon_number "2";
+chr1	TEST	exon	4500	5000	.	+	.	gene_id "G1"; transcript_id "ISM_FIRST"; exon_number "3";
+chr1	TEST	transcript	1000	5000	.	+	.	gene_id "G1"; transcript_id "PARENT_LATER"; gene_name "TestGene"; gene_biotype "protein_coding";
+chr1	TEST	exon	1000	1200	.	+	.	gene_id "G1"; transcript_id "PARENT_LATER"; exon_number "1";
+chr1	TEST	exon	2000	2300	.	+	.	gene_id "G1"; transcript_id "PARENT_LATER"; exon_number "2";
+chr1	TEST	exon	3500	3800	.	+	.	gene_id "G1"; transcript_id "PARENT_LATER"; exon_number "3";
+chr1	TEST	exon	4500	5000	.	+	.	gene_id "G1"; transcript_id "PARENT_LATER"; exon_number "4";

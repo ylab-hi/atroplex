@@ -76,14 +76,32 @@ index_stats builder::build_from_samples(grove_type& grove,
 
     logging::info("Populating grove from " + std::to_string(samples.size()) + " sample(s)");
 
+    // Sort samples: annotations first, then samples (preserving order within each group).
+    // Annotations establish the reference exon/segment structure that sample transcripts
+    // are absorbed against — processing them first ensures absorption rules have a
+    // curated parent to match against.
+    std::vector<const sample_info*> ordered;
+    ordered.reserve(samples.size());
+    for (const auto& s : samples) ordered.push_back(&s);
+    std::stable_sort(ordered.begin(), ordered.end(),
+        [](const sample_info* a, const sample_info* b) {
+            bool a_anno = (a->type == "annotation" || a->is_annotation());
+            bool b_anno = (b->type == "annotation" || b->is_annotation());
+            return a_anno > b_anno;  // annotations first
+        });
+
     // Chromosome-level caches for deduplication across files
     chromosome_exon_caches exon_caches;
     chromosome_segment_caches segment_caches;
     chromosome_gene_segment_indices gene_indices;
     size_t segment_count = 0;
 
-    // Process each sample sequentially
-    for (const auto& info : samples) {
+    // Process each sample sequentially (annotations first)
+    size_t total = ordered.size();
+    size_t current = 0;
+    for (const auto* info_ptr : ordered) {
+        ++current;
+        const auto& info = *info_ptr;
         const auto& filepath = info.source_file;
 
         if (!std::filesystem::exists(filepath)) {
@@ -97,7 +115,7 @@ index_stats builder::build_from_samples(grove_type& grove,
 
         // Dispatch to appropriate builder based on file type
         if (ftype == gio::filetype::GFF || ftype == gio::filetype::GTF) {
-            logging::info("Processing GFF/GTF file: " + filepath.string() +
+            logging::info("[" + std::to_string(current) + "/" + std::to_string(total) + "] Processing: " + filepath.filename().string() +
                          (info.id.empty() ? "" : " (id: " + info.id + ")"));
 
             // Register sample_info in the registry to get uint32_t ID

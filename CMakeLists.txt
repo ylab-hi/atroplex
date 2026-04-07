@@ -22,7 +22,7 @@ FetchContent_MakeAvailable(cxxopts)
 FetchContent_Declare(
         genogrove
         GIT_REPOSITORY https://github.com/genogrove/genogrove.git
-        GIT_TAG v0.19.0
+        GIT_TAG v0.20.0
 )
 FetchContent_MakeAvailable(genogrove)
 
@@ -44,4 +44,9 @@ target_link_libraries(atroplex
         ${HTSLIB_LIBRARIES}
         ZLIB::ZLIB
 )
+
+# Re-enable testing after dependencies (was OFF to suppress genogrove/cxxopts tests)
+set(BUILD_TESTING ON CACHE BOOL "" FORCE)
+enable_testing()
+add_subdirectory(tests)
 
