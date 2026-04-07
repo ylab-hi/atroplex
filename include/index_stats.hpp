@@ -99,6 +99,7 @@ struct index_stats {
         std::string gene_id;
         std::string exon_id;
         std::string coordinate;
+        std::string event_type;       // splicing event classification (cassette, alt_5prime, etc.)
         key_ptr exon_key = nullptr;   // key pointer for chain comparison (not for output)
         size_t branches = 0;          // total unique downstream exons
         size_t transcripts = 0;       // transcripts using this exon

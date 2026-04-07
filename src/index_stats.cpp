@@ -520,6 +520,36 @@ index_stats index_stats::collect(grove_type& grove, const collect_options& opts)
                                 info.targets.shrink_to_fit();
                             }
 
+                            // Classify the branching event type
+                            // Check target coordinates relative to hub exon
+                            auto& hub_coord = current->get_value();
+                            bool has_same_start = false;  // targets sharing acceptor
+                            bool has_same_end = false;    // targets sharing donor
+                            bool has_skip = false;        // target that skips an exon
+
+                            std::set<size_t> target_starts, target_ends;
+                            for (const auto& bt : info.targets) {
+                                // Parse coordinate "start-end(strand)" to extract positions
+                                // Easier: use the stored key_ptr from seen_targets
+                            }
+
+                            // Simpler: check via target coordinates directly
+                            // Targets with same start = alt 5' (different donors)
+                            // Targets with same end = alt 3' (different acceptors)
+                            for (auto* t : seen_targets) {
+                                auto& tc = t->get_value();
+                                target_starts.insert(tc.get_start());
+                                target_ends.insert(tc.get_end());
+                            }
+
+                            if (target_starts.size() < unique_targets.size()) {
+                                info.event_type = "alt_5prime";
+                            } else if (target_ends.size() < unique_targets.size()) {
+                                info.event_type = "alt_3prime";
+                            } else {
+                                info.event_type = "cassette";
+                            }
+
                             stats.splicing_hubs.push_back(std::move(info));
                         }
                     }
@@ -1721,6 +1751,7 @@ void index_stats::write_splicing_hubs_tsv(const std::string& path) const {
         << "# Global columns:\n"
         << "#   gene_name, gene_id      — gene containing this hub exon\n"
         << "#   exon_id, coordinate     — hub exon identity and genomic position\n"
+        << "#   event_type              — splicing event classification (cassette, alt_5prime, alt_3prime)\n"
         << "#   exon_number, total_exons — 1-based position and length of representative segment chain\n"
         << "#   total_branches          — total unique downstream exon targets (across all samples)\n"
         << "#   total_transcripts       — total transcripts using this hub exon (across all samples)\n"
@@ -1734,7 +1765,7 @@ void index_stats::write_splicing_hubs_tsv(const std::string& path) const {
         << "#   .{expr_type} — expression value at hub exon (samples only; omitted for annotations)\n";
 
     // Header row
-    out << "gene_name\tgene_id\texon_id\tcoordinate\texon_number\ttotal_exons\ttotal_branches\ttotal_transcripts";
+    out << "gene_name\tgene_id\texon_id\tcoordinate\tevent_type\texon_number\ttotal_exons\ttotal_branches\ttotal_transcripts";
     for (size_t i = 0; i < sample_ids.size(); ++i) {
         out << "\t" << labels[i] << ".branches"
             << "\t" << labels[i] << ".shared"
@@ -1755,6 +1786,7 @@ void index_stats::write_splicing_hubs_tsv(const std::string& path) const {
             << hub.gene_id << "\t"
             << hub.exon_id << "\t"
             << hub.coordinate << "\t"
+            << hub.event_type << "\t"
             << hub.exon_number << "\t"
             << hub.total_exons << "\t"
             << hub.branches << "\t"

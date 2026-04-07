@@ -30,7 +30,7 @@ void build_bam::build(grove_type& grove,
     size_t fuzzy_tolerance) {
 
     // Step 1: Cluster reads by splice junction signature
-    gio::bam_reader reader(filepath.string(), gio::bam_reader_options{}.primary_only(true));
+    gio::bam_reader reader(filepath.string(), gio::bam_reader_options::primary_only());
 
     read_clusterer::config cfg;
     read_clusterer clusterer(cfg);
@@ -141,7 +141,7 @@ std::tuple<std::string, std::string, std::string> build_bam::resolve_gene(
     gdt::genomic_coordinate query_coord(cluster.strand, cluster.start, cluster.end);
 
     // Spatial query: find overlapping segments in the grove
-    auto hits = grove.intersect(seqid, query_coord);
+    auto result = grove.intersect(query_coord, seqid);
 
     // Find the best overlapping gene (by overlap length)
     std::string best_gene_id;
@@ -149,7 +149,7 @@ std::tuple<std::string, std::string, std::string> build_bam::resolve_gene(
     std::string best_gene_biotype;
     size_t best_overlap = 0;
 
-    for (auto* hit : hits) {
+    for (auto* hit : result.get_keys()) {
         auto& feature = hit->get_data();
         if (!is_segment(feature)) continue;
 
