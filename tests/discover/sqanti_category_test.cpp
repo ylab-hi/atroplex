@@ -377,25 +377,25 @@ TEST_F(DiscoverIntegrationTest, Clustering_ConsensusJunctions) {
     read_clusterer clusterer(cfg);
     auto clusters = clusterer.cluster_reads(reader);
 
-    // Find the FSM cluster: 3 junctions, 3 reads, first donor near 10200
-    // (NNC cluster also has 3 junctions and 3 reads but first donor is 10200
-    //  and second donor is 11500 — so we verify all 3 junction donors)
+    // Find the FSM cluster: 3 junctions, second donor near 11300.
+    // NNC cluster also has 3 junctions but second donor is 11500.
+    // fuzzy_fsm reads (2bp wobble) merge with exact FSM reads, so
+    // the FSM cluster may have 3-5 reads — don't filter by count.
     for (const auto& cluster : clusters) {
-        if (cluster.consensus_junctions.size() != 3 || cluster.read_count() != 3)
-            continue;
+        if (cluster.consensus_junctions.size() != 3) continue;
         auto& j = cluster.consensus_junctions;
-        // Check second junction donor to distinguish FSM (11300) from NNC (11500)
         if (std::abs(static_cast<double>(j[1].donor) - 11300.0) > 10.0)
             continue;
+        EXPECT_GE(cluster.read_count(), 3);
         EXPECT_NEAR(static_cast<double>(j[0].donor),    10200.0, 5.0);
         EXPECT_NEAR(static_cast<double>(j[0].acceptor), 11000.0, 5.0);
         EXPECT_NEAR(static_cast<double>(j[1].donor),    11300.0, 5.0);
         EXPECT_NEAR(static_cast<double>(j[1].acceptor), 12500.0, 5.0);
         EXPECT_NEAR(static_cast<double>(j[2].donor),    12800.0, 5.0);
         EXPECT_NEAR(static_cast<double>(j[2].acceptor), 14000.0, 5.0);
-        return;  // Found and verified
+        return;
     }
-    ADD_FAILURE() << "Expected a 3-junction, 3-read FSM cluster";
+    ADD_FAILURE() << "Expected a 3-junction cluster with second donor near 11300 (FSM)";
 }
 
 // ── Full pipeline: cluster -> match -> classify ────────────────────
