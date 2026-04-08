@@ -128,8 +128,8 @@ protected:
         }
 
         for (uint32_t i = 0; i < snap.sample_count; ++i) {
-            auto* info = sample_registry::instance().get(i);
-            if (info) snap.sample_ids.push_back(info->id);
+            auto& info = sample_registry::instance().get(i);
+            snap.sample_ids.push_back(info.id);
         }
 
         return snap;
@@ -174,7 +174,7 @@ protected:
                         // Capture expression for sample_id=1
                         float expr = seg.get_expression(1);
                         if (expr >= 0) {
-                            auto coord = format_coordinate(seqid, key->get_interval());
+                            auto coord = format_coordinate(seqid, key->get_value());
                             snap.segment_expressions[coord] = expr;
                         }
                     }
@@ -304,7 +304,7 @@ TEST_F(SerializationTest, SpatialQueryAfterRoundtrip) {
     build_grove();
 
     // Query that should hit GENE_A segments (10000-14500 on chr22)
-    gdt::genomic_coordinate query_coord("chr22", 10000, 14500, '+');
+    gdt::genomic_coordinate query_coord('+', 10000, 14500);
     auto before_results = grove_->intersect(query_coord, "chr22");
     size_t before_hits = before_results.get_keys().size();
     ASSERT_GT(before_hits, 0);
@@ -333,7 +333,7 @@ TEST_F(SerializationTest, GraphTraversalAfterRoundtrip) {
     // Collect exon chains via graph traversal before serialization
     std::map<size_t, std::vector<std::string>> before_chains;  // segment_index -> exon coords
 
-    gdt::genomic_coordinate query_coord("chr22", 10000, 14500, '+');
+    gdt::genomic_coordinate query_coord('+', 10000, 14500);
     auto results = grove_->intersect(query_coord, "chr22");
     for (auto* key : results.get_keys()) {
         auto& feature = key->get_data();
@@ -344,7 +344,7 @@ TEST_F(SerializationTest, GraphTraversalAfterRoundtrip) {
         std::vector<std::string> chain;
         auto first_exons = grove_->get_neighbors_if(key,
             [&seg](const edge_metadata& e) {
-                return e.type == edge_type::SEGMENT_TO_EXON &&
+                return e.type == edge_metadata::edge_type::SEGMENT_TO_EXON &&
                        e.id == std::to_string(seg.segment_index);
             });
 
@@ -354,7 +354,7 @@ TEST_F(SerializationTest, GraphTraversalAfterRoundtrip) {
                 chain.push_back(format_coordinate("chr22", current->get_interval()));
                 auto next = grove_->get_neighbors_if(current,
                     [&seg](const edge_metadata& e) {
-                        return e.type == edge_type::EXON_TO_EXON &&
+                        return e.type == edge_metadata::edge_type::EXON_TO_EXON &&
                                e.id == std::to_string(seg.segment_index);
                     });
                 current = next.empty() ? nullptr : next[0];
@@ -385,7 +385,7 @@ TEST_F(SerializationTest, GraphTraversalAfterRoundtrip) {
         std::vector<std::string> chain;
         auto first_exons = loaded->get_neighbors_if(key,
             [&seg](const edge_metadata& e) {
-                return e.type == edge_type::SEGMENT_TO_EXON &&
+                return e.type == edge_metadata::edge_type::SEGMENT_TO_EXON &&
                        e.id == std::to_string(seg.segment_index);
             });
 
@@ -395,7 +395,7 @@ TEST_F(SerializationTest, GraphTraversalAfterRoundtrip) {
                 chain.push_back(format_coordinate("chr22", current->get_interval()));
                 auto next = loaded->get_neighbors_if(current,
                     [&seg](const edge_metadata& e) {
-                        return e.type == edge_type::EXON_TO_EXON &&
+                        return e.type == edge_metadata::edge_type::EXON_TO_EXON &&
                                e.id == std::to_string(seg.segment_index);
                     });
                 current = next.empty() ? nullptr : next[0];
@@ -422,7 +422,7 @@ TEST_F(SerializationTest, SampleMembershipRoundtrip) {
     // Capture per-segment sample membership
     std::map<size_t, std::vector<uint32_t>> before_samples;  // segment_index -> sample IDs
 
-    gdt::genomic_coordinate query_coord("chr22", 10000, 14500, '+');
+    gdt::genomic_coordinate query_coord('+', 10000, 14500);
     auto results = grove_->intersect(query_coord, "chr22");
     for (auto* key : results.get_keys()) {
         auto& feature = key->get_data();
