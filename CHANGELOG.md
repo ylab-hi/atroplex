@@ -15,6 +15,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fixed silent error swallowing (#18): replaced bare `catch (...) {}` with `catch (const std::exception& e)` + `logging::warning` in GFF expression parsing and BAM header parsing — malformed values now produce visible diagnostics instead of silent pass-through
 
 ### Added
+- `atroplex export` subcommand (#19): reconstruct per-sample GTF files from a `.ggx` index with filters (`--sample`, `--gene`, `--region`, `--min-samples`, `--conserved-only`, `--biotype`, `--source`)
+- Reusable `gtf_writer` utility for GTF line formatting (gene/transcript/exon)
+- CI now triggers only once per PR (push to main + pull_request, no duplicate runs)
 - Serialization roundtrip test suite (#17): 8 tests verifying .ggx index write/read roundtrip preserves registries, spatial queries, graph edges, expression values, and sample membership
 - Discover test suite: 11 unit tests constructing `read_cluster` objects directly for each SQANTI category (FSM, ISM prefix/suffix, NIC, NNC, GENIC_INTRON, GENIC_GENOMIC, INTERGENIC), plus 6 integration tests exercising the full SAM → cluster → classify pipeline
 - Query classification test suite: 8 tests verifying per-sample presence tracking (shared, annotation-only, sample-only, novel), expression propagation, and gene assignment
