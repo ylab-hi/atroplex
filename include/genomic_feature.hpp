@@ -650,7 +650,6 @@ struct segment_feature {
 
     // Read support metadata (populated during discovery phase)
     size_t read_coverage;            // Number of reads supporting this segment
-    std::vector<std::string> supporting_reads;  // Read IDs that support this segment
 
     // Absorption tracking (ISM segments absorbed into longer parents)
     bool absorbed = false;           // Tombstone: this segment was absorbed into a longer parent
@@ -701,10 +700,8 @@ struct segment_feature {
 
     // --- Read support methods ---
 
-    // Add read support
-    void add_read_support(const std::string& read_id) {
-        supporting_reads.push_back(read_id);
-        read_coverage++;
+    void add_read_support(size_t count = 1) {
+        read_coverage += count;
     }
 
     // --- Pan-transcriptome statistics ---
