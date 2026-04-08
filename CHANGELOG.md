@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fixed missing `absorb` parameter in final `process_gene()` call per GTF file (last gene always skipped absorption)
 
 ### Added
+- Serialization roundtrip test suite (#17): 8 tests verifying .ggx index write/read roundtrip preserves registries, spatial queries, graph edges, expression values, and sample membership
 - Discover test suite: 11 unit tests constructing `read_cluster` objects directly for each SQANTI category (FSM, ISM prefix/suffix, NIC, NNC, GENIC_INTRON, GENIC_GENOMIC, INTERGENIC), plus 6 integration tests exercising the full SAM → cluster → classify pipeline
 - Query classification test suite: 8 tests verifying per-sample presence tracking (shared, annotation-only, sample-only, novel), expression propagation, and gene assignment
 - Test fixtures: minimal chr22 reference GTF (2 genes, 3 transcripts), sample GTF with expression, query GTF, and 23-read SAM file covering all classification categories

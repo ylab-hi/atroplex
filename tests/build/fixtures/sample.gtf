@@ -1,0 +1,11 @@
+##id: TEST_SAMPLE
+##type: sample
+chr22	TALON	gene	10000	14500	.	+	.	gene_id "GENE_A"; gene_name "GENE_A"; gene_biotype "protein_coding";
+chr22	TALON	transcript	10000	14500	.	+	.	gene_id "GENE_A"; transcript_id "TX_S1"; transcript_type "protein_coding"; counts "150";
+chr22	TALON	exon	10000	10200	.	+	.	gene_id "GENE_A"; transcript_id "TX_S1"; exon_number "1";
+chr22	TALON	exon	11000	11300	.	+	.	gene_id "GENE_A"; transcript_id "TX_S1"; exon_number "2";
+chr22	TALON	exon	12500	12800	.	+	.	gene_id "GENE_A"; transcript_id "TX_S1"; exon_number "3";
+chr22	TALON	exon	14000	14500	.	+	.	gene_id "GENE_A"; transcript_id "TX_S1"; exon_number "4";
+chr22	TALON	transcript	10000	12800	.	+	.	gene_id "GENE_A"; transcript_id "TX_S2"; transcript_type "protein_coding"; counts "75";
+chr22	TALON	exon	10000	10200	.	+	.	gene_id "GENE_A"; transcript_id "TX_S2"; exon_number "1";
+chr22	TALON	exon	12500	12800	.	+	.	gene_id "GENE_A"; transcript_id "TX_S2"; exon_number "2";
