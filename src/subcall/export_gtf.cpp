@@ -182,18 +182,17 @@ void export_gtf::execute(const cxxopts::ParseResult& args) {
     // Determine which samples to export
     size_t total_samples = 0;
     std::vector<uint32_t> export_sample_ids;
-    std::map<uint32_t, const sample_info*> sample_map;
+    auto& registry = sample_registry::instance();
 
-    for (uint32_t i = 0; i < sample_registry::instance().size(); ++i) {
-        auto* info = sample_registry::instance().get(i);
-        if (!info || info->type == "replicate") continue;
+    for (uint32_t i = 0; i < registry.size(); ++i) {
+        const auto& info = registry.get(static_cast<uint32_t>(i));
+        if (info.type == "replicate") continue;
         total_samples++;
 
-        if (!filters_.sample_ids.empty() && !filters_.sample_ids.count(info->id))
+        if (!filters_.sample_ids.empty() && !filters_.sample_ids.count(info.id))
             continue;
 
         export_sample_ids.push_back(i);
-        sample_map[i] = info;
     }
 
     if (export_sample_ids.empty()) {
@@ -321,8 +320,8 @@ void export_gtf::execute(const cxxopts::ParseResult& args) {
                     float expr_val = seg.get_expression(sid);
                     std::string expr_label;
                     if (expr_val >= 0) {
-                        auto* sinfo = sample_registry::instance().get(sid);
-                        if (sinfo) expr_label = expr_type_label(sinfo->expr_type);
+                        const auto& sinfo = registry.get(sid);
+                        expr_label = expr_type_label(sinfo.expr_type);
                     }
 
                     // One transcript_entry per transcript_id on this segment
@@ -364,12 +363,12 @@ void export_gtf::execute(const cxxopts::ParseResult& args) {
     for (uint32_t sid : export_sample_ids) {
         auto it = per_sample_data.find(sid);
         if (it == per_sample_data.end() || it->second.empty()) {
-            logging::info("  " + sample_map[sid]->id + ": no features pass filters, skipping");
+            logging::info("  " + registry.get(sid).id + ": no features pass filters, skipping");
             continue;
         }
 
         auto& gene_map = it->second;
-        auto* sinfo = sample_map[sid];
+        const auto& sinfo = registry.get(sid);
 
         // Sort genes by (seqid, start)
         std::map<gene_sort_key, const gene_entry*> sorted_genes;
@@ -377,13 +376,13 @@ void export_gtf::execute(const cxxopts::ParseResult& args) {
             sorted_genes[{gene.seqid, gene.start}] = &gene;
         }
 
-        fs::path output_path = out_dir / (sinfo->id + ".gtf");
+        fs::path output_path = out_dir / (sinfo.id + ".gtf");
         std::ofstream ofs(output_path.string());
         if (!ofs.is_open()) {
             throw std::runtime_error("Cannot create output file: " + output_path.string());
         }
 
-        gtf_writer::write_header(ofs, *sinfo);
+        gtf_writer::write_header(ofs, sinfo);
 
         size_t sample_tx_count = 0;
 
@@ -454,7 +453,7 @@ void export_gtf::execute(const cxxopts::ParseResult& args) {
 
         files_written++;
         total_transcripts_written += sample_tx_count;
-        logging::info("  " + sinfo->id + ": " + std::to_string(gene_map.size()) +
+        logging::info("  " + sinfo.id + ": " + std::to_string(gene_map.size()) +
                       " genes, " + std::to_string(sample_tx_count) + " transcripts -> " +
                       output_path.string());
     }
