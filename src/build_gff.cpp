@@ -179,7 +179,10 @@ void build_gff::process_transcript(
                                 }
                             }
                         }
-                    } catch (...) {}
+                    } catch (const std::exception& e) {
+                        logging::warning("Invalid expression value '" + it->second +
+                            "' for transcript " + transcript_id + ": " + e.what());
+                    }
                     break;
                 }
             }

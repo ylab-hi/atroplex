@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fixed potential `size_t` underflow in splice site tolerance window when position is near zero
 - Fixed infinite loop in `sample_bitset` iterator: `advance()` did not mark iterator as exhausted when all bits were consumed, causing range-based for loops over `sample_idx` to hang
 - Fixed missing `absorb` parameter in final `process_gene()` call per GTF file (last gene always skipped absorption)
+- Fixed silent error swallowing (#18): replaced bare `catch (...) {}` with `catch (const std::exception& e)` + `logging::warning` in GFF expression parsing and BAM header parsing — malformed values now produce visible diagnostics instead of silent pass-through
 
 ### Added
 - Serialization roundtrip test suite (#17): 8 tests verifying .ggx index write/read roundtrip preserves registries, spatial queries, graph edges, expression values, and sample membership
