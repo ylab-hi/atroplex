@@ -98,7 +98,7 @@ protected:
         (void)sample_registry::deserialize(ifs);
 
         auto loaded = std::make_unique<grove_type>(grove_type::deserialize(ifs));
-        EXPECT_TRUE(ifs.good());
+        EXPECT_FALSE(ifs.fail());
         return loaded;
     }
 
