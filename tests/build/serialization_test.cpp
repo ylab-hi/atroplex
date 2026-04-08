@@ -26,6 +26,10 @@ protected:
         gene_registry::reset();
         source_registry::reset();
         sample_registry::reset();
+        // Unique temp path per test — ctest --parallel runs tests concurrently
+        auto* info = ::testing::UnitTest::GetInstance()->current_test_info();
+        temp_path_ = (fs::temp_directory_path() /
+            ("test_roundtrip_" + std::string(info->name()) + ".ggx")).string();
     }
 
     void TearDown() override {
@@ -191,7 +195,7 @@ protected:
     chromosome_segment_caches segment_caches_;
     chromosome_gene_segment_indices gene_indices_;
     size_t segment_count_ = 0;
-    std::string temp_path_ = (fs::temp_directory_path() / "test_roundtrip.ggx").string();
+    std::string temp_path_;
 };
 
 // ─── Registry roundtrip ────────────────────────────────────────────
