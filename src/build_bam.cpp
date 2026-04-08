@@ -296,6 +296,8 @@ sample_info build_bam::parse_header(const std::filesystem::path& filepath) {
         }
     } catch (const std::exception& e) {
         logging::warning("BAM header parse failed for " + filepath.string() + ": " + e.what());
+    } catch (...) {
+        logging::warning("BAM header parse failed for " + filepath.string() + ": unknown exception");
     }
 
     // BAM expression is always raw counts
