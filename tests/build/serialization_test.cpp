@@ -98,8 +98,7 @@ protected:
         (void)sample_registry::deserialize(ifs);
 
         auto loaded = std::make_unique<grove_type>(grove_type::deserialize(ifs));
-        // No stream check: inflate_streambuf sets failbit at EOF.
-        // grove::deserialize() throws on actual read errors.
+        EXPECT_FALSE(ifs.fail()) << "Stream should be clean after deserialization";
         return loaded;
     }
 
