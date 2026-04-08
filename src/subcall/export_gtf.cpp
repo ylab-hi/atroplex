@@ -115,7 +115,7 @@ void export_gtf::validate(const cxxopts::ParseResult& args) {
     }
 
     if (args.count("region")) {
-        parse_region(args["region"].as<std::string>());  // validates format
+        [[maybe_unused]] auto _ = parse_region(args["region"].as<std::string>());
     }
 }
 
