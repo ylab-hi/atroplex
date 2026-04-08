@@ -21,6 +21,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Updated cxxopts dependency to v3.3.1
 - Adapted to genogrove v0.17.0+ API: `gff_entry`/`sam_entry` use direct `start`/`end` fields; `gff_entry.attributes` uses `std::less<>` transparent comparator
 
+### C++20 Modernization
+- Replaced GCC `__builtin_popcountll`/`__builtin_ctzll`/`__builtin_ctz`/`__builtin_popcount` with portable `std::popcount` and `std::countr_zero` from `<bit>`
+- Used `std::string_view` + `std::from_chars` in `chromosome_compare` to eliminate heap allocations in sort comparator
+- Used `std::string_view` in `build_gff::parse_header` trim lambda
+- Added `[[nodiscard]]` to `segment_builder`, `transcript_matcher`, and `read_clusterer` return-value functions
+- Fixed `read_clusterer::stats::max_cluster_size` type from `double` to `size_t`
+
 ### Changed
 - **Read clustering**: replaced binned clustering with sort+sweep algorithm — eliminates boundary artifacts where reads 1bp apart could land in different bins and never be compared; sorts by `(strand, junction_count, first_donor)` then sweeps within `junction_tolerance`
 - Removed `--junction-bin` CLI option (binning is no longer used internally)

@@ -176,7 +176,7 @@ public:
      * @param reader Open bam_reader
      * @return Vector of clusters sorted by genomic position
      */
-    std::vector<read_cluster> cluster_reads(gio::bam_reader& reader);
+    [[nodiscard]] std::vector<read_cluster> cluster_reads(gio::bam_reader& reader);
 
     /**
      * Cluster statistics
@@ -190,7 +190,7 @@ public:
         size_t single_read_clusters = 0;
         size_t multi_read_clusters = 0;
         double mean_cluster_size = 0.0;
-        double max_cluster_size = 0;
+        size_t max_cluster_size = 0;
     };
 
     const stats& get_stats() const { return stats_; }

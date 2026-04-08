@@ -369,11 +369,11 @@ sample_info build_gff::parse_header(const std::filesystem::path& filepath) {
         return s;
     };
 
-    auto trim = [](const std::string& s) -> std::string {
+    auto trim = [](std::string_view s) -> std::string {
         size_t start = s.find_first_not_of(" \t\r\n");
-        if (start == std::string::npos) return "";
+        if (start == std::string_view::npos) return "";
         size_t end = s.find_last_not_of(" \t\r\n");
-        return s.substr(start, end - start + 1);
+        return std::string(s.substr(start, end - start + 1));
     };
 
     std::string line;

@@ -10,8 +10,10 @@
 
 // standard
 #include <algorithm>
+#include <charconv>
 #include <filesystem>
 #include <numeric>
+#include <string_view>
 #include <unordered_map>
 #include <unordered_set>
 
@@ -23,19 +25,18 @@
 
 // Natural chromosome sort comparator
 static bool chromosome_compare(const std::string& a, const std::string& b) {
-    auto get_chr_value = [](const std::string& s) -> std::pair<int, std::string> {
-        if (s.size() > 3 && s.substr(0, 3) == "chr") {
-            std::string suffix = s.substr(3);
-            try {
-                size_t pos;
-                int num = std::stoi(suffix, &pos);
-                if (pos == suffix.size()) {
-                    return {num, ""};  // Pure numeric (chr1, chr22)
-                }
-            } catch (...) {}
+    auto get_chr_value = [](const std::string& s) -> std::pair<int, std::string_view> {
+        std::string_view sv(s);
+        if (sv.size() > 3 && sv.substr(0, 3) == "chr") {
+            auto suffix = sv.substr(3);
+            int num = 0;
+            auto [ptr, ec] = std::from_chars(suffix.data(), suffix.data() + suffix.size(), num);
+            if (ec == std::errc{} && ptr == suffix.data() + suffix.size()) {
+                return {num, {}};  // Pure numeric (chr1, chr22)
+            }
             return {1000, suffix};  // Non-numeric (chrX, chrY, chrM)
         }
-        return {2000, s};  // Non-chr prefixed
+        return {2000, sv};  // Non-chr prefixed
     };
 
     auto [num_a, str_a] = get_chr_value(a);

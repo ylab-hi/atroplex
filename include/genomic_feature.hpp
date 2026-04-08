@@ -13,6 +13,7 @@
 
 // standard
 #include <algorithm>
+#include <bit>
 #include <cstdint>
 #include <memory>
 #include <stdexcept>
@@ -76,7 +77,7 @@ public:
 
     size_t count() const {
         size_t n = 0;
-        for (uint64_t w : words_) n += static_cast<size_t>(__builtin_popcountll(w));
+        for (uint64_t w : words_) n += static_cast<size_t>(std::popcount(w));
         return n;
     }
 
@@ -101,7 +102,7 @@ public:
         for (size_t wi = 0; wi < words_.size(); ++wi) {
             uint64_t w = words_[wi];
             while (w) {
-                uint32_t bit = static_cast<uint32_t>(__builtin_ctzll(w));
+                uint32_t bit = static_cast<uint32_t>(std::countr_zero(w));
                 fn(static_cast<uint32_t>(wi * 64 + bit));
                 w &= w - 1;  // clear lowest set bit
             }
@@ -124,7 +125,7 @@ public:
                 }
                 remaining_ = bs_->words_[wi_];
             }
-            uint32_t bit = static_cast<uint32_t>(__builtin_ctzll(remaining_));
+            uint32_t bit = static_cast<uint32_t>(std::countr_zero(remaining_));
             current_ = static_cast<uint32_t>(wi_ * 64 + bit);
             remaining_ &= remaining_ - 1;
         }
@@ -464,7 +465,7 @@ public:
     void for_each(uint16_t bitfield, Fn&& fn) const {
         uint16_t bits = bitfield;
         while (bits) {
-            uint8_t bit = static_cast<uint8_t>(__builtin_ctz(bits));
+            uint8_t bit = static_cast<uint8_t>(std::countr_zero(bits));
             fn(bit_to_str_[bit]);
             bits &= bits - 1;  // clear lowest set bit
         }
@@ -472,7 +473,7 @@ public:
 
     /// Count number of set bits
     static size_t count(uint16_t bitfield) {
-        return static_cast<size_t>(__builtin_popcount(bitfield));
+        return static_cast<size_t>(std::popcount(bitfield));
     }
 };
 
