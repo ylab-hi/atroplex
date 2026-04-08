@@ -294,8 +294,8 @@ sample_info build_bam::parse_header(const std::filesystem::path& filepath) {
                 if (!vn.empty() && info.pipeline_version.empty()) info.pipeline_version = vn;
             }
         }
-    } catch (...) {
-        // If header parsing fails, we still have filename-based ID
+    } catch (const std::exception& e) {
+        logging::warning("BAM header parse failed for " + filepath.string() + ": " + e.what());
     }
 
     // BAM expression is always raw counts
