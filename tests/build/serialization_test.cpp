@@ -351,7 +351,7 @@ TEST_F(SerializationTest, GraphTraversalAfterRoundtrip) {
         if (!first_exons.empty()) {
             auto* current = first_exons[0];
             while (current) {
-                chain.push_back(format_coordinate("chr22", current->get_interval()));
+                chain.push_back(format_coordinate("chr22", current->get_value()));
                 auto next = grove_->get_neighbors_if(current,
                     [&seg](const edge_metadata& e) {
                         return e.type == edge_metadata::edge_type::EXON_TO_EXON &&
@@ -392,7 +392,7 @@ TEST_F(SerializationTest, GraphTraversalAfterRoundtrip) {
         if (!first_exons.empty()) {
             auto* current = first_exons[0];
             while (current) {
-                chain.push_back(format_coordinate("chr22", current->get_interval()));
+                chain.push_back(format_coordinate("chr22", current->get_value()));
                 auto next = loaded->get_neighbors_if(current,
                     [&seg](const edge_metadata& e) {
                         return e.type == edge_metadata::edge_type::EXON_TO_EXON &&
