@@ -47,7 +47,7 @@ protected:
         sample_info anno_info("TEST_ANNOTATION");
         anno_info.type = "annotation";
         anno_info.annotation_source = "TEST";
-        sample_registry::instance().register_data(anno_info);
+        [[maybe_unused]] auto anno_id = sample_registry::instance().register_data(anno_info);
 
         build_gff::build(*grove_, anno_path, 0, exon_caches_, segment_caches_,
                          gene_indices_, segment_count_, 0, -1.0f, false);
@@ -55,7 +55,7 @@ protected:
         // Register sample (with expression)
         sample_info samp_info("TEST_SAMPLE");
         samp_info.type = "sample";
-        sample_registry::instance().register_data(samp_info);
+        [[maybe_unused]] auto samp_id = sample_registry::instance().register_data(samp_info);
 
         build_gff::build(*grove_, sample_path, 1, exon_caches_, segment_caches_,
                          gene_indices_, segment_count_, 0, -1.0f, false);
@@ -345,7 +345,7 @@ TEST_F(SerializationTest, GraphTraversalAfterRoundtrip) {
         auto first_exons = grove_->get_neighbors_if(key,
             [&seg](const edge_metadata& e) {
                 return e.type == edge_metadata::edge_type::SEGMENT_TO_EXON &&
-                       e.id == std::to_string(seg.segment_index);
+                       e.id == seg.segment_index;
             });
 
         if (!first_exons.empty()) {
@@ -355,7 +355,7 @@ TEST_F(SerializationTest, GraphTraversalAfterRoundtrip) {
                 auto next = grove_->get_neighbors_if(current,
                     [&seg](const edge_metadata& e) {
                         return e.type == edge_metadata::edge_type::EXON_TO_EXON &&
-                               e.id == std::to_string(seg.segment_index);
+                               e.id == seg.segment_index;
                     });
                 current = next.empty() ? nullptr : next[0];
             }
@@ -386,7 +386,7 @@ TEST_F(SerializationTest, GraphTraversalAfterRoundtrip) {
         auto first_exons = loaded->get_neighbors_if(key,
             [&seg](const edge_metadata& e) {
                 return e.type == edge_metadata::edge_type::SEGMENT_TO_EXON &&
-                       e.id == std::to_string(seg.segment_index);
+                       e.id == seg.segment_index;
             });
 
         if (!first_exons.empty()) {
@@ -396,7 +396,7 @@ TEST_F(SerializationTest, GraphTraversalAfterRoundtrip) {
                 auto next = loaded->get_neighbors_if(current,
                     [&seg](const edge_metadata& e) {
                         return e.type == edge_metadata::edge_type::EXON_TO_EXON &&
-                               e.id == std::to_string(seg.segment_index);
+                               e.id == seg.segment_index;
                     });
                 current = next.empty() ? nullptr : next[0];
             }
