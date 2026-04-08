@@ -478,7 +478,7 @@ TEST_F(SerializationTest, SampleMembershipRoundtrip) {
 
 // ─── Invalid file handling ─────────────────────────────────────────
 
-TEST_F(SerializationTest, InvalidMagicThrows) {
+TEST_F(SerializationTest, InvalidMagicDetected) {
     // Write garbage to temp file
     {
         std::ofstream ofs(temp_path_, std::ios::binary);
