@@ -134,13 +134,15 @@ void analyze::execute(const cxxopts::ParseResult& args) {
         stats.write_splicing_hubs_tsv(hubs_path);
     }
 
-    // Splicing event catalog (requires gene_indices from build)
-    if (!gene_indices_.empty()) {
+    // Splicing event catalog
+    {
         auto events_dir = analysis_dir / "splicing_events";
         std::filesystem::create_directories(events_dir);
 
         logging::info("Detecting alternative splicing events...");
-        auto events = splicing_catalog::collect(gene_indices_, *grove);
+        auto events = gene_indices_.empty()
+            ? splicing_catalog::collect_from_grove(*grove)
+            : splicing_catalog::collect(gene_indices_, *grove);
         logging::info("Found " + std::to_string(events.size()) + " splicing events");
 
         std::string events_path = (events_dir / (basename + ".splicing_events.tsv")).string();

@@ -78,7 +78,7 @@ protected:
                           int min_overlap = 50) {
         transcript_matcher::config cfg;
         cfg.min_overlap_bp = min_overlap;
-        transcript_matcher matcher(*grove, cfg, exon_caches);
+        transcript_matcher matcher(*grove, cfg);
         return matcher.match(cluster);
     }
 
@@ -238,7 +238,7 @@ TEST_F(DiscoverCategoryTest, FSM_GeneB) {
 TEST_F(DiscoverCategoryTest, MatcherStats_TrackAllCategories) {
     transcript_matcher::config cfg;
     cfg.min_overlap_bp = 1;
-    transcript_matcher matcher(*grove, cfg, exon_caches);
+    transcript_matcher matcher(*grove, cfg);
 
     // FSM
     [[maybe_unused]] auto fsm_result = matcher.match(make_cluster("fsm", "chr22", '+', 10000, 14500,
@@ -261,7 +261,7 @@ TEST_F(DiscoverCategoryTest, MatcherStats_TrackAllCategories) {
 TEST_F(DiscoverCategoryTest, UpdateGrove_ReadCoverageOnMatchedSegment) {
     transcript_matcher::config cfg;
     cfg.min_overlap_bp = 1;
-    transcript_matcher matcher(*grove, cfg, exon_caches);
+    transcript_matcher matcher(*grove, cfg);
 
     // Create cluster matching TX_A1 (FSM) with 5 reads
     auto cluster = make_cluster("fsm_cov", "chr22", '+', 10000, 14500,
@@ -299,7 +299,7 @@ TEST_F(DiscoverCategoryTest, UpdateGrove_ReadCoverageOnMatchedSegment) {
 TEST_F(DiscoverCategoryTest, UpdateGrove_ReadCoverageAccumulates) {
     transcript_matcher::config cfg;
     cfg.min_overlap_bp = 1;
-    transcript_matcher matcher(*grove, cfg, exon_caches);
+    transcript_matcher matcher(*grove, cfg);
 
     // First cluster: 3 reads matching TX_A1
     auto cluster1 = make_cluster("batch1", "chr22", '+', 10000, 14500,
@@ -489,7 +489,7 @@ TEST_F(DiscoverIntegrationTest, FullPipeline_AllCategories) {
 
     transcript_matcher::config match_cfg;
     match_cfg.min_overlap_bp = 1;
-    transcript_matcher matcher(*grove, match_cfg, exon_caches);
+    transcript_matcher matcher(*grove, match_cfg);
     auto results = matcher.match_batch(clusters);
 
     ASSERT_EQ(results.size(), clusters.size());
@@ -528,7 +528,7 @@ TEST_F(DiscoverIntegrationTest, FullPipeline_NovelJunctionsDetected) {
 
     transcript_matcher::config match_cfg;
     match_cfg.min_overlap_bp = 1;
-    transcript_matcher matcher(*grove, match_cfg, exon_caches);
+    transcript_matcher matcher(*grove, match_cfg);
     auto results = matcher.match_batch(clusters);
 
     // NNC cluster should report novel donors (11500 is not near any known donor)

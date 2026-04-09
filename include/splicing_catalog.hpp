@@ -73,6 +73,13 @@ public:
     );
 
     /**
+     * Build the catalog by walking the grove directly (no builder caches needed).
+     * Reconstructs per-gene segment chains from the grove's B+ tree and graph edges.
+     * Use this when loading from a .ggx file where builder caches are unavailable.
+     */
+    static std::vector<splicing_event> collect_from_grove(grove_type& grove);
+
+    /**
      * Write the splicing event catalog to TSV.
      * Columns: gene_id, gene_name, event_type, chromosome, upstream_exon,
      *          downstream_exon, affected_exon(s), per-sample PSI columns.
