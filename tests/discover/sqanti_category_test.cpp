@@ -256,6 +256,85 @@ TEST_F(DiscoverCategoryTest, MatcherStats_TrackAllCategories) {
     EXPECT_EQ(stats.intergenic_matches, 1);
 }
 
+// ── Read coverage propagation ────────────────────────────────────────
+
+TEST_F(DiscoverCategoryTest, UpdateGrove_ReadCoverageOnMatchedSegment) {
+    transcript_matcher::config cfg;
+    cfg.min_overlap_bp = 1;
+    transcript_matcher matcher(*grove, cfg, exon_caches);
+
+    // Create cluster matching TX_A1 (FSM) with 5 reads
+    auto cluster = make_cluster("fsm_cov", "chr22", '+', 10000, 14500,
+        {{10200, 11000}, {11300, 12500}, {12800, 14000}});
+
+    // Add 5 mock reads as cluster members
+    std::vector<processed_read> reads(5);
+    for (int i = 0; i < 5; ++i) {
+        reads[i].read_id = "read_" + std::to_string(i);
+        reads[i].seqid = "chr22";
+        reads[i].strand = '+';
+        cluster.members.push_back(&reads[i]);
+    }
+    ASSERT_EQ(cluster.read_count(), 5);
+
+    auto result = matcher.match(cluster);
+    ASSERT_TRUE(result.has_match());
+
+    // Update grove with read support
+    matcher.update_grove(cluster, result, false);
+
+    // Verify read_coverage was propagated to matched segment
+    bool found = false;
+    for (key_ptr seg_key : result.matched_segments) {
+        if (is_segment(seg_key->get_data())) {
+            auto& seg = get_segment(seg_key->get_data());
+            EXPECT_EQ(seg.read_coverage, 5)
+                << "Matched segment should have read_coverage = cluster size";
+            found = true;
+        }
+    }
+    EXPECT_TRUE(found) << "Should have found a matched segment";
+}
+
+TEST_F(DiscoverCategoryTest, UpdateGrove_ReadCoverageAccumulates) {
+    transcript_matcher::config cfg;
+    cfg.min_overlap_bp = 1;
+    transcript_matcher matcher(*grove, cfg, exon_caches);
+
+    // First cluster: 3 reads matching TX_A1
+    auto cluster1 = make_cluster("batch1", "chr22", '+', 10000, 14500,
+        {{10200, 11000}, {11300, 12500}, {12800, 14000}});
+    std::vector<processed_read> reads1(3);
+    for (int i = 0; i < 3; ++i) {
+        reads1[i].read_id = "r1_" + std::to_string(i);
+        cluster1.members.push_back(&reads1[i]);
+    }
+
+    auto result1 = matcher.match(cluster1);
+    matcher.update_grove(cluster1, result1, false);
+
+    // Second cluster: 7 reads matching same segment
+    auto cluster2 = make_cluster("batch2", "chr22", '+', 10000, 14500,
+        {{10200, 11000}, {11300, 12500}, {12800, 14000}});
+    std::vector<processed_read> reads2(7);
+    for (int i = 0; i < 7; ++i) {
+        reads2[i].read_id = "r2_" + std::to_string(i);
+        cluster2.members.push_back(&reads2[i]);
+    }
+
+    auto result2 = matcher.match(cluster2);
+    matcher.update_grove(cluster2, result2, false);
+
+    // Coverage should accumulate: 3 + 7 = 10
+    for (key_ptr seg_key : result2.matched_segments) {
+        if (is_segment(seg_key->get_data())) {
+            auto& seg = get_segment(seg_key->get_data());
+            EXPECT_EQ(seg.read_coverage, 10)
+                << "Read coverage should accumulate across clusters";
+        }
+    }
+}
+
 // ========================================================================
 // Integration tests: full pipeline from SAM file
 //
