@@ -192,7 +192,7 @@ std::vector<query_result> query::classify_transcripts(const std::string& input_p
     match_cfg.min_junction_score = 0.8;
     match_cfg.min_overlap_bp = 50;
 
-    transcript_matcher matcher(*grove, match_cfg, exon_caches_);
+    transcript_matcher matcher(*grove, match_cfg);
 
     // Read input GTF/GFF gene-by-gene and classify each transcript
     gio::gff_reader reader(input_path);

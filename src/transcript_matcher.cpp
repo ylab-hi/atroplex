@@ -80,32 +80,71 @@ std::string match_result::category_string() const {
 // transcript_matcher implementation
 // ============================================================================
 
-transcript_matcher::transcript_matcher(grove_type& grove, const config& cfg,
-                                       const chromosome_exon_caches& exon_caches)
+transcript_matcher::transcript_matcher(grove_type& grove, const config& cfg)
     : grove_(grove), cfg_(cfg) {
-    // Index known splice sites from exon caches
-    index_splice_sites(exon_caches);
+    index_splice_sites();
 }
 
-void transcript_matcher::index_splice_sites(const chromosome_exon_caches& exon_caches) {
+void transcript_matcher::index_splice_sites() {
     size_t donor_count = 0;
     size_t acceptor_count = 0;
+    size_t chromosomes = 0;
 
-    for (const auto& [seqid, exon_cache] : exon_caches) {
-        for (const auto& [coord, exon_ptr] : exon_cache) {
-            // Donor = exon end (5' splice site of downstream intron)
-            known_donor_sites_.insert({seqid, coord.get_end()});
-            ++donor_count;
+    // Walk grove segments and traverse exon chains to collect splice sites
+    auto roots = grove_.get_root_nodes();
+    for (auto& [seqid, root] : roots) {
+        if (!root) continue;
+        chromosomes++;
 
-            // Acceptor = exon start (3' splice site of upstream intron)
-            known_acceptor_sites_.insert({seqid, coord.get_start()});
-            ++acceptor_count;
+        auto* node = root;
+        while (!node->get_is_leaf()) {
+            auto& children = node->get_children();
+            if (children.empty()) break;
+            node = children[0];
+        }
+
+        while (node) {
+            for (auto* key : node->get_keys()) {
+                auto& feature = key->get_data();
+                if (!is_segment(feature)) continue;
+
+                auto& seg = get_segment(feature);
+                if (seg.absorbed) continue;
+
+                size_t edge_id = seg.segment_index;
+
+                // Walk SEGMENT_TO_EXON → EXON_TO_EXON chain
+                auto first_exons = grove_.get_neighbors_if(key,
+                    [edge_id](const edge_metadata& e) {
+                        return e.type == edge_metadata::edge_type::SEGMENT_TO_EXON
+                            && e.id == edge_id;
+                    });
+
+                if (first_exons.empty()) continue;
+
+                auto* current = first_exons.front();
+                while (current) {
+                    auto& coord = current->get_value();
+                    known_donor_sites_.insert({seqid, coord.get_end()});
+                    ++donor_count;
+                    known_acceptor_sites_.insert({seqid, coord.get_start()});
+                    ++acceptor_count;
+
+                    auto next = grove_.get_neighbors_if(current,
+                        [edge_id](const edge_metadata& e) {
+                            return e.type == edge_metadata::edge_type::EXON_TO_EXON
+                                && e.id == edge_id;
+                        });
+                    current = next.empty() ? nullptr : next.front();
+                }
+            }
+            node = node->get_next();
         }
     }
 
     logging::info("Indexed " + std::to_string(donor_count) + " donor and " +
                   std::to_string(acceptor_count) + " acceptor splice sites from " +
-                  std::to_string(exon_caches.size()) + " chromosome(s)");
+                  std::to_string(chromosomes) + " chromosome(s)");
 }
 
 bool transcript_matcher::is_known_donor(const std::string& seqid, size_t position) const {

@@ -96,7 +96,7 @@ protected:
         cfg.junction_tolerance = 5;
         cfg.min_junction_score = 0.8;
         cfg.min_overlap_bp = 50;
-        transcript_matcher matcher(*grove, cfg, exon_caches);
+        transcript_matcher matcher(*grove, cfg);
 
         gio::gff_reader reader(query_path);
 

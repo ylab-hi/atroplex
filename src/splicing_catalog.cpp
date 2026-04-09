@@ -57,6 +57,71 @@ std::vector<splicing_event> splicing_catalog::collect(
     return all_events;
 }
 
+std::vector<splicing_event> splicing_catalog::collect_from_grove(grove_type& grove) {
+    // Reconstruct gene_indices by walking the grove
+    chromosome_gene_segment_indices gene_indices;
+
+    auto roots = grove.get_root_nodes();
+    for (auto& [seqid, root] : roots) {
+        if (!root) continue;
+
+        auto* node = root;
+        while (!node->get_is_leaf()) {
+            auto& children = node->get_children();
+            if (children.empty()) break;
+            node = children[0];
+        }
+
+        while (node) {
+            for (auto* key : node->get_keys()) {
+                auto& feature = key->get_data();
+                if (!is_segment(feature)) continue;
+
+                auto& seg = get_segment(feature);
+                if (seg.absorbed) continue;
+
+                // Traverse exon chain
+                size_t edge_id = seg.segment_index;
+                std::vector<key_ptr> exon_chain;
+
+                auto first_exons = grove.get_neighbors_if(key,
+                    [edge_id](const edge_metadata& e) {
+                        return e.type == edge_metadata::edge_type::SEGMENT_TO_EXON
+                            && e.id == edge_id;
+                    });
+
+                if (!first_exons.empty()) {
+                    auto* current = first_exons.front();
+                    while (current) {
+                        exon_chain.push_back(current);
+                        auto next = grove.get_neighbors_if(current,
+                            [edge_id](const edge_metadata& e) {
+                                return e.type == edge_metadata::edge_type::EXON_TO_EXON
+                                    && e.id == edge_id;
+                            });
+                        current = next.empty() ? nullptr : next.front();
+                    }
+                }
+
+                // Build structure key from exon coordinates
+                std::string structure_key;
+                if (!exon_chain.empty()) {
+                    structure_key = format_coordinate(seqid, exon_chain.front()->get_value());
+                    for (size_t i = 1; i < exon_chain.size(); ++i) {
+                        structure_key += "," + format_coordinate(seqid, exon_chain[i]->get_value());
+                    }
+                }
+
+                gene_indices[seqid][seg.gene_id()].push_back(
+                    {key, std::move(exon_chain), std::move(structure_key)});
+            }
+            node = node->get_next();
+        }
+    }
+
+    return collect(gene_indices, grove);
+}
+
 std::vector<splicing_event> splicing_catalog::detect_gene_events(
     const std::string& gene_id,
     const std::string& chromosome,
