@@ -34,6 +34,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added `[[nodiscard]]` to `segment_builder`, `transcript_matcher`, and `read_clusterer` return-value functions
 - Fixed `read_clusterer::stats::max_cluster_size` type from `double` to `size_t`
 
+### Refactored
+- Removed `exon_caches` dependency from `transcript_matcher` (#21): splice site indexing now walks the grove directly, enabling `--genogrove` for discover/query
+- Added `splicing_catalog::collect_from_grove()` (#21): reconstructs per-gene segment chains from grove traversal, enabling `--genogrove` for analyze
+
 ### Changed
 - **Read clustering**: replaced binned clustering with sort+sweep algorithm — eliminates boundary artifacts where reads 1bp apart could land in different bins and never be compared; sorts by `(strand, junction_count, first_donor)` then sweeps within `junction_tolerance`
 - Removed `--junction-bin` CLI option (binning is no longer used internally)
