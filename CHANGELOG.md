@@ -34,6 +34,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added `[[nodiscard]]` to `segment_builder`, `transcript_matcher`, and `read_clusterer` return-value functions
 - Fixed `read_clusterer::stats::max_cluster_size` type from `double` to `size_t`
 
+### Performance
+- Cached exon counts before transcript sort (#22): eliminates O(T·E·log T) rescans in `process_gene()`, speeding up per-gene transcript ordering
+
 ### Refactored
 - Removed `exon_caches` dependency from `transcript_matcher` (#21): splice site indexing now walks the grove directly, enabling `--genogrove` for discover/query
 - Added `splicing_catalog::collect_from_grove()` (#21): reconstructs per-gene segment chains from grove traversal, enabling `--genogrove` for analyze
