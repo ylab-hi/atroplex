@@ -85,6 +85,9 @@ void segment_builder::create_segment(
             auto& candidate_seg = get_segment(entry.segment->get_data());
             if (candidate_seg.absorbed) continue;
 
+            // Rule 5 requires equal exon counts — skip before calling into the helpers.
+            if (entry.exon_chain.size() != exon_chain.size()) continue;
+
             if (has_same_intron_chain(exon_chain, entry.exon_chain) &&
                 terminal_boundaries_within_tolerance(exon_chain, entry.exon_chain, TERMINAL_TOLERANCE_BP)) {
                     merge_into_segment(entry.segment, transcript_id, sample_id,
@@ -122,6 +125,17 @@ void segment_builder::create_segment(
             for (const auto& entry : gene_it->second) {
                 auto& candidate_seg = get_segment(entry.segment->get_data());
                 if (candidate_seg.absorbed) continue;
+
+                // Early-exit: parent must have strictly more exons than child.
+                // Equal-size chains are handled by Rule 0 (FSM exact match) or Rule 5 (terminal variant).
+                if (entry.exon_chain.size() <= exon_chain.size()) continue;
+
+                // Early-exit: child's coordinate span must fit within parent's span
+                // (accounting for fuzzy tolerance on the boundaries).
+                const auto& parent_first = entry.exon_chain.front()->get_value();
+                const auto& parent_last = entry.exon_chain.back()->get_value();
+                if (span_start + fuzzy_tolerance < parent_first.get_start()) continue;
+                if (span_end > parent_last.get_end() + fuzzy_tolerance) continue;
 
                 auto match = classify_subsequence(exon_chain, entry.exon_chain);
                 if (match == subsequence_type::NONE) {
@@ -341,19 +355,37 @@ void segment_builder::try_reverse_absorption(
         segment_cache.erase(entry.structure_key);
     };
 
+    // Precompute new segment's coordinate span for span filter
+    const auto& new_first = new_exon_chain.front()->get_value();
+    const auto& new_last = new_exon_chain.back()->get_value();
+    size_t new_start = new_first.get_start();
+    size_t new_end = new_last.get_end();
+
     for (auto& entry : gene_it->second) {
         if (entry.segment == new_seg) continue;
 
         auto& candidate_seg = get_segment(entry.segment->get_data());
         if (candidate_seg.absorbed) continue;
 
-        // Rule 5: Terminal variant
+        // Rule 5: Terminal variant (requires equal exon count)
         if (entry.exon_chain.size() == new_exon_chain.size() &&
             has_same_intron_chain(entry.exon_chain, new_exon_chain) &&
             terminal_boundaries_within_tolerance(entry.exon_chain, new_exon_chain, TERMINAL_TOLERANCE_BP)) {
             absorb_into_parent(candidate_seg, entry);
             continue;
         }
+
+        // Early-exit for subsequence rules: candidate (child) must have strictly
+        // fewer exons than new segment (parent). Equal counts are already handled
+        // by Rule 5 above or by Rule 0 FSM deduplication.
+        if (entry.exon_chain.size() >= new_exon_chain.size()) continue;
+
+        // Early-exit: candidate's span must fit within the new segment's span
+        // (accounting for fuzzy tolerance).
+        const auto& cand_first = entry.exon_chain.front()->get_value();
+        const auto& cand_last = entry.exon_chain.back()->get_value();
+        if (cand_first.get_start() + fuzzy_tolerance < new_start) continue;
+        if (cand_last.get_end() > new_end + fuzzy_tolerance) continue;
 
         // Rules 1/2/3/4: Subsequence (pointer, then fuzzy)
         auto match = classify_subsequence(entry.exon_chain, new_exon_chain);
