@@ -243,14 +243,6 @@ void segment_feature::serialize(std::ostream& os) const {
     write_pod(os, segment_index);
     write_pod(os, exon_count);
     write_pod(os, read_coverage);
-
-    // supporting_reads
-    uint32_t sr_count = static_cast<uint32_t>(supporting_reads.size());
-    write_pod(os, sr_count);
-    for (const auto& read_id : supporting_reads) {
-        write_string(os, read_id);
-    }
-
     write_pod(os, absorbed);
     write_pod(os, absorbed_count);
 }
@@ -273,13 +265,6 @@ segment_feature segment_feature::deserialize(std::istream& is) {
     sf.segment_index = read_pod<size_t>(is);
     sf.exon_count = read_pod<int>(is);
     sf.read_coverage = read_pod<size_t>(is);
-
-    uint32_t sr_count = read_pod<uint32_t>(is);
-    sf.supporting_reads.reserve(sr_count);
-    for (uint32_t i = 0; i < sr_count; ++i) {
-        sf.supporting_reads.push_back(read_string(is));
-    }
-
     sf.absorbed = read_pod<bool>(is);
     sf.absorbed_count = read_pod<size_t>(is);
     return sf;

@@ -429,13 +429,11 @@ void transcript_matcher::update_grove(const read_cluster& cluster,
                                        const match_result& result,
                                        bool add_novel) {
     if (result.has_match()) {
-        // Add read support to matched segments
+        // Add read support count from entire cluster to matched segments
         for (key_ptr seg_key : result.matched_segments) {
             if (is_segment(seg_key->get_data())) {
                 auto& seg = get_segment(seg_key->get_data());
-                if (const auto* rep = cluster.get_representative()) {
-                    seg.add_read_support(rep->read_id);
-                }
+                seg.add_read_support(cluster.read_count());
                 stats_.segments_updated++;
             }
         }
@@ -627,11 +625,8 @@ key_ptr transcript_matcher::create_discovered_segment(const read_cluster& cluste
 
     new_segment.exon_count = static_cast<int>(cluster.consensus_junctions.size() + 1);
 
-    // Add read support
-    if (const auto* rep = cluster.get_representative()) {
-        new_segment.add_read_support(rep->read_id);
-    }
-    new_segment.read_coverage = cluster.read_count();
+    // Add read support count
+    new_segment.add_read_support(cluster.read_count());
 
     // Insert into grove
     gdt::genomic_coordinate coord(cluster.strand, cluster.start, cluster.end);
