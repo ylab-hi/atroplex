@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fixed infinite loop in `sample_bitset` iterator: `advance()` did not mark iterator as exhausted when all bits were consumed, causing range-based for loops over `sample_idx` to hang
 - Fixed missing `absorb` parameter in final `process_gene()` call per GTF file (last gene always skipped absorption)
 - Fixed silent error swallowing (#18): replaced bare `catch (...) {}` with `catch (const std::exception& e)` + `logging::warning` in GFF expression parsing and BAM header parsing — malformed values now produce visible diagnostics instead of silent pass-through
+- Fixed discover read coverage (#20): matched segments now record full cluster read count instead of just 1 (the representative); removed `supporting_reads` vector to avoid memory blowup on large BAMs
 
 ### Added
 - `atroplex export` subcommand (#19): reconstruct per-sample GTF files from a `.ggx` index with filters (`--sample`, `--gene`, `--region`, `--min-samples`, `--conserved-only`, `--biotype`, `--source`)
