@@ -111,20 +111,25 @@ void build_gff::process_gene(
 
     // Sort transcript keys by exon count (descending) so multi-exon transcripts
     // are processed first — ensures mono-exon fragments have a parent to check against.
-    auto count_exons = [](const std::vector<gio::gff_entry>& entries) {
-        return std::count_if(entries.begin(), entries.end(),
-            [](const gio::gff_entry& e) { return e.type == "exon"; });
-    };
+    // Precompute exon counts once per transcript to avoid O(T·E·log T) rescans
+    // inside the sort comparator.
+    std::vector<std::pair<std::string, size_t>> tx_exon_counts;
+    tx_exon_counts.reserve(transcripts.size());
+    for (const auto& [tx_id, entries] : transcripts) {
+        size_t n = 0;
+        for (const auto& e : entries) {
+            if (e.type == "exon") ++n;
+        }
+        tx_exon_counts.emplace_back(tx_id, n);
+    }
+    std::sort(tx_exon_counts.begin(), tx_exon_counts.end(),
+        [](const auto& a, const auto& b) { return a.second > b.second; });
 
     std::vector<std::string> tx_order;
-    tx_order.reserve(transcripts.size());
-    for (const auto& [tx_id, _] : transcripts) {
-        tx_order.push_back(tx_id);
+    tx_order.reserve(tx_exon_counts.size());
+    for (auto& [tx_id, _] : tx_exon_counts) {
+        tx_order.push_back(std::move(tx_id));
     }
-    std::sort(tx_order.begin(), tx_order.end(),
-        [&](const auto& a, const auto& b) {
-            return count_exons(transcripts[a]) > count_exons(transcripts[b]);
-        });
 
     for (const auto& transcript_id : tx_order) {
         process_transcript(grove, grove_mutex, transcript_id, transcripts[transcript_id],
