@@ -21,8 +21,12 @@
 /**
  * Streaming analysis report — single-pass grove traversal.
  *
- * Walks the B+ tree once, processing segments and their exon chains inline.
- * No intermediate maps stored — only flat counters accumulated.
+ * Data is stored at three levels:
+ *   - per_chromosome: genes, segments, exons per chromosome
+ *   - per_sample:     genes, segments, exons, transcripts per sample
+ *   - distributions:  transcripts_per_gene, exons_per_segment (for median/max)
+ *
+ * Global totals are derived from these at output time — not tracked separately.
  *
  * Usage:
  *   analysis_report report;
@@ -31,72 +35,51 @@
  */
 struct analysis_report {
 
-    // ── Global counters ─────────────────────────────────────────────
-    size_t total_chromosomes = 0;
-    size_t total_genes = 0;
-    size_t total_transcripts = 0;
-    size_t total_segments = 0;
-    size_t total_exons = 0;
-    size_t total_edges = 0;
-    size_t absorbed_segments = 0;
-    size_t single_exon_segments = 0;
-
-    // Transcripts per gene distribution
-    double mean_transcripts_per_gene = 0;
-    double median_transcripts_per_gene = 0;
-    size_t max_transcripts_per_gene = 0;
-    std::string max_transcripts_gene_id;
-    size_t single_isoform_genes = 0;
-    size_t multi_isoform_genes = 0;
-
-    // Exons per segment distribution
-    double mean_exons_per_segment = 0;
-    double median_exons_per_segment = 0;
-    size_t max_exons_per_segment = 0;
-
-    // Biotype distributions
-    std::map<std::string, size_t> genes_by_biotype;
-    std::map<std::string, size_t> transcripts_by_biotype;
-
-    // Per-chromosome
-    struct chromosome_stats {
-        size_t genes = 0;
-        size_t segments = 0;
-        size_t exons = 0;
-    };
-    std::map<std::string, chromosome_stats> per_chromosome;
-
-    // Dedup ratio
-    double deduplication_ratio = 0;
-
-    // ── Per-sample counters (flat vector indexed by sample_id) ───────
-
+    // ── Per-sample (flat vector indexed by sample_id) ───────────────
     struct sample_counters {
+        // Gene / transcript
         size_t genes = 0;
         size_t transcripts = 0;
+
+        // Segments
         size_t segments = 0;
-        size_t exons = 0;
+        size_t exclusive_segments = 0;
+        size_t shared_segments = 0;
+        size_t conserved_segments = 0;
         size_t single_exon_segments = 0;
-        double deduplication_ratio = 0;
+
+        // Exons
+        size_t exons = 0;
+        size_t exclusive_exons = 0;
+        size_t shared_exons = 0;
+        size_t conserved_exons = 0;
+
+        // Expression
+        double expression_sum = 0;
+        size_t expressed_segments = 0;
+
+        // Biotypes
         std::map<std::string, size_t> genes_by_biotype;
         std::map<std::string, size_t> transcripts_by_biotype;
     };
     std::vector<sample_counters> per_sample;  // indexed by sample_id
 
+    // ── Distributions (for median/max, bounded by feature count) ────
+    std::vector<size_t> transcripts_per_gene;
+    std::vector<size_t> exons_per_segment;
+
+    // ── Counters not derivable from per-chromosome/per-sample ───────
+    size_t absorbed_segments = 0;
+    size_t total_edges = 0;
+
     // ── Collection ──────────────────────────────────────────────────
 
-    /**
-     * Collect basic index statistics by walking the grove once.
-     * Phase 1: segment + exon counting, per-chromosome, biotypes,
-     * per-sample counters.
-     */
     void collect(grove_type& grove);
 
     // ── Output ──────────────────────────────────────────────────────
 
     void write_overview(const std::string& path) const;
-    void write_per_chromosome(const std::string& path) const;
-    void write_biotypes(const std::string& path) const;
+    void write_per_sample(const std::string& path) const;
 };
 
 #endif // ATROPLEX_ANALYSIS_REPORT_HPP

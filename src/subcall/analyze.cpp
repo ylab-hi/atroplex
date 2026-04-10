@@ -80,8 +80,7 @@ void analyze::execute(const cxxopts::ParseResult& args) {
         report.collect(*grove);
 
         report.write_overview((overview_dir / (basename + ".overview.tsv")).string());
-        report.write_per_chromosome((overview_dir / (basename + ".per_chromosome.tsv")).string());
-        report.write_biotypes((overview_dir / (basename + ".biotype.tsv")).string());
+        report.write_per_sample((overview_dir / (basename + ".per_sample.tsv")).string());
     }
 
     // TODO(Phase 8): Legacy analysis disabled — OOMs at 1000+ samples.
