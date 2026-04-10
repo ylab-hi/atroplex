@@ -1,6 +1,6 @@
 # Atroplex
 
-A pan-transcriptome indexing and analysis toolkit for long-read sequencing data. Atroplex builds a spatial index with graph structure from multiple annotation sources, discovers novel transcripts from BAM input, classifies transcripts against the index, and provides detailed analysis of exon/segment sharing, splicing complexity, and isoform diversity.
+A pan-transcriptome indexing and analysis toolkit for long-read sequencing data. Atroplex builds a spatial index with graph structure from multiple annotation sources, discovers novel transcripts from BAM input, classifies transcripts against the index, exports per-sample GTF files from the index, and provides detailed analysis of exon/segment sharing, splicing complexity, and isoform diversity.
 
 ## Installation
 
@@ -24,7 +24,7 @@ cmake --build build
 ### Dependencies
 
 - **cxxopts** (v3.3.1): Command-line argument parsing (fetched automatically)
-- **genogrove** (v0.20.0): Genomic interval data structures and graph structure (fetched automatically)
+- **genogrove** (v0.20.2): Genomic interval data structures and graph structure (fetched automatically)
 - **htslib**: Reading BAM/SAM files (system dependency via pkg-config)
 - **zlib**: Compression support
 
@@ -51,6 +51,9 @@ atroplex query -i transcripts.gtf -m manifest.tsv --contrast treated:control
 
 # Discover novel transcripts from long-read data
 atroplex discover -i reads.bam -m manifest.tsv -o results/
+
+# Export per-sample GTF files from a built index
+atroplex export -g index.ggx -o export/
 ```
 
 ## Subcommands
@@ -112,6 +115,26 @@ Clusters aligned long reads by splice junction signature and matches them agains
 ```bash
 atroplex discover -i reads.bam -m manifest.tsv -o results/
 ```
+
+### `atroplex export` — Reconstruct per-sample GTFs from the index
+
+Walks a built index and writes one GTF file per sample with gene, transcript, and exon lines. Expression values (when available) are emitted as GTF attributes. Supports filters to restrict output by sample, gene, region, biotype, source, or sample frequency.
+
+```bash
+# Export all samples from a pre-built index
+atroplex export -g index.ggx -o export/
+
+# Export a specific sample, protein-coding genes only
+atroplex export -g index.ggx --sample HL60_M1_rep1 --biotype protein_coding
+
+# Export conserved features in a genomic region
+atroplex export -g index.ggx --region chr22:10000000-15000000 --conserved-only
+
+# Export features present in at least 3 samples, from HAVANA
+atroplex export -g index.ggx --min-samples 3 --source HAVANA
+```
+
+Export-specific options: `--sample`, `--gene`, `--region chr:start-end`, `--min-samples`, `--conserved-only`, `--biotype`, `--source` (all filters are AND'd).
 
 ### Common Options
 
@@ -292,6 +315,14 @@ One row per (hub exon, downstream target) pair with per-sample branch usage frac
 |------|-------------|
 | `{input}.atroplex.tsv` | Per-cluster match results (SQANTI-like) |
 | `{input}.atroplex.summary.txt` | Match statistics |
+
+### `atroplex export` output
+
+One GTF file per exported sample in the output directory:
+
+| File | Description |
+|------|-------------|
+| `{sample_id}.gtf` | Reconstructed GTF with gene/transcript/exon lines, expression as attributes |
 
 ## Key Concepts
 
