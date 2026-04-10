@@ -12,6 +12,7 @@
 
 #include <filesystem>
 
+#include "analysis_report.hpp"
 #include "index_stats.hpp"
 #include "splicing_catalog.hpp"
 #include "utility.hpp"
@@ -69,91 +70,64 @@ void analyze::execute(const cxxopts::ParseResult& args) {
 
     std::string basename = resolve_prefix(args);
 
-    // Full collection including diversity metrics (Phase 4b)
-    // Stream large outputs (conserved exons, branch details) directly to files
-    logging::info("Running pan-transcriptome analysis...");
+    // ── Streaming analysis report (Phase 8) ──────────────────────────
+    // Single-pass overview stats — scalable to 20K+ samples
+    {
+        auto overview_dir = analysis_dir / "overview";
+        std::filesystem::create_directories(overview_dir);
+
+        analysis_report report;
+        report.collect(*grove);
+
+        report.write_overview((overview_dir / (basename + ".overview.tsv")).string());
+        report.write_per_chromosome((overview_dir / (basename + ".per_chromosome.tsv")).string());
+        report.write_biotypes((overview_dir / (basename + ".biotype.tsv")).string());
+    }
+
+    // TODO(Phase 8): Legacy analysis disabled — OOMs at 1000+ samples.
+    // Will be replaced incrementally by analysis_report phases 8.2-8.7.
+    // Disabled code covers: sharing stats, splicing hubs, splicing events,
+    // diversity metrics, per-sample CSV, full text report.
+    //
+    // To re-enable for small groves, uncomment the block below.
+
+    /*
     index_stats::collect_options opts;
     opts.detailed = true;
     opts.output_dir = analysis_dir.string();
     opts.basename = basename;
     auto stats = index_stats::collect(*grove, opts);
 
-    // Write full text report
-    logging::info("Writing text report");
-    std::string stats_path = (analysis_dir / (basename + ".analysis.txt")).string();
-    stats.write(stats_path);
-
-    // Write overview TSV (global stats)
-    std::string overview_path = (analysis_dir / (basename + ".overview.tsv")).string();
-    stats.write_overview_tsv(overview_path);
-
-    // Write per-chromosome TSV
-    if (!stats.per_chromosome.empty()) {
-        std::string chr_path = (analysis_dir / (basename + ".per_chromosome.tsv")).string();
-        stats.write_per_chromosome_tsv(chr_path);
-    }
-
-    // Write per-source TSV
-    if (!stats.per_source.empty()) {
-        std::string source_path = (analysis_dir / (basename + ".per_source.tsv")).string();
-        stats.write_per_source_tsv(source_path);
-    }
-
-    // Write per-sample TSV
+    stats.write((analysis_dir / (basename + ".analysis.txt")).string());
+    stats.write_overview_tsv((analysis_dir / (basename + ".overview.tsv")).string());
+    if (!stats.per_chromosome.empty())
+        stats.write_per_chromosome_tsv((analysis_dir / (basename + ".per_chromosome.tsv")).string());
+    if (!stats.per_source.empty())
+        stats.write_per_source_tsv((analysis_dir / (basename + ".per_source.tsv")).string());
     if (!stats.per_sample.empty()) {
-        std::string sample_path = (analysis_dir / (basename + ".per_sample.tsv")).string();
-        stats.write_per_sample_tsv(sample_path);
-    }
-
-
-
-    // Write exon and segment sharing into subfolder
-    // (conserved_exons.tsv is already streamed by collect())
-    if (!stats.per_sample.empty()) {
-        logging::info("Writing sharing TSVs");
+        stats.write_per_sample_tsv((analysis_dir / (basename + ".per_sample.tsv")).string());
         auto sharing_dir = analysis_dir / "sharing";
         std::filesystem::create_directories(sharing_dir);
-
-        std::string exon_path = (sharing_dir / (basename + ".exon_sharing.tsv")).string();
-        stats.write_exon_sharing_tsv(exon_path);
-
-        std::string seg_path = (sharing_dir / (basename + ".segment_sharing.tsv")).string();
-        stats.write_segment_sharing_tsv(seg_path);
+        stats.write_exon_sharing_tsv((sharing_dir / (basename + ".exon_sharing.tsv")).string());
+        stats.write_segment_sharing_tsv((sharing_dir / (basename + ".segment_sharing.tsv")).string());
     }
-
-    // Write biotype breakdown
-    if (!stats.genes_by_biotype.empty() || !stats.transcripts_by_biotype.empty()) {
-        std::string biotype_path = (analysis_dir / (basename + ".biotype.tsv")).string();
-        stats.write_biotype_tsv(biotype_path);
-    }
-
-    // Write splicing hubs summary (branch_details.tsv is already streamed by collect())
+    if (!stats.genes_by_biotype.empty() || !stats.transcripts_by_biotype.empty())
+        stats.write_biotype_tsv((analysis_dir / (basename + ".biotype.tsv")).string());
     if (!stats.splicing_hubs.empty()) {
-        logging::info("Writing splicing hubs TSV");
         auto hubs_dir = analysis_dir / "splicing_hubs";
         std::filesystem::create_directories(hubs_dir);
-
-        std::string hubs_path = (hubs_dir / (basename + ".splicing_hubs.tsv")).string();
-        stats.write_splicing_hubs_tsv(hubs_path);
+        stats.write_splicing_hubs_tsv((hubs_dir / (basename + ".splicing_hubs.tsv")).string());
     }
-
-    // Splicing event catalog
     {
         auto events_dir = analysis_dir / "splicing_events";
         std::filesystem::create_directories(events_dir);
-
-        logging::info("Detecting alternative splicing events...");
         auto events = gene_indices_.empty()
             ? splicing_catalog::collect_from_grove(*grove)
             : splicing_catalog::collect(gene_indices_, *grove);
-        logging::info("Found " + std::to_string(events.size()) + " splicing events");
-
-        std::string events_path = (events_dir / (basename + ".splicing_events.tsv")).string();
-        splicing_catalog::write_events_tsv(events_path, events);
-
-        std::string events_summary = (events_dir / (basename + ".splicing_events.summary.txt")).string();
-        splicing_catalog::write_summary(events_summary, events);
+        splicing_catalog::write_events_tsv((events_dir / (basename + ".splicing_events.tsv")).string(), events);
+        splicing_catalog::write_summary((events_dir / (basename + ".splicing_events.summary.txt")).string(), events);
     }
+    */
 
     logging::info("Analysis written to: " + analysis_dir.string());
 }
