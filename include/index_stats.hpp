@@ -85,10 +85,11 @@ struct index_stats {
     size_t shared_segments = 0;          // segments in 2+ but not all samples
     size_t sample_specific_segments = 0; // segments in exactly 1 sample
 
-    // Isoform diversity
-    double isoform_diversity = 0;     // mean pairwise Jaccard distance of exon sets per gene (0=identical, 1=disjoint)
-    double deduplication_ratio = 0;   // segments / transcripts (1.0 = no dedup, lower = more sharing)
-    size_t multi_segment_genes = 0;   // genes with >1 distinct segment (included in diversity calculation)
+    // Isoform diversity (O(N) metrics — no pairwise comparisons)
+    double mean_gene_exon_entropy = 0;     // Shannon entropy over exon usage across segments, averaged over multi-segment genes
+    double mean_effective_isoforms = 0;    // exp(entropy of segment→transcript-count distribution), averaged over multi-segment genes
+    double deduplication_ratio = 0;        // segments / transcripts (1.0 = no dedup, lower = more sharing)
+    size_t multi_segment_genes = 0;        // genes with >1 distinct segment
 
     // Graph structure
     size_t branching_exons = 0;       // exons with >1 unique downstream exon
@@ -158,7 +159,8 @@ struct index_stats {
         size_t alternative_exons = 0;  // exons in some transcripts of their gene
         size_t genes = 0;             // genes this sample has features in
         size_t transcripts = 0;       // transcript count
-        double isoform_diversity = 0; // mean pairwise Jaccard distance of exon sets per gene
+        double gene_exon_entropy = 0; // mean Shannon entropy over exon usage (per multi-segment gene, averaged)
+        double effective_isoforms = 0; // mean exp(entropy of segment→tx distribution) per gene
         double deduplication_ratio = 0; // segments / transcripts
         double mean_expression = 0;   // mean expression across segments (if available)
         size_t expressed_segments = 0; // segments with expression data

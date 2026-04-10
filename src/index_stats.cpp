@@ -49,24 +49,21 @@ double compute_median(std::vector<size_t>& values) {
     return static_cast<double>(*mid);
 }
 
-double jaccard_distance(const std::set<const void*>& a, const std::set<const void*>& b) {
-    if (a.empty() && b.empty()) return 0.0;
-    size_t intersection = 0;
-    auto it_a = a.begin(), it_b = b.begin();
-    while (it_a != a.end() && it_b != b.end()) {
-        if (*it_a == *it_b) {
-            intersection++;
-            ++it_a;
-            ++it_b;
-        } else if (*it_a < *it_b) {
-            ++it_a;
-        } else {
-            ++it_b;
-        }
+// Shannon entropy over a distribution of counts.
+// Given counts [c1, c2, ..., cn], computes -Σ p_i log2(p_i) where p_i = c_i / total.
+// Returns 0 if total is 0 or if all mass is in one bin.
+double shannon_entropy(const std::vector<size_t>& counts) {
+    size_t total = 0;
+    for (size_t c : counts) total += c;
+    if (total == 0) return 0.0;
+
+    double h = 0.0;
+    for (size_t c : counts) {
+        if (c == 0) continue;
+        double p = static_cast<double>(c) / static_cast<double>(total);
+        h -= p * std::log2(p);
     }
-    size_t union_size = a.size() + b.size() - intersection;
-    if (union_size == 0) return 0.0;
-    return 1.0 - static_cast<double>(intersection) / static_cast<double>(union_size);
+    return h;
 }
 
 } // anonymous namespace
@@ -86,6 +83,7 @@ index_stats index_stats::collect(grove_type& grove, const collect_options& opts)
     }
 
     // --- Phase 1: Traverse B+ tree to collect all segments ---
+    logging::info("Phase 1: Collecting segments from grove");
     // gene_id -> { set of transcript_ids (interned), biotype }
     struct gene_stats_info {
         std::unordered_set<uint32_t> transcript_ids;
@@ -255,7 +253,11 @@ index_stats index_stats::collect(grove_type& grove, const collect_options& opts)
         }
     }
 
+    logging::info("Phase 1 done: " + std::to_string(stats.total_segments) + " segments, " +
+                  std::to_string(genes.size()) + " genes");
+
     // --- Phase 2: Traverse graph from segments to collect exons ---
+    logging::info("Phase 2: Walking exon chains + splicing hub detection");
     std::set<const void*> visited_exons; // deduplicate by pointer
 
     // Streaming: open branch details file if output_dir is set
@@ -632,7 +634,12 @@ index_stats index_stats::collect(grove_type& grove, const collect_options& opts)
     std::unordered_map<uint32_t, std::unordered_set<uint32_t>> sample_transcript_ids;
     std::unordered_map<std::string, std::unordered_set<std::string>> source_gene_ids;
 
+    logging::info("Phase 2 done: " + std::to_string(stats.total_exons) + " exons, " +
+                  std::to_string(stats.branching_exons) + " branching exons, " +
+                  std::to_string(stats.splicing_hubs.size()) + " splicing hubs");
+
     // --- Phase 3: Compute exon sharing and per-sample/per-source exon stats ---
+    logging::info("Phase 3: Computing exon sharing + per-sample/per-source stats");
     // Single traversal with global deduplication for both sharing stats and per-sample/per-source counts
     std::unordered_map<std::string, size_t> gene_transcript_counts;
     for (const auto& [gene_id, gi] : genes) {
@@ -838,7 +845,10 @@ index_stats index_stats::collect(grove_type& grove, const collect_options& opts)
     tx_to_samples.clear();
     tx_biotypes.clear();
 
+    logging::info("Phase 3 done");
+
     // --- Phase 4: Compute gene-level statistics ---
+    logging::info("Phase 4: Computing gene-level statistics");
     stats.total_genes = genes.size();
 
     std::vector<size_t> transcripts_per_gene;
@@ -880,138 +890,138 @@ index_stats index_stats::collect(grove_type& grove, const collect_options& opts)
             static_cast<double>(stats.total_segments) / static_cast<double>(stats.total_transcripts);
     }
 
-    // --- Phase 4b: Structural diversity (pairwise Jaccard distance of exon sets) ---
-    // Only computed in detailed mode (analyze subcommand). Skipped for --stats.
+    // --- Phase 4b: Structural diversity (O(N) entropy-based metrics) ---
+    // Only computed in detailed mode (analyze subcommand).
     if (detailed) {
-    // For each segment, walk its exon chain to collect the exon pointer set.
-    // Group by gene, then compute mean pairwise Jaccard distance.
-    struct segment_exon_info {
-        sample_bitset sample_idx;
-        std::set<const void*> exon_set;
-    };
-    std::unordered_map<std::string, std::vector<segment_exon_info>> gene_segment_exons;
+        logging::info("Phase 4b: Computing gene diversity metrics (exon entropy + effective isoforms)");
 
-    for (auto& [seqid, seg_key] : segment_keys) {
-        auto& seg = get_segment(seg_key->get_data());
+        // Per segment: the exon chain (as pointers) and sample membership.
+        // Group by gene. No pairwise comparisons — only per-gene aggregates.
+        struct segment_exon_info {
+            sample_bitset sample_idx;
+            sorted_vec transcript_ids;  // for effective isoform count
+            std::vector<key_ptr> exon_chain;
+        };
+        std::unordered_map<std::string, std::vector<segment_exon_info>> gene_segment_exons;
 
-        size_t edge_id = seg.segment_index;
+        size_t processed = 0;
+        const size_t progress_interval = std::max<size_t>(1, segment_keys.size() / 20);
 
-        segment_exon_info sei;
-        sei.sample_idx = seg.sample_idx;
+        for (auto& [seqid, seg_key] : segment_keys) {
+            auto& seg = get_segment(seg_key->get_data());
 
-        // Get first exon via SEGMENT_TO_EXON edge (filter by segment index)
-        auto first_exons = grove.get_neighbors_if(seg_key,
-            [edge_id](const edge_metadata& e) {
-                return e.type == edge_metadata::edge_type::SEGMENT_TO_EXON && e.id == edge_id;
-            });
+            size_t edge_id = seg.segment_index;
 
-        if (first_exons.empty()) continue;
+            segment_exon_info sei;
+            sei.sample_idx = seg.sample_idx;
+            sei.transcript_ids = seg.transcript_ids;
 
-        // Walk exon chain following segment's EXON_TO_EXON edges
-        key_ptr current = first_exons.front();
-        sei.exon_set.insert(current);
-
-        bool found_next = true;
-        while (found_next) {
-            found_next = false;
-            auto next = grove.get_neighbors_if(current,
+            // Traverse exon chain (SEGMENT_TO_EXON → EXON_TO_EXON, filtered by edge id)
+            auto first_exons = grove.get_neighbors_if(seg_key,
                 [edge_id](const edge_metadata& e) {
-                    return e.type == edge_metadata::edge_type::EXON_TO_EXON && e.id == edge_id;
+                    return e.type == edge_metadata::edge_type::SEGMENT_TO_EXON && e.id == edge_id;
                 });
-            if (!next.empty()) {
-                current = next.front();
-                sei.exon_set.insert(current);
-                found_next = true;
-            }
-        }
 
-        gene_segment_exons[seg.gene_id()].push_back(std::move(sei));
-    }
-
-    // Compute global mean pairwise Jaccard distance (averaged per gene, then across genes)
-    // Cap at MAX_JACCARD_SEGMENTS to avoid O(n²) blowup on highly fragmented genes
-    static constexpr size_t MAX_JACCARD_SEGMENTS = 200;
-    size_t skipped_genes = 0;
-
-    {
-        double global_sum = 0;
-        size_t gene_count = 0;
-
-        for (auto& [gene_id, seg_infos] : gene_segment_exons) {
-            if (seg_infos.size() < 2) continue;
-            if (seg_infos.size() > MAX_JACCARD_SEGMENTS) {
-                skipped_genes++;
-                continue;
-            }
-
-            double gene_sum = 0;
-            size_t gene_pairs = 0;
-
-            for (size_t i = 0; i < seg_infos.size(); ++i) {
-                for (size_t j = i + 1; j < seg_infos.size(); ++j) {
-                    gene_sum += jaccard_distance(seg_infos[i].exon_set, seg_infos[j].exon_set);
-                    gene_pairs++;
+            if (!first_exons.empty()) {
+                key_ptr current = first_exons.front();
+                while (current) {
+                    sei.exon_chain.push_back(current);
+                    auto next = grove.get_neighbors_if(current,
+                        [edge_id](const edge_metadata& e) {
+                            return e.type == edge_metadata::edge_type::EXON_TO_EXON && e.id == edge_id;
+                        });
+                    current = next.empty() ? nullptr : next.front();
                 }
             }
 
-            if (gene_pairs > 0) {
-                global_sum += gene_sum / static_cast<double>(gene_pairs);
+            gene_segment_exons[seg.gene_id()].push_back(std::move(sei));
+
+            if (++processed % progress_interval == 0) {
+                logging::info("  Collected " + std::to_string(processed) + "/" +
+                              std::to_string(segment_keys.size()) + " segment chains");
+            }
+        }
+
+        // Per-gene: Shannon entropy over exon usage + effective isoform count
+        // (global: averaged across multi-segment genes; per-sample: filter by sample bit)
+        {
+            double global_entropy_sum = 0;
+            double global_effective_sum = 0;
+            size_t gene_count = 0;
+
+            for (auto& [gene_id, seg_infos] : gene_segment_exons) {
+                if (seg_infos.size() < 2) continue;
+
+                // Exon usage distribution: how many segments contain each exon
+                std::unordered_map<key_ptr, size_t> exon_use;
+                for (const auto& sei : seg_infos) {
+                    for (key_ptr exon : sei.exon_chain) {
+                        exon_use[exon]++;
+                    }
+                }
+                std::vector<size_t> exon_counts;
+                exon_counts.reserve(exon_use.size());
+                for (auto& [_, c] : exon_use) exon_counts.push_back(c);
+
+                double gene_entropy = shannon_entropy(exon_counts);
+
+                // Effective isoform count: exp(entropy of segment→transcript-count distribution)
+                std::vector<size_t> tx_counts;
+                tx_counts.reserve(seg_infos.size());
+                for (const auto& sei : seg_infos) {
+                    tx_counts.push_back(sei.transcript_ids.size());
+                }
+                double tx_entropy = shannon_entropy(tx_counts);  // base-2 entropy
+                double effective_iso = std::pow(2.0, tx_entropy); // 2^H = effective count
+
+                global_entropy_sum += gene_entropy;
+                global_effective_sum += effective_iso;
                 gene_count++;
             }
+
+            stats.multi_segment_genes = gene_count;
+            if (gene_count > 0) {
+                stats.mean_gene_exon_entropy = global_entropy_sum / static_cast<double>(gene_count);
+                stats.mean_effective_isoforms = global_effective_sum / static_cast<double>(gene_count);
+            }
         }
 
-        stats.multi_segment_genes = gene_count;
-        if (gene_count > 0) {
-            stats.isoform_diversity = global_sum / static_cast<double>(gene_count);
-        }
-    }
+        // Per-sample: compute same metrics using only segments present in each sample
+        logging::info("Phase 4b: Computing per-sample diversity metrics");
+        for (auto& [sid, ss] : stats.per_sample) {
+            double sample_entropy_sum = 0;
+            double sample_effective_sum = 0;
+            size_t sample_genes = 0;
 
-    if (skipped_genes > 0) {
-        logging::info("Jaccard diversity: skipped " + std::to_string(skipped_genes)
-            + " genes with >" + std::to_string(MAX_JACCARD_SEGMENTS) + " segments");
-    }
-
-    // Per-sample Jaccard diversity
-    for (auto& [sid, ss] : stats.per_sample) {
-        double sample_sum = 0;
-        size_t sample_genes = 0;
-
-        for (auto& [gene_id, seg_infos] : gene_segment_exons) {
-            if (seg_infos.size() > MAX_JACCARD_SEGMENTS) continue;
-
-            // Filter to segments containing this sample
-            std::vector<size_t> indices;
-            for (size_t k = 0; k < seg_infos.size(); ++k) {
-                if (seg_infos[k].sample_idx.test(sid)) {
-                    indices.push_back(k);
+            for (auto& [gene_id, seg_infos] : gene_segment_exons) {
+                // Filter to segments containing this sample
+                std::unordered_map<key_ptr, size_t> exon_use;
+                std::vector<size_t> tx_counts;
+                for (const auto& sei : seg_infos) {
+                    if (!sei.sample_idx.test(sid)) continue;
+                    for (key_ptr exon : sei.exon_chain) {
+                        exon_use[exon]++;
+                    }
+                    tx_counts.push_back(sei.transcript_ids.size());
                 }
-            }
-            if (indices.size() < 2) continue;
+                if (tx_counts.size() < 2) continue;
 
-            double gene_sum = 0;
-            size_t gene_pairs = 0;
-            for (size_t i = 0; i < indices.size(); ++i) {
-                for (size_t j = i + 1; j < indices.size(); ++j) {
-                    gene_sum += jaccard_distance(
-                        seg_infos[indices[i]].exon_set,
-                        seg_infos[indices[j]].exon_set);
-                    gene_pairs++;
-                }
-            }
+                std::vector<size_t> exon_counts;
+                exon_counts.reserve(exon_use.size());
+                for (auto& [_, c] : exon_use) exon_counts.push_back(c);
 
-            if (gene_pairs > 0) {
-                sample_sum += gene_sum / static_cast<double>(gene_pairs);
+                sample_entropy_sum += shannon_entropy(exon_counts);
+                sample_effective_sum += std::pow(2.0, shannon_entropy(tx_counts));
                 sample_genes++;
             }
+
+            if (sample_genes > 0) {
+                ss.gene_exon_entropy = sample_entropy_sum / static_cast<double>(sample_genes);
+                ss.effective_isoforms = sample_effective_sum / static_cast<double>(sample_genes);
+            }
         }
 
-        if (sample_genes > 0) {
-            ss.isoform_diversity = sample_sum / static_cast<double>(sample_genes);
-        }
-    }
-
-    // Explicitly free Jaccard data
-    gene_segment_exons.clear();
+        gene_segment_exons.clear();
     } // end if (detailed)
 
     // Exons per segment distribution
@@ -1029,6 +1039,7 @@ index_stats index_stats::collect(grove_type& grove, const collect_options& opts)
     }
 
     // --- Phase 5: Per-sample and per-source segment statistics + sharing distribution ---
+    logging::info("Phase 5: Computing per-sample segment sharing");
     for (auto& [seqid, seg_key] : segment_keys) {
         auto& seg = get_segment(seg_key->get_data());
 
@@ -1102,6 +1113,7 @@ index_stats index_stats::collect(grove_type& grove, const collect_options& opts)
     // Total edges from grove
     stats.total_edges = grove.edge_count();
 
+    logging::info("Stats collection complete");
     return stats;
 }
 
@@ -1322,7 +1334,8 @@ void index_stats::write(const std::string& path) const {
 
         section("Per sample");
         out << "   Exclusive = features only in this entry.\n";
-        out << "   Diversity = mean pairwise Jaccard distance (0=identical, 1=disjoint).\n";
+        out << "   Entropy = mean Shannon entropy over per-gene exon usage (bits).\n";
+        out << "   Eff.Iso = mean effective number of isoforms per gene (2^entropy).\n";
         out << "   Dedup = segments/transcripts (1.0 = all unique).\n\n";
 
         out << std::left << std::setw(30) << "Sample"
@@ -1332,7 +1345,8 @@ void index_stats::write(const std::string& path) const {
             << std::setw(10) << "Exons"
             << std::setw(10) << "Exclusive"
             << std::setw(10) << "Tx"
-            << std::setw(10) << "Diversity"
+            << std::setw(10) << "Entropy"
+            << std::setw(10) << "Eff.Iso"
             << std::setw(10) << "Dedup"
             << std::setw(12) << "Expr.Segs"
             << std::setw(12) << "Mean.Expr" << "\n";
@@ -1352,7 +1366,8 @@ void index_stats::write(const std::string& path) const {
                 << std::setw(10) << ss.exons
                 << std::setw(10) << ss.exclusive_exons
                 << std::setw(10) << ss.transcripts
-                << std::setw(10) << std::setprecision(2) << ss.isoform_diversity
+                << std::setw(10) << std::setprecision(2) << ss.gene_exon_entropy
+                << std::setw(10) << std::setprecision(2) << ss.effective_isoforms
                 << std::setw(10) << std::setprecision(3) << ss.deduplication_ratio;
 
             if (ss.expressed_segments > 0) {
@@ -1660,7 +1675,8 @@ void index_stats::write_sample_csv(const std::string& path) const {
         out << "\n";
     };
 
-    write_float_row("isoform_diversity", [](const sample_stats& s) { return s.isoform_diversity; }, 2);
+    write_float_row("gene_exon_entropy", [](const sample_stats& s) { return s.gene_exon_entropy; }, 3);
+    write_float_row("effective_isoforms", [](const sample_stats& s) { return s.effective_isoforms; }, 3);
     write_float_row("deduplication_ratio", [](const sample_stats& s) { return s.deduplication_ratio; }, 3);
     write_float_row("mean_expression", [](const sample_stats& s) -> double {
         return s.expressed_segments > 0 ? s.mean_expression : 0;
@@ -2172,8 +2188,9 @@ void index_stats::write_overview_tsv(const std::string& path) const {
     out << "branching_exons\t" << branching_exons << "\n";
     out << "deduplication_ratio\t" << deduplication_ratio << "\n";
 
-    if (isoform_diversity > 0) {
-        out << "isoform_diversity\t" << isoform_diversity << "\n";
+    if (multi_segment_genes > 0) {
+        out << "mean_gene_exon_entropy\t" << mean_gene_exon_entropy << "\n";
+        out << "mean_effective_isoforms\t" << mean_effective_isoforms << "\n";
         out << "multi_segment_genes\t" << multi_segment_genes << "\n";
     }
 
@@ -2229,7 +2246,7 @@ void index_stats::write_per_sample_tsv(const std::string& path) const {
     std::sort(sample_ids.begin(), sample_ids.end());
 
     out << "sample\ttype\tgenes\tsegments\texclusive_segments\texons\texclusive_exons"
-        << "\ttranscripts\tisoform_diversity\tdeduplication_ratio"
+        << "\ttranscripts\tgene_exon_entropy\teffective_isoforms\tdeduplication_ratio"
         << "\texpressed_segments\tmean_expression\n";
 
     out << std::fixed;
@@ -2244,7 +2261,8 @@ void index_stats::write_per_sample_tsv(const std::string& path) const {
             << "\t" << ss.segments << "\t" << ss.exclusive_segments
             << "\t" << ss.exons << "\t" << ss.exclusive_exons
             << "\t" << ss.transcripts
-            << "\t" << std::setprecision(2) << ss.isoform_diversity
+            << "\t" << std::setprecision(3) << ss.gene_exon_entropy
+            << "\t" << std::setprecision(3) << ss.effective_isoforms
             << "\t" << std::setprecision(3) << ss.deduplication_ratio;
 
         if (ss.expressed_segments > 0) {
