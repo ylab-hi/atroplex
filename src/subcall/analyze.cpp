@@ -69,7 +69,7 @@ void analyze::execute(const cxxopts::ParseResult& args) {
 
     std::string basename = resolve_prefix(args);
 
-    // Full collection including Jaccard diversity (Phase 4b)
+    // Full collection including diversity metrics (Phase 4b)
     // Stream large outputs (conserved exons, branch details) directly to files
     logging::info("Running pan-transcriptome analysis...");
     index_stats::collect_options opts;
@@ -79,6 +79,7 @@ void analyze::execute(const cxxopts::ParseResult& args) {
     auto stats = index_stats::collect(*grove, opts);
 
     // Write full text report
+    logging::info("Writing text report");
     std::string stats_path = (analysis_dir / (basename + ".analysis.txt")).string();
     stats.write(stats_path);
 
@@ -109,6 +110,7 @@ void analyze::execute(const cxxopts::ParseResult& args) {
     // Write exon and segment sharing into subfolder
     // (conserved_exons.tsv is already streamed by collect())
     if (!stats.per_sample.empty()) {
+        logging::info("Writing sharing TSVs");
         auto sharing_dir = analysis_dir / "sharing";
         std::filesystem::create_directories(sharing_dir);
 
@@ -127,6 +129,7 @@ void analyze::execute(const cxxopts::ParseResult& args) {
 
     // Write splicing hubs summary (branch_details.tsv is already streamed by collect())
     if (!stats.splicing_hubs.empty()) {
+        logging::info("Writing splicing hubs TSV");
         auto hubs_dir = analysis_dir / "splicing_hubs";
         std::filesystem::create_directories(hubs_dir);
 
