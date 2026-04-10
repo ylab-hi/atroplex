@@ -244,15 +244,11 @@ void analysis_report::write_overview(const std::string& path) const {
         single_exon = static_cast<size_t>(std::count(epsg.begin(), epsg.end(), size_t{1}));
     }
 
-    double dedup = (total_transcripts > 0)
-        ? static_cast<double>(total_segments) / static_cast<double>(total_transcripts)
-        : 0;
-
     out << "metric\tvalue\n" << std::fixed;
     out << "samples\t" << per_sample.size() << "\n";
     out << "genes\t" << total_genes << "\n";
     out << "transcripts\t" << total_transcripts << "\n";
-    out << "segments\t" << total_segments << "\n";
+    out << "segments/isoforms\t" << total_segments << "\n";
     out << "exons\t" << total_exons << "\n";
     out << "graph_edges\t" << total_edges << "\n";
     out << "absorbed_segments\t" << absorbed_segments << "\n";
@@ -265,7 +261,6 @@ void analysis_report::write_overview(const std::string& path) const {
     out << "mean_exons_per_segment\t" << mean_eps << "\n";
     out << "median_exons_per_segment\t" << med_eps << "\n";
     out << "max_exons_per_segment\t" << max_eps << "\n";
-    out << "deduplication_ratio\t" << std::setprecision(3) << dedup << "\n";
 
     logging::info("Overview written to: " + path);
 }
@@ -279,7 +274,7 @@ void analysis_report::write_per_sample(const std::string& path) const {
     out << "sample\ttype\tgenes\tsegments\texclusive_segments\tshared_segments"
         << "\tconserved_segments\texons\texclusive_exons\tshared_exons"
         << "\tconserved_exons\ttranscripts\tsingle_exon_segments"
-        << "\texpressed_segments\tmean_expression\tdeduplication_ratio\n";
+        << "\texpressed_segments\tmean_expression\n";
     out << std::fixed;
 
     for (size_t sid = 0; sid < per_sample.size(); ++sid) {
@@ -289,9 +284,6 @@ void analysis_report::write_per_sample(const std::string& path) const {
         const auto& info = registry.get(static_cast<uint32_t>(sid));
         std::string label = info.id.empty() ? std::to_string(sid) : info.id;
 
-        double dedup = (sc.transcripts > 0)
-            ? static_cast<double>(sc.segments) / static_cast<double>(sc.transcripts)
-            : 0;
         double mean_expr = (sc.expressed_segments > 0)
             ? sc.expression_sum / static_cast<double>(sc.expressed_segments)
             : 0;
@@ -310,7 +302,6 @@ void analysis_report::write_per_sample(const std::string& path) const {
             << "\t" << sc.single_exon_segments
             << "\t" << sc.expressed_segments
             << "\t" << std::setprecision(2) << mean_expr
-            << "\t" << std::setprecision(3) << dedup
             << "\n";
     }
 
