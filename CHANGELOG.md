@@ -35,6 +35,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fixed `read_clusterer::stats::max_cluster_size` type from `double` to `size_t`
 
 ### Performance
+- Added early-exit filters to absorption matching (#23): O(1) exon count and span guards skip candidates that cannot possibly be subsequence matches, avoiding expensive O(N_parent × N_sub) scans
+- Added explicit `subsequence_type::FSM` for fuzzy full-length matches (#23): replaces the old `ISM_3PRIME` shortcut with a semantically correct type
 - Cached exon counts before transcript sort (#22): eliminates O(T·E·log T) rescans in `process_gene()`, speeding up per-gene transcript ordering
 
 ### Refactored

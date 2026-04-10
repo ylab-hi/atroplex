@@ -25,6 +25,7 @@
 /// See absorption_rules.txt for full documentation.
 enum class subsequence_type {
     NONE,               ///< Not a contiguous subsequence
+    FSM,                ///< Rule 0: full-length match (same exon count, all boundaries within fuzzy tolerance) → ABSORB
     ISM_5PRIME,         ///< Rule 1: 5' intact, 3' truncated → KEEP
     ISM_3PRIME,         ///< Rule 2: 5' truncated (1-2 exons), 3' intact → ABSORB
     DEGRADATION_3PRIME, ///< Rule 3: 5' truncated (3+ exons), 3' intact → DROP/KEEP

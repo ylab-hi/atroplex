@@ -85,6 +85,9 @@ void segment_builder::create_segment(
             auto& candidate_seg = get_segment(entry.segment->get_data());
             if (candidate_seg.absorbed) continue;
 
+            // Rule 5 requires equal exon counts — skip before calling into the helpers.
+            if (entry.exon_chain.size() != exon_chain.size()) continue;
+
             if (has_same_intron_chain(exon_chain, entry.exon_chain) &&
                 terminal_boundaries_within_tolerance(exon_chain, entry.exon_chain, TERMINAL_TOLERANCE_BP)) {
                     merge_into_segment(entry.segment, transcript_id, sample_id,
@@ -112,7 +115,7 @@ void segment_builder::create_segment(
         }
     }
 
-    // Step 4: Rules 1/2/3/4 — Subsequence matching (pointer identity, then fuzzy)
+    // Step 4: Rules 0(fuzzy)/1/2/3/4 — Subsequence matching (pointer identity, then fuzzy)
     if (absorb && exon_chain.size() >= 2 && has_gene_entries) {
         {
             key_ptr best_parent = nullptr;
@@ -123,6 +126,18 @@ void segment_builder::create_segment(
                 auto& candidate_seg = get_segment(entry.segment->get_data());
                 if (candidate_seg.absorbed) continue;
 
+                // Early-exit: parent must have at least as many exons as child.
+                // Equal-size chains can still match via fuzzy-FSM (all boundaries
+                // shifted by <=tolerance) and are handled as subsequence_type::FSM.
+                if (entry.exon_chain.size() < exon_chain.size()) continue;
+
+                // Early-exit: child's coordinate span must fit within parent's span
+                // (accounting for fuzzy tolerance on the boundaries).
+                const auto& parent_first = entry.exon_chain.front()->get_value();
+                const auto& parent_last = entry.exon_chain.back()->get_value();
+                if (span_start + fuzzy_tolerance < parent_first.get_start()) continue;
+                if (span_end > parent_last.get_end() + fuzzy_tolerance) continue;
+
                 auto match = classify_subsequence(exon_chain, entry.exon_chain);
                 if (match == subsequence_type::NONE) {
                     match = fuzzy_classify_subsequence(exon_chain, entry.exon_chain, fuzzy_tolerance);
@@ -130,6 +145,14 @@ void segment_builder::create_segment(
 
                 if (match == subsequence_type::NONE) continue;
                 if (match == subsequence_type::ISM_5PRIME) continue; // Rule 1: keep
+
+                // Fuzzy-FSM takes priority over any ISM/fragment match — absorb immediately.
+                if (match == subsequence_type::FSM) {
+                    merge_into_segment(entry.segment, transcript_id, sample_id,
+                                      gff_source, expression_value, transcript_biotype);
+                    get_segment(entry.segment->get_data()).absorbed_count++;
+                    return;
+                }
 
                 if (entry.exon_chain.size() > best_exon_count) {
                     best_parent = entry.segment;
@@ -263,8 +286,8 @@ subsequence_type segment_builder::fuzzy_classify_subsequence(
             }
         }
         if (all_match) {
-            // Fuzzy FSM: same exon count, all within tolerance → absorb
-            if (sub.size() == parent.size()) return subsequence_type::ISM_3PRIME;
+            // Fuzzy FSM: same exon count, all boundaries within tolerance
+            if (sub.size() == parent.size()) return subsequence_type::FSM;
             bool shares_first = (start == 0);
             bool shares_last  = (start + sub.size() == parent.size());
             if (shares_first) return subsequence_type::ISM_5PRIME;
@@ -341,13 +364,19 @@ void segment_builder::try_reverse_absorption(
         segment_cache.erase(entry.structure_key);
     };
 
+    // Precompute new segment's coordinate span for span filter
+    const auto& new_first = new_exon_chain.front()->get_value();
+    const auto& new_last = new_exon_chain.back()->get_value();
+    size_t new_start = new_first.get_start();
+    size_t new_end = new_last.get_end();
+
     for (auto& entry : gene_it->second) {
         if (entry.segment == new_seg) continue;
 
         auto& candidate_seg = get_segment(entry.segment->get_data());
         if (candidate_seg.absorbed) continue;
 
-        // Rule 5: Terminal variant
+        // Rule 5: Terminal variant (requires equal exon count)
         if (entry.exon_chain.size() == new_exon_chain.size() &&
             has_same_intron_chain(entry.exon_chain, new_exon_chain) &&
             terminal_boundaries_within_tolerance(entry.exon_chain, new_exon_chain, TERMINAL_TOLERANCE_BP)) {
@@ -355,7 +384,18 @@ void segment_builder::try_reverse_absorption(
             continue;
         }
 
-        // Rules 1/2/3/4: Subsequence (pointer, then fuzzy)
+        // Early-exit: candidate (child) must have at most as many exons as new
+        // segment (parent). Equal-size candidates can still match via fuzzy-FSM.
+        if (entry.exon_chain.size() > new_exon_chain.size()) continue;
+
+        // Early-exit: candidate's span must fit within the new segment's span
+        // (accounting for fuzzy tolerance).
+        const auto& cand_first = entry.exon_chain.front()->get_value();
+        const auto& cand_last = entry.exon_chain.back()->get_value();
+        if (cand_first.get_start() + fuzzy_tolerance < new_start) continue;
+        if (cand_last.get_end() > new_end + fuzzy_tolerance) continue;
+
+        // Rules 0(fuzzy)/1/2/3/4: Subsequence (pointer, then fuzzy)
         auto match = classify_subsequence(entry.exon_chain, new_exon_chain);
         if (match == subsequence_type::NONE) {
             match = fuzzy_classify_subsequence(entry.exon_chain, new_exon_chain, fuzzy_tolerance);
@@ -364,7 +404,8 @@ void segment_builder::try_reverse_absorption(
         if (match == subsequence_type::NONE) continue;
         if (match == subsequence_type::ISM_5PRIME) continue; // Rule 1: keep
 
-        if (match == subsequence_type::ISM_3PRIME) {
+        if (match == subsequence_type::FSM || match == subsequence_type::ISM_3PRIME) {
+            // Fuzzy-FSM or Rule 2: always absorb candidate into new segment
             absorb_into_parent(candidate_seg, entry);
         } else {
             // Rules 3/4: drop vs ref, keep vs sample
