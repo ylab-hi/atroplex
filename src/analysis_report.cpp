@@ -136,6 +136,7 @@ void analysis_report::collect(grove_type& grove) {
                 acc.sample_bits.merge(seg.sample_idx);
 
                 size_t tx_count = seg.transcript_ids.size();
+                total_transcripts += tx_count;
                 for (uint32_t sid : seg.sample_idx) {
                     acc.sample_tx[sid] += tx_count;
                 }
@@ -194,6 +195,7 @@ void analysis_report::collect(grove_type& grove) {
         active_genes.clear();
     }
 
+    total_exons = visited_exons.size();
     total_edges = grove.edge_count();
 
     // Summary log
@@ -215,22 +217,8 @@ void analysis_report::write_overview(const std::string& path) const {
     std::ofstream out(path);
     if (!out.is_open()) return;
 
-    // Derive globals by summing per-sample maxima
-    // (global total = count of unique features, not sum across samples)
     size_t total_segments = exons_per_segment.size();
     size_t total_genes = transcripts_per_gene.size();
-
-    size_t total_transcripts = 0;
-    for (const auto& sc : per_sample) {
-        total_transcripts = std::max(total_transcripts, sc.transcripts);
-    }
-
-    // Exon total: count of unique exons = max across samples
-    // (each sample sees a subset; the max is the annotation's total)
-    size_t total_exons = 0;
-    for (const auto& sc : per_sample) {
-        total_exons = std::max(total_exons, sc.exons);
-    }
 
     // Distribution stats
     auto txpg = transcripts_per_gene;

@@ -68,7 +68,9 @@ struct analysis_report {
     std::vector<size_t> transcripts_per_gene;
     std::vector<size_t> exons_per_segment;
 
-    // ── Counters not derivable from per-chromosome/per-sample ───────
+    // ── Counters not derivable from per-sample ────────────────────────
+    size_t total_transcripts = 0;  // sum of transcript_ids.size() across all segments
+    size_t total_exons = 0;        // unique exons (pointer-deduplicated)
     size_t absorbed_segments = 0;
     size_t total_edges = 0;
 
