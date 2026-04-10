@@ -35,6 +35,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fixed `read_clusterer::stats::max_cluster_size` type from `double` to `size_t`
 
 ### Performance
+- Replaced Jaccard diversity with O(N) entropy metrics (#25): eliminates O(N² × E) pairwise computation in Phase 4b; new `gene_exon_entropy` and `effective_isoforms` metrics scale to large groves without the 200-segment cap
+- Added progress logging to analyze phases (#25): `collect()` now emits per-phase status messages for long-running analyses
 - Added early-exit filters to absorption matching (#23): O(1) exon count and span guards skip candidates that cannot possibly be subsequence matches, avoiding expensive O(N_parent × N_sub) scans
 - Added explicit `subsequence_type::FSM` for fuzzy full-length matches (#23): replaces the old `ISM_3PRIME` shortcut with a semantically correct type
 - Cached exon counts before transcript sort (#22): eliminates O(T·E·log T) rescans in `process_gene()`, speeding up per-gene transcript ordering
