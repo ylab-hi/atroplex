@@ -1,14 +1,7 @@
-add_executable(discover_tests sqanti_category_test.cpp ${ATROPLEX_LIB_SOURCES})
-target_include_directories(discover_tests PRIVATE
-    "${CMAKE_SOURCE_DIR}/include"
-    ${HTSLIB_INCLUDE_DIRS}
-)
-target_link_libraries(discover_tests
+add_executable(discover_tests sqanti_category_test.cpp)
+target_link_libraries(discover_tests PRIVATE
+    atroplex_core
     gtest gtest_main
-    genogrove
-    cxxopts
-    ${HTSLIB_LIBRARIES}
-    ZLIB::ZLIB
 )
 
 # Copy fixtures at build time so new files are always picked up

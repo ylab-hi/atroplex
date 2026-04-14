@@ -5,12 +5,14 @@ FetchContent_Declare(
     GIT_REPOSITORY https://github.com/google/googletest.git
     GIT_TAG v1.15.2
 )
+
 FetchContent_MakeAvailable(googletest)
 include(GoogleTest)
 
-# Collect atroplex source files (excluding main.cpp)
-file(GLOB ATROPLEX_LIB_SOURCES "${CMAKE_SOURCE_DIR}/src/*.cpp" "${CMAKE_SOURCE_DIR}/src/subcall/*.cpp")
-list(FILTER ATROPLEX_LIB_SOURCES EXCLUDE REGEX "main\\.cpp$")
+# Test binaries link against the shared atroplex_core static library rather
+# than re-compiling the full source glob. Without this, every test binary
+# triggers another N-way parallel compile of the library, which OOMs GCC on
+# the CI runner.
 
 add_subdirectory(build)
 add_subdirectory(discover)
