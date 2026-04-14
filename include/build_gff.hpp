@@ -24,6 +24,7 @@
 #include <genogrove/io/gff_reader.hpp>
 
 // class
+#include "build_summary.hpp"
 #include "genomic_feature.hpp"
 #include "sample_info.hpp"
 #include "segment_builder.hpp"
@@ -60,10 +61,11 @@ public:
                       chromosome_segment_caches& segment_caches,
                       chromosome_gene_segment_indices& gene_indices,
                       size_t& segment_count,
-                      uint32_t num_threads = 0,
-                      float min_expression = -1.0f,
-                      bool absorb = true,
-                      size_t fuzzy_tolerance = 5);
+                      uint32_t num_threads,
+                      float min_expression,
+                      bool absorb,
+                      size_t fuzzy_tolerance,
+                      build_counters& counters);
 
     /**
      * Parse GTF/GFF header to extract sample metadata
@@ -115,9 +117,10 @@ public:
         gene_segment_index_type& gene_index,
         std::optional<uint32_t> sample_id,
         size_t& segment_count,
-        float min_expression = -1.0f,
-        bool absorb = true,
-        size_t fuzzy_tolerance = 5
+        float min_expression,
+        bool absorb,
+        size_t fuzzy_tolerance,
+        build_counters& counters
     );
 
 private:
@@ -142,9 +145,10 @@ private:
         gene_segment_index_type& gene_index,
         std::optional<uint32_t> sample_id,
         size_t& segment_count,
-        float min_expression = -1.0f,
-        bool absorb = true,
-        size_t fuzzy_tolerance = 5
+        float min_expression,
+        bool absorb,
+        size_t fuzzy_tolerance,
+        build_counters& counters
     );
 
     /**

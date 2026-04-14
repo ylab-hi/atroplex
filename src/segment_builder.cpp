@@ -63,7 +63,8 @@ void segment_builder::create_segment(
     float expression_value,
     const std::string& transcript_biotype,
     bool absorb,
-    size_t fuzzy_tolerance
+    size_t fuzzy_tolerance,
+    build_counters& counters
 ) {
     std::string structure_key = make_exon_structure_key(seqid, exon_coords);
 
@@ -72,6 +73,7 @@ void segment_builder::create_segment(
     if (cached != segment_cache.end()) {
         merge_into_segment(cached->second, transcript_id, sample_id,
                           gff_source, expression_value, transcript_biotype);
+        counters.merged_transcripts++;
         return;
     }
 
@@ -93,6 +95,7 @@ void segment_builder::create_segment(
                     merge_into_segment(entry.segment, transcript_id, sample_id,
                                       gff_source, expression_value, transcript_biotype);
                     get_segment(entry.segment->get_data()).absorbed_count++;
+                    counters.merged_transcripts++;
                     return;
                 }
             }
@@ -109,8 +112,10 @@ void segment_builder::create_segment(
             case mono_exon_class::INTRON_RETENTION:
                 break;  // Rule 7: keep — fall through to segment creation
             case mono_exon_class::GENE_OVERLAP:
+                counters.discarded_transcripts++;
                 return; // Rule 6: drop
             case mono_exon_class::INTERGENIC:
+                counters.discarded_transcripts++;
                 return; // Rule 8: drop
         }
     }
@@ -151,6 +156,7 @@ void segment_builder::create_segment(
                     merge_into_segment(entry.segment, transcript_id, sample_id,
                                       gff_source, expression_value, transcript_biotype);
                     get_segment(entry.segment->get_data()).absorbed_count++;
+                    counters.merged_transcripts++;
                     return;
                 }
 
@@ -167,11 +173,13 @@ void segment_builder::create_segment(
                     merge_into_segment(best_parent, transcript_id, sample_id,
                                       gff_source, expression_value, transcript_biotype);
                     get_segment(best_parent->get_data()).absorbed_count++;
+                    counters.merged_transcripts++;
                     return;
                 }
 
                 // Rules 3/4: drop vs ref, keep vs sample
                 if (is_parent_annotation(best_parent)) {
+                    counters.discarded_transcripts++;
                     return; // Drop
                 }
                 // vs sample: keep — fall through to creation

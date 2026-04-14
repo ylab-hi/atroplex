@@ -51,8 +51,9 @@ protected:
         uint32_t sample_id = sample_registry::instance().register_data(info);
 
         // absorb=false to keep all segments as separate candidates
+        build_counters counters;
         build_gff::build(*grove, fixture, sample_id, exon_caches, segment_caches,
-                         gene_indices, segment_count, 0, -1.0f, false);
+                         gene_indices, segment_count, 0, -1.0f, false, 5, counters);
 
         ASSERT_GT(segment_count, 0) << "No segments built from fixture";
     }
@@ -380,8 +381,9 @@ protected:
         info.annotation_source = "TEST";
         uint32_t sample_id = sample_registry::instance().register_data(info);
 
+        build_counters counters;
         build_gff::build(*grove, gtf, sample_id, exon_caches, segment_caches,
-                         gene_indices, segment_count, 0, -1.0f, false);
+                         gene_indices, segment_count, 0, -1.0f, false, 5, counters);
     }
 
     std::unique_ptr<grove_type> grove;

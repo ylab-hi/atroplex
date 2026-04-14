@@ -18,6 +18,7 @@
 #include <unordered_map>
 #include <mutex>
 
+#include "build_summary.hpp"
 #include "genomic_feature.hpp"
 #include "sample_info.hpp"
 
@@ -77,10 +78,11 @@ public:
         std::optional<uint32_t> sample_id,
         const std::string& gff_source,
         size_t& segment_count,
-        float expression_value = -1.0f,
-        const std::string& transcript_biotype = "",
-        bool absorb = true,
-        size_t fuzzy_tolerance = 5
+        float expression_value,
+        const std::string& transcript_biotype,
+        bool absorb,
+        size_t fuzzy_tolerance,
+        build_counters& counters
     );
 
     /**

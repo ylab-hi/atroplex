@@ -63,9 +63,10 @@ protected:
         anno_info.annotation_source = "TEST";
         annotation_id = sample_registry::instance().register_data(anno_info);
 
+        build_counters counters;
         build_gff::build(*grove, anno_path, annotation_id, exon_caches,
                          segment_caches, gene_indices, segment_count,
-                         0, -1.0f, false);
+                         0, -1.0f, false, 5, counters);
 
         // Register and build sample
         sample_info sample_info_obj("TEST_SAMPLE");
@@ -74,7 +75,7 @@ protected:
 
         build_gff::build(*grove, sample_path, sample_id, exon_caches,
                          segment_caches, gene_indices, segment_count,
-                         0, -1.0f, false);
+                         0, -1.0f, false, 5, counters);
 
         ASSERT_GT(segment_count, 0);
     }
