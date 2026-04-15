@@ -38,7 +38,9 @@ atroplex build -b annotation.gtf
 atroplex build -m manifest.tsv
 
 # Build with replicate merging and expression filter
-atroplex build -m manifest.tsv --min-replicates 2 --min-expression 3
+# (manifest's `expression_attribute` column declares which GFF attribute
+# to read on each sample — here: `counts` for TALON samples)
+atroplex build -m manifest.tsv --min-replicates 2 --min-counts 3
 
 # Run full per-sample analysis (sharing, splicing hubs, diversity)
 atroplex analyze -m manifest.tsv -o results/
@@ -72,11 +74,20 @@ atroplex build -b gencode.gtf -b sample1.gtf -b sample2.gtf
 # With replicate merging (require feature in >= 2 replicates)
 atroplex build -m manifest.tsv --min-replicates 2
 
-# With expression filtering (skip transcripts below threshold)
-atroplex build -m manifest.tsv --min-expression 3
+# With expression filtering — thresholds are per-attribute and each sample
+# declares which attributes to read via the manifest's `expression_attribute`
+# column. A TALON manifest row with `expression_attribute = counts` is
+# filtered by --min-counts; a StringTie row with `expression_attribute = cov,TPM`
+# is filtered by both --min-cov and --min-TPM (AND semantics, missing
+# attributes on a given transcript are pass-through).
+atroplex build -m manifest.tsv --min-counts 3
+atroplex build -m manifest.tsv --min-cov 1 --min-TPM 0.5
 
 # Disable ISM absorption
 atroplex build -m manifest.tsv --no-absorb
+
+# Physical tombstone removal (slower, produces smaller .ggx for distribution)
+atroplex build -m manifest.tsv --prune-tombstones
 ```
 
 Build always produces a serialized index (`.ggx`) and a build summary (`.ggx.summary`).
@@ -148,10 +159,15 @@ Export-specific options: `--sample`, `--gene`, `--region chr:start-end`, `--min-
 | `-b, --build-from` | Build from GFF/GTF file(s) |
 | `-g, --genogrove` | Load pre-built genogrove index (.ggx) |
 | `-k, --order` | Genogrove tree order (default: 3) |
-| `--min-expression` | Minimum expression to include a transcript (default: -1, disabled) |
+| `--min-counts` | Minimum `counts` value for transcripts whose sample declares `counts` in its manifest `expression_attribute` column (default: -1, disabled) |
+| `--min-TPM` | Minimum `TPM` value for transcripts whose sample declares `TPM` (default: -1, disabled) |
+| `--min-FPKM` | Minimum `FPKM` value for transcripts whose sample declares `FPKM` (default: -1, disabled) |
+| `--min-RPKM` | Minimum `RPKM` value for transcripts whose sample declares `RPKM` (default: -1, disabled) |
+| `--min-cov` | Minimum `cov` value for transcripts whose sample declares `cov` (default: -1, disabled) |
 | `--no-absorb` | Disable ISM segment absorption into longer parent segments |
 | `--fuzzy-tolerance` | Max bp difference for fuzzy exon boundary matching (default: 5) |
 | `--min-replicates` | Merge biological replicates; require features in >= N replicates (default: 0, no merge) |
+| `--prune-tombstones` | Physically remove absorbed segments from the grove post-build (slower, smaller .ggx) |
 
 ## Input Files
 
@@ -160,10 +176,11 @@ Export-specific options: `--sample`, `--gene`, `--region chr:start-end`, `--min-
 A tab-separated file specifying input files with metadata. This is the recommended way to build a pan-transcriptome with full sample tracking.
 
 ```tsv
-file	id	type	assay	biosample	condition	species	platform	pipeline	description
-gencode.v49.gtf	GENCODE_v49	annotation	.	.	.	Homo sapiens	.	GENCODE	Reference annotation
-sample1.gtf	HL60_M1_rep1	sample	RNA-seq	HL-60	M1 macrophage	Homo sapiens	PacBio Sequel II	TALON	HL-60 M1 replicate 1
-sample2.gtf	HL60_M1_rep2	sample	RNA-seq	HL-60	M1 macrophage	Homo sapiens	PacBio Sequel II	TALON	HL-60 M1 replicate 2
+file	id	type	assay	biosample	condition	species	platform	pipeline	expression_attribute	description
+gencode.v49.gtf	GENCODE_v49	annotation	.	.	.	Homo sapiens	.	GENCODE	.	Reference annotation
+sample1.gtf	HL60_M1_rep1	sample	RNA-seq	HL-60	M1 macrophage	Homo sapiens	PacBio Sequel II	TALON	counts	HL-60 M1 replicate 1
+sample2.gtf	HL60_M1_rep2	sample	RNA-seq	HL-60	M1 macrophage	Homo sapiens	PacBio Sequel II	TALON	counts	HL-60 M1 replicate 2
+strtie1.gtf	STRTIE_01	sample	RNA-seq	brain	healthy	Homo sapiens	Illumina NovaSeq	StringTie	cov,TPM	StringTie sample with both cov and TPM
 ```
 
 - Tab-separated, `"."` for empty values (VCF convention)
@@ -173,6 +190,7 @@ sample2.gtf	HL60_M1_rep2	sample	RNA-seq	HL-60	M1 macrophage	Homo sapiens	PacBio 
 - Relative paths resolved from manifest directory
 - `id` auto-generated from filename if not provided
 - Optional `group` column for replicate grouping; if absent, groups are auto-inferred by stripping `_repNN` suffix from sample IDs
+- Optional `expression_attribute` column declares which GFF attributes carry quantitative expression for this sample: `counts`, `TPM`, `FPKM`, `RPKM`, `cov`, or a comma-separated list like `cov,TPM` for StringTie samples that carry multiple quantifications. Empty or `.` means no expression filtering for the sample. The FIRST declared attribute is what gets stored per-feature and appears in per-sample output column headers (e.g., `SAMPLE1.counts`, `STRTIE_01.cov`)
 
 The `type` field matters: only entries with `type = "sample"` count toward "conserved" thresholds (features present in ALL samples). Reference annotations participate in structural analysis but don't inflate sample counts.
 
@@ -193,11 +211,30 @@ When using `--build-from` without a manifest, metadata is parsed from GFF/GTF he
 
 Each exon feature must have `gene_id` and `transcript_id` in column 9.
 
-#### Expression Auto-Detection
+#### Expression Attributes
 
-Expression values are automatically parsed from transcript-level GFF entries. Priority order: `counts` > `TPM` > `FPKM` > `RPKM` > `cov`. Values are stored per-sample on segment features. The expression type (counts, TPM, etc.) is recorded on the sample and appears in output column headers.
+Each sample declares which GFF attribute(s) carry quantitative expression via the manifest's `expression_attribute` column. Supported values: `counts`, `TPM`, `FPKM`, `RPKM`, `cov`. Multiple may be listed comma-separated (e.g., `cov,TPM` for StringTie samples). Empty or `.` disables expression filtering and storage for that sample.
 
-Use `scripts/inject_expression.py` to add expression counts from TALON quantification TSV files into GTF files before building.
+- The **first** declared attribute is what gets stored per-feature via `expression_store` and appears as the column header suffix in per-sample outputs (e.g., `ENCSR_01.counts`, `STRTIE_01.cov`).
+- All declared attributes are **evaluated against their matching CLI threshold** (`--min-counts`, `--min-TPM`, etc.) with **AND semantics** — a transcript is kept only if every (declared attribute that has an active threshold) meets it. Missing attributes on a given transcript are pass-through.
+- Samples that declare no `expression_attribute` (or use `.`) are never filtered on expression — same pass-through semantics as annotations.
+- A CLI threshold that no manifest sample declares emits a warning at build time so you know the filter had no effect.
+
+Example: a mixed ENCODE+StringTie build where TALON samples are filtered on raw read counts and StringTie samples are filtered on StringTie coverage, while GENCODE passes through unfiltered:
+
+```tsv
+file             id          type        expression_attribute
+gencode.gtf      GENCODE     annotation  .
+encsr_01.gtf     ENCSR_01    sample      counts
+encsr_02.gtf     ENCSR_02    sample      counts
+strtie_01.gtf    STRTIE_01   sample      cov,TPM
+```
+
+```bash
+atroplex build -m manifest.tsv --min-counts 3 --min-cov 1 --min-TPM 0.5
+```
+
+Use `scripts/inject_expression.py` to add TALON quantification counts into GTF files before building.
 
 ### BAM/SAM Files
 
