@@ -52,6 +52,7 @@ build_summary builder::build_from_samples(grove_type& grove,
                                   bool absorb,
                                   int min_replicates,
                                   size_t fuzzy_tolerance,
+                                  bool prune_tombstones,
                                   chromosome_exon_caches* out_exon_caches,
                                   chromosome_gene_segment_indices* out_gene_indices) {
     if (samples.empty()) {
@@ -178,8 +179,9 @@ build_summary builder::build_from_samples(grove_type& grove,
         counters.replicates_merged = merge_replicates(exon_caches, segment_caches, min_replicates);
     }
 
-    // --- Physically remove absorbed segments from the grove ---
-    counters.absorbed_segments = remove_tombstones(grove, segment_caches, gene_indices);
+    // --- Count (and optionally physically remove) absorbed segments ---
+    counters.absorbed_segments = remove_tombstones(
+        grove, segment_caches, gene_indices, prune_tombstones);
 
     // --- Collect summary statistics ---
     build_summary stats;
@@ -330,40 +332,56 @@ size_t builder::merge_replicates(
 }
 
 size_t builder::remove_tombstones(
-    grove_type& /*grove*/,
+    grove_type& grove,
     chromosome_segment_caches& segment_caches,
-    chromosome_gene_segment_indices& gene_indices
+    chromosome_gene_segment_indices& gene_indices,
+    bool physical
 ) {
-    // Physical removal via grove.remove_key() is O(N × E) because
-    // genogrove's graph_overlay::remove_edges_to scans the full adjacency
-    // map on every call (even though segments are never edge targets, so
-    // the scan always finds zero matches). On realistic indices this
-    // blocks the build for hours after "Grove construction complete".
+    // Phase 1 (always): walk gene_indices, count tombstones, and (when
+    // physical == true) issue grove.remove_key calls while we have the
+    // seqid + key pointer handy. We also collect the tombstone
+    // segment_indices so the orphan-edge sweep below can drop EXON_TO_EXON
+    // chain edges that carry a dead id.
     //
-    // For now we only COUNT tombstones and prune them from segment_caches
-    // and gene_indices so downstream summary collection doesn't see them.
-    // The tombstoned keys themselves stay in the B+ tree; every consumer
-    // already skips them defensively via `if (seg.absorbed) continue;`.
-    // This wastes a bit of memory (and bloats the serialized .ggx) but
-    // keeps the build moving. See TODO: replace with a batch-removal
-    // genogrove API that skips the incoming-edge scan when segments are
-    // known to be edge-source-only.
-
+    // Note on the physical path cost: each grove.remove_key() call fans
+    // out into genogrove's graph_overlay::remove_edges_to, which is O(E)
+    // (full adjacency scan). Segments are never edge targets, so the
+    // scan always finds zero matches but still pays the full cost — that
+    // makes the total sweep O(N × E) and can block builds for minutes
+    // to hours on realistic indices. Gated behind --prune-tombstones so
+    // callers opt in when they want a clean distributable .ggx.
+    std::unordered_set<size_t> tombstone_ids;
     size_t removed = 0;
 
-    // Count absorbed entries via the authoritative source (gene_indices).
     for (auto& [seqid, gene_idx] : gene_indices) {
         for (auto& [gene_id, entries] : gene_idx) {
             for (auto& entry : entries) {
                 auto& feature = entry.segment->get_data();
                 if (!is_segment(feature)) continue;
-                if (get_segment(feature).absorbed) ++removed;
+                auto& seg = get_segment(feature);
+                if (!seg.absorbed) continue;
+
+                ++removed;
+                if (physical) {
+                    tombstone_ids.insert(seg.segment_index);
+                    grove.remove_key(seqid, entry.segment);
+                }
             }
         }
     }
 
-    // Prune absorbed entries from gene_indices so that downstream stats
-    // collection never sees a tombstone.
+    // Phase 2 (physical only): one pass to drop orphan EXON_TO_EXON
+    // edges carrying a tombstone's segment_index. remove_key only
+    // handles edges where the segment key itself is source or target;
+    // chain edges between exon keys are not touched automatically.
+    if (physical && !tombstone_ids.empty()) {
+        grove.remove_edges_if([&tombstone_ids](const auto& e) {
+            return tombstone_ids.count(e.metadata.id) > 0;
+        });
+    }
+
+    // Phase 3 (always): prune absorbed entries from gene_indices so that
+    // downstream stats collection never sees a tombstone.
     for (auto& [seqid, gene_idx] : gene_indices) {
         for (auto& [gene_id, entries] : gene_idx) {
             std::erase_if(entries, [](const segment_chain_entry& e) {
@@ -372,8 +390,9 @@ size_t builder::remove_tombstones(
         }
     }
 
-    // Safety net: try_reverse_absorption already erases from segment_cache
-    // at the moment it tombstones, but drop any stragglers defensively.
+    // Phase 4 (always): safety net on segment_caches. try_reverse_absorption
+    // already erases from segment_cache at the moment it tombstones, but
+    // drop any stragglers defensively.
     for (auto& [seqid, seg_cache] : segment_caches) {
         for (auto it = seg_cache.begin(); it != seg_cache.end(); ) {
             auto& feature = it->second->get_data();
@@ -386,9 +405,14 @@ size_t builder::remove_tombstones(
     }
 
     if (removed > 0) {
-        logging::info("Counted " + std::to_string(removed) +
-            " absorbed (tombstoned) segments; physical removal deferred "
-            "pending a batch genogrove remove_key variant");
+        if (physical) {
+            logging::info("Pruned " + std::to_string(removed) +
+                " absorbed (tombstoned) segments from grove");
+        } else {
+            logging::info("Counted " + std::to_string(removed) +
+                " absorbed (tombstoned) segments; tombstones kept in grove "
+                "(pass --prune-tombstones for physical removal)");
+        }
     }
 
     return removed;
@@ -415,5 +439,5 @@ build_summary builder::build_from_files(grove_type& grove,
         samples.push_back(std::move(info));
     }
 
-    return build_from_samples(grove, samples, threads, -1.0f, true, 0, 5, out_exon_caches);
+    return build_from_samples(grove, samples, threads, -1.0f, true, 0, 5, false, out_exon_caches);
 }

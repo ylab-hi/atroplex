@@ -55,6 +55,7 @@ public:
         bool absorb = true,
         int min_replicates = 0,
         size_t fuzzy_tolerance = 5,
+        bool prune_tombstones = false,
         chromosome_exon_caches* out_exon_caches = nullptr,
         chromosome_gene_segment_indices* out_gene_indices = nullptr
     );
@@ -89,15 +90,22 @@ private:
         int min_replicates
     );
 
-    /// Physically remove absorbed (tombstoned) segments from the grove.
-    /// Drops the segment keys from the B+ tree, clears orphan EXON_TO_EXON
-    /// edges carrying the tombstone's segment_index, and prunes the
-    /// segment_caches and gene_indices of stale entries. Returns the number
-    /// of tombstones removed.
+    /// Handle absorbed (tombstoned) segments after the build.
+    /// Always counts tombstones, prunes them from segment_caches and
+    /// gene_indices, and returns the count.
+    ///
+    /// When `physical == true`, additionally unlinks the tombstoned keys
+    /// from the B+ tree via grove.remove_key() and drops orphan
+    /// EXON_TO_EXON chain edges. This produces a smaller .ggx at the
+    /// cost of an O(N × E) sweep (genogrove's graph_overlay::remove_edges_to
+    /// is O(E) per call), which can block for minutes to hours on
+    /// realistic indices. Default `false` — tombstones stay in the tree
+    /// and every consumer already filters them defensively.
     static size_t remove_tombstones(
         grove_type& grove,
         chromosome_segment_caches& segment_caches,
-        chromosome_gene_segment_indices& gene_indices
+        chromosome_gene_segment_indices& gene_indices,
+        bool physical
     );
 };
 

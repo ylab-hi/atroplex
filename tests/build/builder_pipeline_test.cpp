@@ -3,8 +3,10 @@
  * remove_tombstones(), build_counters aggregation, and build_summary::collect /
  * write_summary.
  *
- * These exercise the orchestration layer that sits on top of build_gff / build_bam,
- * which the other test suites bypass by calling build_gff::build directly.
+ * These exercise the orchestration layer that sits on top of build_gff /
+ * build_bam, which the other test suites bypass by calling build_gff::build
+ * directly. Covers both the default tombstone-kept-in-tree path and the
+ * --prune-tombstones physical-removal path.
  */
 
 #include <gtest/gtest.h>
@@ -16,7 +18,6 @@
 #include <string>
 #include <vector>
 
-#include "build_gff.hpp"
 #include "build_summary.hpp"
 #include "builder.hpp"
 #include "genomic_feature.hpp"
@@ -173,21 +174,15 @@ TEST_F(BuilderPipelineTest, BuilderFullPipeline_CountersPopulated) {
     EXPECT_EQ(summary.total_genes, 1u);
 }
 
-// ── Tier 1.2: Tombstones are counted and pruned from caches ────────────────
+// ── Tier 1.2: default (no --prune-tombstones) counts but keeps in tree ─────
 //
-// remove_tombstones currently counts absorbed segments and prunes them
-// from segment_caches and gene_indices so downstream stats collection
-// never sees a tombstone. Physical removal from the B+ tree is deferred
-// pending a batch genogrove remove_key variant — grove.remove_key() is
-// O(E) per call today, and calling it per tombstone makes the sweep
-// O(N × E) which blocks realistic builds for hours.
-//
-// Verified here:
-//   - counters.absorbed_segments is populated
-//   - total_segments subtracts tombstones (= segment_count - absorbed)
-//   - the segment_feature with absorbed=true DOES remain in the tree
-//     (this is the temporary trade-off we accept)
-TEST_F(BuilderPipelineTest, RemoveTombstones_CountedNotRemoved) {
+// Default behavior: tombstones are counted and pruned from segment_caches
+// and gene_indices so downstream stats never see them, but the segment
+// keys remain physically in the B+ tree. All grove consumers defensively
+// filter `seg.absorbed`, so this is correctness-safe — the tradeoff is
+// a bit of memory / .ggx size. Opt into the slow path with
+// --prune-tombstones when producing a distributable index.
+TEST_F(BuilderPipelineTest, RemoveTombstones_DefaultKeepsInTree) {
     auto ism_path = write_ism_gtf();
     auto parent_path = write_parent_gtf();
 
@@ -198,22 +193,22 @@ TEST_F(BuilderPipelineTest, RemoveTombstones_CountedNotRemoved) {
     samples.back().type = "sample";
 
     grove_type grove(3);
+    // prune_tombstones = false (default)
     auto summary = builder::build_from_samples(
-        grove, samples, 1, -1.0f, true, 0, 5);
+        grove, samples,
+        /*threads=*/1, /*min_expression=*/-1.0f, /*absorb=*/true,
+        /*min_replicates=*/0, /*fuzzy_tolerance=*/5,
+        /*prune_tombstones=*/false);
 
-    // Counter is populated and total_segments subtracts it
     ASSERT_EQ(summary.counters.absorbed_segments, 1u)
         << "Fixture must produce exactly one tombstone";
     EXPECT_EQ(summary.total_segments, 1u)
         << "total_segments should subtract tombstones";
 
-    // Tombstoned segment stays in the tree (current behavior). Walk the
-    // B+ tree and confirm we find BOTH segments — parent (absorbed=false)
-    // and the tombstoned ISM (absorbed=true).
     auto live = walk_live_segments(grove);
     EXPECT_EQ(live.size(), 2u)
-        << "Both segments still present in B+ tree until batch "
-           "genogrove removal lands";
+        << "Default: both segments still present in B+ tree "
+           "(opt into --prune-tombstones for physical removal)";
 
     size_t absorbed_in_tree = 0;
     size_t live_in_tree = 0;
@@ -225,21 +220,53 @@ TEST_F(BuilderPipelineTest, RemoveTombstones_CountedNotRemoved) {
     EXPECT_EQ(live_in_tree, 1u);
 }
 
-// ── Tier 1.3: Orphan EXON_TO_EXON edges are pruned by the sweep ────────────
+// ── Tier 1.2b: --prune-tombstones physically removes the key ───────────────
 //
-// Disabled until physical tombstone removal is re-enabled (blocked on
-// batch genogrove remove_key variant — see remove_tombstones() comment).
-// With the current counter-only sweep the swept and unswept edge counts
-// are identical, which this test would report as a failure.
-//
-// When the physical removal returns, rename back to
-// `RemoveTombstones_OrphanEdgesPruned` and re-enable.
-TEST_F(BuilderPipelineTest, DISABLED_RemoveTombstones_OrphanEdgesPruned) {
+// When the flag is set, remove_tombstones calls grove.remove_key() per
+// tombstone and runs a remove_edges_if pass to drop orphan EXON_TO_EXON
+// chain edges. The tombstoned segment should no longer surface in a tree
+// walk, and the edge count should drop.
+TEST_F(BuilderPipelineTest, RemoveTombstones_PruneFlagPhysicallyRemoves) {
     auto ism_path = write_ism_gtf();
     auto parent_path = write_parent_gtf();
 
-    // Build A: full builder pipeline (sweep runs)
-    size_t swept_edge_count = 0;
+    std::vector<sample_info> samples;
+    samples.emplace_back("ism_sample", ism_path);
+    samples.back().type = "sample";
+    samples.emplace_back("parent_sample", parent_path);
+    samples.back().type = "sample";
+
+    grove_type grove(3);
+    auto summary = builder::build_from_samples(
+        grove, samples,
+        /*threads=*/1, /*min_expression=*/-1.0f, /*absorb=*/true,
+        /*min_replicates=*/0, /*fuzzy_tolerance=*/5,
+        /*prune_tombstones=*/true);
+
+    ASSERT_EQ(summary.counters.absorbed_segments, 1u);
+
+    auto live = walk_live_segments(grove);
+    EXPECT_EQ(live.size(), 1u)
+        << "Expected exactly one live segment (parent) after pruning";
+    for (const auto* seg : live) {
+        EXPECT_FALSE(seg->absorbed)
+            << "Tree traversal should not surface any absorbed segment "
+               "when --prune-tombstones is set";
+    }
+}
+
+// ── Tier 1.3: --prune-tombstones drops orphan EXON_TO_EXON edges ───────────
+//
+// Under --prune-tombstones, remove_tombstones calls remove_edges_if to
+// strip chain edges whose metadata.id matches a tombstoned
+// segment_index. Verified by comparing the edge count of a pruned grove
+// against a non-pruned baseline built from the same files.
+TEST_F(BuilderPipelineTest, RemoveTombstones_PruneFlagDropsOrphanEdges) {
+    auto ism_path = write_ism_gtf();
+    auto parent_path = write_parent_gtf();
+
+    // Build A: --prune-tombstones ON
+    size_t pruned_edge_count = 0;
     {
         std::vector<sample_info> samples;
         samples.emplace_back("ism_sample", ism_path);
@@ -249,48 +276,42 @@ TEST_F(BuilderPipelineTest, DISABLED_RemoveTombstones_OrphanEdgesPruned) {
 
         grove_type grove(3);
         auto summary = builder::build_from_samples(
-            grove, samples, 1, -1.0f, true, 0, 5);
+            grove, samples,
+            /*threads=*/1, /*min_expression=*/-1.0f, /*absorb=*/true,
+            /*min_replicates=*/0, /*fuzzy_tolerance=*/5,
+            /*prune_tombstones=*/true);
         ASSERT_EQ(summary.counters.absorbed_segments, 1u);
-        swept_edge_count = grove.edge_count();
+        pruned_edge_count = grove.edge_count();
     }
 
-    // Build B: bypass the sweep by calling build_gff::build directly
-    // twice against the same caches. Tombstone remains in place with its
-    // orphan edges.
-    size_t unswept_edge_count = 0;
+    // Build B: --prune-tombstones OFF (default) — orphan edges remain
+    size_t default_edge_count = 0;
     {
-        // Clear registries so sample IDs start at 0 again
         transcript_registry::reset();
         gene_registry::reset();
         source_registry::reset();
         sample_registry::reset();
 
+        std::vector<sample_info> samples;
+        samples.emplace_back("ism_sample", ism_path);
+        samples.back().type = "sample";
+        samples.emplace_back("parent_sample", parent_path);
+        samples.back().type = "sample";
+
         grove_type grove(3);
-        chromosome_exon_caches exon_caches;
-        chromosome_segment_caches segment_caches;
-        chromosome_gene_segment_indices gene_indices;
-        size_t segment_count = 0;
-        build_counters counters;
-
-        sample_info ism_info("ism_sample", ism_path);
-        ism_info.type = "sample";
-        uint32_t ism_id = sample_registry::instance().register_data(ism_info);
-        build_gff::build(grove, ism_path, ism_id, exon_caches, segment_caches,
-                         gene_indices, segment_count, 0, -1.0f, true, 5, counters);
-
-        sample_info parent_info("parent_sample", parent_path);
-        parent_info.type = "sample";
-        uint32_t parent_id = sample_registry::instance().register_data(parent_info);
-        build_gff::build(grove, parent_path, parent_id, exon_caches, segment_caches,
-                         gene_indices, segment_count, 0, -1.0f, true, 5, counters);
-
-        unswept_edge_count = grove.edge_count();
+        auto summary = builder::build_from_samples(
+            grove, samples,
+            /*threads=*/1, /*min_expression=*/-1.0f, /*absorb=*/true,
+            /*min_replicates=*/0, /*fuzzy_tolerance=*/5,
+            /*prune_tombstones=*/false);
+        ASSERT_EQ(summary.counters.absorbed_segments, 1u);
+        default_edge_count = grove.edge_count();
     }
 
-    EXPECT_LT(swept_edge_count, unswept_edge_count)
-        << "Sweep should have removed at least one orphan edge. "
-        << "Swept: " << swept_edge_count
-        << ", unswept: " << unswept_edge_count;
+    EXPECT_LT(pruned_edge_count, default_edge_count)
+        << "--prune-tombstones should have removed at least one orphan edge. "
+        << "Pruned: " << pruned_edge_count
+        << ", default: " << default_edge_count;
 }
 
 // ── Tier 1.4: build_summary text file contains the processing section ─────
