@@ -107,6 +107,11 @@ void analysis_report::collect(grove_type& grove) {
     auto finalize_gene = [&](const gene_acc& acc, const std::string& seqid_for_hub) {
         transcripts_per_gene.push_back(acc.segment_count);
 
+        // 8.7a: global gene biotype count for biotype.tsv `total` column.
+        if (!acc.biotype.empty()) {
+            genes_by_biotype[acc.biotype]++;
+        }
+
         for (uint32_t sid : acc.sample_bits) {
             per_sample[sid].genes++;
             if (!acc.biotype.empty()) {
@@ -404,9 +409,13 @@ void analysis_report::collect(grove_type& grove) {
                     acc.sample_tx[sid] += tx_count;
                 }
 
-                // Transcript biotypes → per-sample
+                // Transcript biotypes → global + per-sample.
+                // Each (tx_id, biotype) appears in exactly one segment after
+                // dedup, so the per-segment loop already gives the global
+                // count without any extra deduplication state.
                 for (const auto& [tx_id, biotype] : seg.transcript_biotypes) {
                     if (!biotype.empty()) {
+                        transcripts_by_biotype[biotype]++;  // 8.7a: global biotype.tsv `total` column
                         for (uint32_t sid : seg.sample_idx) {
                             per_sample[sid].transcripts_by_biotype[biotype]++;
                         }
@@ -689,6 +698,67 @@ void analysis_report::write_per_source(const std::string& path) const {
     }
 
     logging::info("Per-source stats written to: " + path);
+}
+
+void analysis_report::write_biotype(const std::string& path) const {
+    std::ofstream out(path);
+    if (!out.is_open()) {
+        logging::error("Cannot open biotype file: " + path);
+        return;
+    }
+
+    if (genes_by_biotype.empty() && transcripts_by_biotype.empty()) {
+        logging::warning("No biotype data to write (TALON-only builds carry no biotype attrs)");
+        return;
+    }
+
+    auto& registry = sample_registry::instance();
+
+    // Enumerate non-replicate samples in registry order, matching the
+    // column convention used by per_sample.tsv.
+    std::vector<uint32_t> sample_ids;
+    std::vector<std::string> labels;
+    for (size_t sid = 0; sid < per_sample.size(); ++sid) {
+        if (per_sample[sid].segments == 0 && per_sample[sid].exons == 0) continue;
+        const auto& info = registry.get(static_cast<uint32_t>(sid));
+        sample_ids.push_back(static_cast<uint32_t>(sid));
+        labels.push_back(info.id.empty() ? std::to_string(sid) : info.id);
+    }
+
+    out << "level\tbiotype\ttotal";
+    for (const auto& label : labels) out << "\t" << label;
+    out << "\n";
+
+    auto write_section = [&](const std::string& level,
+                             const std::map<std::string, size_t>& global,
+                             auto per_sample_getter)
+    {
+        // Sort by global count descending so the biggest biotypes come first.
+        std::vector<std::pair<std::string, size_t>> sorted_bt(global.begin(), global.end());
+        std::sort(sorted_bt.begin(), sorted_bt.end(),
+            [](const auto& a, const auto& b) { return a.second > b.second; });
+
+        for (const auto& [biotype, count] : sorted_bt) {
+            out << level << "\t" << biotype << "\t" << count;
+            for (uint32_t sid : sample_ids) {
+                const auto& bt_map = per_sample_getter(per_sample[sid]);
+                auto it = bt_map.find(biotype);
+                out << "\t" << (it != bt_map.end() ? it->second : size_t{0});
+            }
+            out << "\n";
+        }
+    };
+
+    write_section("gene", genes_by_biotype,
+        [](const sample_counters& s) -> const std::map<std::string, size_t>& {
+            return s.genes_by_biotype;
+        });
+    write_section("transcript", transcripts_by_biotype,
+        [](const sample_counters& s) -> const std::map<std::string, size_t>& {
+            return s.transcripts_by_biotype;
+        });
+
+    logging::info("Biotype stats written to: " + path);
 }
 
 // ── Splicing hub streaming setup (Phase 8.3) ───────────────────────

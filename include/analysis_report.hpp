@@ -109,6 +109,15 @@ struct analysis_report {
     std::vector<size_t> transcripts_per_gene;
     std::vector<size_t> exons_per_segment;
 
+    // ── Global biotype breakdown (matches sample_counters versions) ──
+    // Top-level distinct gene / transcript counts per biotype, used for
+    // the `total` column of biotype.tsv. Each transcript_id appears in
+    // exactly one segment's transcript_biotypes after dedup, so simple
+    // bumps during the segment loop give the global count without any
+    // per-feature deduplication state.
+    std::map<std::string, size_t> genes_by_biotype;
+    std::map<std::string, size_t> transcripts_by_biotype;
+
     // ── Counters not derivable from per-sample ────────────────────────
     size_t total_transcripts = 0;  // sum of transcript_ids.size() across all segments
     size_t total_exons = 0;        // unique exons (pointer-deduplicated)
@@ -206,6 +215,15 @@ struct analysis_report {
      * Bounded by source_registry capacity (16 entries max).
      */
     void write_per_source(const std::string& path) const;
+
+    /**
+     * Write biotype TSV: long-form gene + transcript biotype counts.
+     * Columns: level, biotype, total, <sample1>, <sample2>, ...
+     * Two sections: `level == "gene"` rows then `level == "transcript"`
+     * rows, each sorted by global count descending. Empty file if there
+     * are no biotypes (e.g., TALON-only builds with no biotype attrs).
+     */
+    void write_biotype(const std::string& path) const;
 
     /**
      * Write exon sharing TSV: metrics as rows, samples as columns.

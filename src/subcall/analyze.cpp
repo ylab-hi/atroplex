@@ -109,6 +109,10 @@ void analyze::execute(const cxxopts::ParseResult& args) {
         // Bounded by source_registry capacity (16 sources max), no extra
         // traversal — counters are populated inline during collect().
         report.write_per_source((overview_dir / (basename + ".per_source.tsv")).string());
+        // Phase 8.7a: biotype breakdown (long-form gene + transcript rows
+        // with global + per-sample columns). Bounded by ~30 biotype strings;
+        // counters are populated inline during collect().
+        report.write_biotype((overview_dir / (basename + ".biotype.tsv")).string());
 
         // Phase 8.2: sharing TSVs — metrics × samples transposition of
         // per_sample counters, no extra memory
