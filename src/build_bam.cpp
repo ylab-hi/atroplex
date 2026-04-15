@@ -27,7 +27,8 @@ void build_bam::build(grove_type& grove,
     size_t& segment_count,
     float min_expression,
     bool absorb,
-    size_t fuzzy_tolerance) {
+    size_t fuzzy_tolerance,
+    build_counters& counters) {
 
     // Step 1: Cluster reads by splice junction signature
     gio::bam_reader reader(filepath.string(), gio::bam_reader_options::primary_only());
@@ -48,15 +49,23 @@ void build_bam::build(grove_type& grove,
         // Skip single-exon clusters (no splice junctions)
         if (cluster.consensus_junctions.empty()) continue;
 
+        counters.input_transcripts++;
+
         // Filter by minimum read count (expression proxy)
         float read_count = static_cast<float>(cluster.read_count());
-        if (min_expression >= 0 && read_count < min_expression) continue;
+        if (min_expression >= 0 && read_count < min_expression) {
+            counters.discarded_transcripts++;
+            continue;
+        }
 
         std::string seqid = normalize_chromosome(cluster.seqid);
 
         // Derive exon coordinates from junctions
         auto exon_intervals = cluster_to_exon_coords(cluster);
-        if (exon_intervals.size() < 2) continue;
+        if (exon_intervals.size() < 2) {
+            counters.discarded_transcripts++;
+            continue;
+        }
 
         // Resolve gene assignment by spatial query
         auto [gene_id, gene_name, gene_biotype] = resolve_gene(grove, cluster);
@@ -90,7 +99,8 @@ void build_bam::build(grove_type& grove,
             segment_caches[seqid], gene_indices[seqid],
             sample_id, "BAM", segment_count,
             read_count, "",  // expression = read count, no biotype from BAM
-            absorb, fuzzy_tolerance
+            absorb, fuzzy_tolerance,
+            counters
         );
     }
 

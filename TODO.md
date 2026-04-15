@@ -278,37 +278,44 @@ Natural language queries over the pan-transcriptome index. No other tool offers 
 Current `index_stats::collect()` accumulates massive per-sample maps that blow up memory.
 Killed by OOM on 128GB with ~1000 samples — fails in Phase 1 before any analysis begins.
 
-### 8.1 Single-pass streaming traversal
-Rewrite `collect()` to traverse the grove once, processing each segment + its exon chain
-inline. No `segment_keys` vector, no `tx_to_samples` map, no `gene_sample_tx` map.
+### 8.1 Basic overview stats (global + per-sample + per-chromosome) ✅
+New `analysis_report` struct in `include/analysis_report.hpp` + `src/analysis_report.cpp`.
+Single-pass B+ tree traversal: segment counting, inline exon chain walk with pointer dedup,
+lightweight per-gene accumulators finalized at coordinate boundaries.
+Output: `overview/` subfolder with overview.tsv, per_chromosome.tsv, biotype.tsv.
 
-```
-for each chromosome:
-  for each segment in B+ tree leaves:
-    increment global + per-sample counters (flat arrays)
-    walk exon chain via edges
-      increment exon counters
-      detect hubs inline
-    → done, nothing stored
-```
+### 8.2 Per-sample sharing stats ❌
+Add exclusive/shared/conserved classification for segments and exons.
+For each feature: check `sample_idx.count()` — exclusive (1), conserved (all), shared (else).
+Increment flat per-sample counters inline during traversal.
+Output: exon_sharing.tsv, segment_sharing.tsv in `sharing/` subfolder.
 
-### 8.2 Replace maps with flat counters
-Per-sample stats currently use `unordered_map<uint32_t, unordered_set<string>>` (~40KB per
-sample per map). Replace with flat `vector<counter_struct>` indexed by sample_id. Counter
-struct holds only `size_t` fields (segments, exons, exclusive, shared, conserved, etc.).
+### 8.3 Splicing hub detection inline ❌
+Detect branching exons (>10 downstream targets) during exon chain walk.
+Record pending hubs in gene accumulator. At gene finalization: compute per-sample
+branch counts, entropy, PSI using the gene's accumulated transcript data.
+Stream branch_details.tsv rows at gene finalization.
+Output: `splicing_hubs/` subfolder.
 
-### 8.3 Per-gene diversity inline
-Entropy and effective isoform metrics can be computed per-gene during traversal: accumulate
-exon usage counts for the current gene, compute entropy when the gene boundary is crossed
-(segments are sorted by coordinate within each chromosome), add to running mean.
+### 8.4 Per-gene diversity metrics inline ❌
+At gene finalization: compute Shannon entropy over exon usage distribution and
+effective isoform count (2^H of segment→transcript distribution).
+Accumulate into running per-sample means. No pairwise comparisons.
 
-### 8.4 Hub detection inline
-Already partially streaming (branch_details.tsv written inline). Extend to compute PSI
-on the fly using the current gene's segment data rather than precomputed `gene_sample_tx`.
+### 8.5 Conserved exon detail streaming ❌
+During exon traversal, identify conserved exons (present in ALL samples).
+Store lightweight pending_exon in gene accumulator.
+At gene finalization: compute per-sample transcript counts, stream to conserved_exons.tsv.
 
-### 8.5 Split index_stats (issue #24)
-Separate `build_summary` (lightweight, always) from `analysis_report` (heavyweight, analyze
-only). Remove the `detailed` flag. Each has its own `collect()` with appropriate streaming.
+### 8.6 Splicing event catalog inline ❌
+At gene finalization: compare segment exon chains (stored in gene accumulator) to detect
+cassette exons, alt 5'/3', intron retention, MXE. No separate pass — reuse gene accumulator data.
+Stream to splicing_events.tsv.
+
+### 8.7 Remove old index_stats::collect() ❌
+Once analysis_report covers all output from the old system, remove `index_stats::collect()`
+and the `detailed` flag. Keep `index_stats` struct only for the build summary path.
+Relates to issue #24.
 
 ### Memory targets
 | Samples | Current peak | Target peak |

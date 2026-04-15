@@ -53,8 +53,9 @@ protected:
         anno_info.annotation_source = "TEST";
         [[maybe_unused]] auto anno_id = sample_registry::instance().register_data(anno_info);
 
+        build_counters counters;
         build_gff::build(*grove_, anno_path, 0, exon_caches_, segment_caches_,
-                         gene_indices_, segment_count_, 0, -1.0f, false);
+                         gene_indices_, segment_count_, 0, -1.0f, false, 5, counters);
 
         // Register sample (with expression)
         sample_info samp_info("TEST_SAMPLE");
@@ -62,7 +63,7 @@ protected:
         [[maybe_unused]] auto samp_id = sample_registry::instance().register_data(samp_info);
 
         build_gff::build(*grove_, sample_path, 1, exon_caches_, segment_caches_,
-                         gene_indices_, segment_count_, 0, -1.0f, false);
+                         gene_indices_, segment_count_, 0, -1.0f, false, 5, counters);
     }
 
     // Serialize grove + registries to temp file (mirrors subcall::save_grove)

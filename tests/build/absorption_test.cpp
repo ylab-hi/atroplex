@@ -55,8 +55,9 @@ protected:
         }
         uint32_t sample_id = sample_registry::instance().register_data(info);
 
+        build_counters counters;
         build_gff::build(*grove, fixture, sample_id, exon_caches, segment_caches,
-                         gene_indices, segment_count, 0, -1.0f, absorb);
+                         gene_indices, segment_count, 0, -1.0f, absorb, 5, counters);
 
         size_t absorbed = 0, live = 0, total_absorbed_into = 0, live_tx_count = 0;
         for (const auto& [chrom, gene_idx] : gene_indices) {
@@ -93,19 +94,21 @@ protected:
         chromosome_gene_segment_indices gene_indices;
         size_t segment_count = 0;
 
+        build_counters counters;
+
         // File 1
         sample_info info1("sample1");
         if (file1_annotation) { info1.type = "annotation"; info1.annotation_source = "GENCODE"; }
         uint32_t sid1 = sample_registry::instance().register_data(info1);
         build_gff::build(*grove, fix1, sid1, exon_caches, segment_caches,
-                         gene_indices, segment_count, 0, -1.0f, absorb);
+                         gene_indices, segment_count, 0, -1.0f, absorb, 5, counters);
 
         // File 2
         sample_info info2("sample2");
         if (file2_annotation) { info2.type = "annotation"; info2.annotation_source = "GENCODE"; }
         uint32_t sid2 = sample_registry::instance().register_data(info2);
         build_gff::build(*grove, fix2, sid2, exon_caches, segment_caches,
-                         gene_indices, segment_count, 0, -1.0f, absorb);
+                         gene_indices, segment_count, 0, -1.0f, absorb, 5, counters);
 
         size_t absorbed = 0, live = 0, total_absorbed_into = 0, live_tx_count = 0;
         for (const auto& [chrom, gene_idx] : gene_indices) {

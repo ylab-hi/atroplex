@@ -12,9 +12,7 @@
 #include <algorithm>
 #include <charconv>
 #include <filesystem>
-#include <numeric>
 #include <string_view>
-#include <unordered_map>
 #include <unordered_set>
 
 // class
@@ -22,6 +20,7 @@
 #include "builder.hpp"
 #include "build_bam.hpp"
 #include "build_gff.hpp"
+#include "build_summary.hpp"
 
 // Natural chromosome sort comparator
 static bool chromosome_compare(const std::string& a, const std::string& b) {
@@ -46,21 +45,7 @@ static bool chromosome_compare(const std::string& a, const std::string& b) {
     return str_a < str_b;
 }
 
-namespace {
-double compute_median(std::vector<size_t>& values) {
-    if (values.empty()) return 0;
-    size_t n = values.size();
-    auto mid = values.begin() + static_cast<long>(n / 2);
-    std::nth_element(values.begin(), mid, values.end());
-    if (n % 2 == 0) {
-        auto max_lower = *std::max_element(values.begin(), mid);
-        return (static_cast<double>(max_lower) + static_cast<double>(*mid)) / 2.0;
-    }
-    return static_cast<double>(*mid);
-}
-} // anonymous namespace
-
-index_stats builder::build_from_samples(grove_type& grove,
+build_summary builder::build_from_samples(grove_type& grove,
                                   const std::vector<sample_info>& samples,
                                   uint32_t threads,
                                   float min_expression,
@@ -73,6 +58,9 @@ index_stats builder::build_from_samples(grove_type& grove,
         logging::warning("No samples provided to build genogrove");
         return {};
     }
+
+    // Per-build counters threaded through build_gff / build_bam / segment_builder
+    build_counters counters;
 
     if (threads > 1) {
         logging::info("Note: Multi-threading for build not yet optimized, using single thread");
@@ -126,7 +114,7 @@ index_stats builder::build_from_samples(grove_type& grove,
             uint32_t registry_id = sample_registry::instance().register_data(info);
 
             // Build with persistent caches for cross-file deduplication
-            build_gff::build(grove, filepath, registry_id, exon_caches, segment_caches, gene_indices, segment_count, threads, min_expression, absorb, fuzzy_tolerance);
+            build_gff::build(grove, filepath, registry_id, exon_caches, segment_caches, gene_indices, segment_count, threads, min_expression, absorb, fuzzy_tolerance, counters);
 
             // Estimate grove memory usage after each file
             size_t mem_segments = 0, mem_exons = 0, mem_gene_idx = 0;
@@ -177,7 +165,7 @@ index_stats builder::build_from_samples(grove_type& grove,
             uint32_t registry_id = sample_registry::instance().register_data(info);
 
             build_bam::build(grove, filepath, registry_id, exon_caches, segment_caches,
-                            gene_indices, segment_count, min_expression, absorb, fuzzy_tolerance);
+                            gene_indices, segment_count, min_expression, absorb, fuzzy_tolerance, counters);
         } else {
             logging::warning("Unsupported file type for: " + filepath.string());
         }
@@ -187,153 +175,15 @@ index_stats builder::build_from_samples(grove_type& grove,
 
     // --- Post-build replicate merging ---
     if (min_replicates > 0) {
-        merge_replicates(exon_caches, segment_caches, min_replicates);
+        counters.replicates_merged = merge_replicates(exon_caches, segment_caches, min_replicates);
     }
 
-    // --- Compute basic index statistics from caches ---
-    index_stats stats;
+    // --- Physically remove absorbed segments from the grove ---
+    counters.absorbed_segments = remove_tombstones(grove, segment_caches, gene_indices);
 
-    // Annotation sources and sample count from registry
-    auto& registry = sample_registry::instance();
-    for (size_t i = 0; i < registry.size(); ++i) {
-        const auto& info = registry.get(static_cast<uint32_t>(i));
-        if (!info.id.empty()) {
-            stats.annotation_sources.push_back(info.id);
-        }
-        if (info.type != "replicate") {
-            stats.total_entries++;
-        }
-    }
-
-    stats.total_chromosomes = segment_caches.size();
-    stats.total_segments = segment_count;
-    stats.tree_order = grove.get_order();
-
-    // Measure B+ tree depth per chromosome (root→leaf traversal)
-    for (const auto& [index_name, root_node] : grove.get_root_nodes()) {
-        int depth = 0;
-        auto* current = root_node;
-        while (current && !current->get_is_leaf()) {
-            current = current->get_children().empty() ? nullptr : current->get_children()[0];
-            depth++;
-        }
-        if (current) depth++;  // count the leaf level
-        stats.tree_depth_per_chromosome[index_name] = depth;
-    }
-
-    // Gene info from segment features
-    struct gene_stats_info {
-        std::unordered_set<uint32_t> transcript_ids;
-        std::string biotype;
-    };
-    std::unordered_map<std::string, gene_stats_info> genes;
-    std::unordered_map<std::string, std::unordered_set<std::string>> chr_gene_ids;
-    std::vector<size_t> exons_per_segment;
-
-    for (const auto& [seqid, seg_cache] : segment_caches) {
-        stats.per_chromosome[seqid].segments = seg_cache.size();
-
-        for (const auto& [key, seg_ptr] : seg_cache) {
-            auto& feature = seg_ptr->get_data();
-            if (!is_segment(feature)) continue;
-
-            auto& seg = get_segment(feature);
-            if (seg.absorbed) continue;  // Skip tombstoned segments
-
-            auto& gi = genes[seg.gene_id()];
-            gi.biotype = seg.gene_biotype();
-            for (const auto& tx : seg.transcript_ids) {
-                gi.transcript_ids.insert(tx);
-            }
-            chr_gene_ids[seqid].insert(seg.gene_id());
-
-            // Collect transcript biotypes
-            for (const auto& [tx_id, biotype] : seg.transcript_biotypes) {
-                if (!biotype.empty()) {
-                    stats.transcripts_by_biotype[biotype]++;
-                }
-            }
-
-            exons_per_segment.push_back(static_cast<size_t>(seg.exon_count));
-            if (seg.exon_count == 1) {
-                stats.single_exon_segments++;
-            }
-        }
-    }
-
-    // Count absorbed segments from gene indices
-    for (const auto& [seqid, gene_idx] : gene_indices) {
-        for (const auto& [gene_id, entries] : gene_idx) {
-            for (const auto& entry : entries) {
-                if (get_segment(entry.segment->get_data()).absorbed) {
-                    stats.absorbed_segments++;
-                }
-            }
-        }
-    }
-
-    // Exon counts from exon caches
-    for (const auto& [seqid, exon_cache] : exon_caches) {
-        stats.per_chromosome[seqid].exons = exon_cache.size();
-        stats.total_exons += exon_cache.size();
-    }
-
-    // Gene-level statistics
-    stats.total_genes = genes.size();
-    std::vector<size_t> transcripts_per_gene;
-    transcripts_per_gene.reserve(genes.size());
-    size_t total_tx = 0;
-
-    for (const auto& [gene_id, gi] : genes) {
-        size_t tx_count = gi.transcript_ids.size();
-        total_tx += tx_count;
-        transcripts_per_gene.push_back(tx_count);
-
-        if (!gi.biotype.empty()) {
-            stats.genes_by_biotype[gi.biotype]++;
-        }
-        if (tx_count > stats.max_transcripts_per_gene) {
-            stats.max_transcripts_per_gene = tx_count;
-            stats.max_transcripts_gene_id = gene_id;
-        }
-        if (tx_count == 1) {
-            stats.single_isoform_genes++;
-        } else {
-            stats.multi_isoform_genes++;
-        }
-    }
-
-    stats.total_transcripts = total_tx;
-    if (!transcripts_per_gene.empty()) {
-        stats.mean_transcripts_per_gene =
-            static_cast<double>(total_tx) / static_cast<double>(transcripts_per_gene.size());
-        stats.median_transcripts_per_gene = compute_median(transcripts_per_gene);
-    }
-
-    // Exons per segment distribution
-    if (!exons_per_segment.empty()) {
-        size_t total_exons_sum = std::accumulate(
-            exons_per_segment.begin(), exons_per_segment.end(), size_t{0});
-        stats.mean_exons_per_segment =
-            static_cast<double>(total_exons_sum) / static_cast<double>(exons_per_segment.size());
-        stats.median_exons_per_segment = compute_median(exons_per_segment);
-        stats.max_exons_per_segment = *std::max_element(
-            exons_per_segment.begin(), exons_per_segment.end());
-    }
-
-    // Deduplication ratio
-    if (stats.total_transcripts > 0) {
-        stats.deduplication_ratio =
-            static_cast<double>(stats.total_segments) / static_cast<double>(stats.total_transcripts);
-    }
-
-    // Per-chromosome gene counts
-    for (const auto& [seqid, gene_set] : chr_gene_ids) {
-        stats.per_chromosome[seqid].genes = gene_set.size();
-    }
-
-    // Total edges from grove
-    stats.total_edges = grove.edge_count();
+    // --- Collect summary statistics ---
+    build_summary stats;
+    stats.collect(grove, segment_caches, exon_caches, segment_count, counters);
 
     // Log per-chromosome summary
     std::vector<std::string> seqids;
@@ -361,7 +211,7 @@ index_stats builder::build_from_samples(grove_type& grove,
     return stats;
 }
 
-void builder::merge_replicates(
+size_t builder::merge_replicates(
     chromosome_exon_caches& exon_caches,
     chromosome_segment_caches& segment_caches,
     int min_replicates
@@ -379,7 +229,7 @@ void builder::merge_replicates(
 
     if (groups.empty()) {
         logging::warning("No replicate groups found; skipping merge");
-        return;
+        return 0;
     }
 
     // Step 2: Register merged sample_info for each group
@@ -465,18 +315,89 @@ void builder::merge_replicates(
     }
 
     // Step 4: Mark replicate entries as type="replicate" so they're excluded from stats
+    size_t collapsed = 0;
     for (const auto& [group_name, replicate_ids] : groups) {
         for (uint32_t rid : replicate_ids) {
             registry.get(rid).type = "replicate";
+            ++collapsed;
         }
     }
 
     logging::info("Replicate merging complete: " +
         std::to_string(group_merged_ids.size()) + " groups, min_replicates=" +
         std::to_string(min_replicates));
+    return collapsed;
 }
 
-index_stats builder::build_from_files(grove_type& grove,
+size_t builder::remove_tombstones(
+    grove_type& grove,
+    chromosome_segment_caches& segment_caches,
+    chromosome_gene_segment_indices& gene_indices
+) {
+    // Note: try_reverse_absorption already erases absorbed segments from
+    // segment_cache at the moment it tombstones them (segment_builder.cpp:367).
+    // gene_indices retains absorbed entries, so it's the authoritative source
+    // of tombstones that still live in the B+ tree.
+    std::unordered_set<size_t> tombstone_ids;
+    size_t removed = 0;
+
+    for (auto& [seqid, gene_idx] : gene_indices) {
+        for (auto& [gene_id, entries] : gene_idx) {
+            for (auto& entry : entries) {
+                auto& feature = entry.segment->get_data();
+                if (!is_segment(feature)) continue;
+                auto& seg = get_segment(feature);
+                if (!seg.absorbed) continue;
+
+                tombstone_ids.insert(seg.segment_index);
+                grove.remove_key(seqid, entry.segment);
+                ++removed;
+            }
+        }
+    }
+
+    // Drop orphan EXON_TO_EXON edges that carry a tombstone's segment_index.
+    // remove_key only removes edges where the segment key itself is source
+    // or target; chain edges between exon keys are not touched automatically.
+    if (!tombstone_ids.empty()) {
+        grove.remove_edges_if([&tombstone_ids](const auto& e) {
+            return tombstone_ids.count(e.metadata.id) > 0;
+        });
+    }
+
+    // Prune gene_indices entries that reference removed segments so that
+    // downstream stats collection never sees a tombstone.
+    for (auto& [seqid, gene_idx] : gene_indices) {
+        for (auto& [gene_id, entries] : gene_idx) {
+            std::erase_if(entries, [](const segment_chain_entry& e) {
+                return get_segment(e.segment->get_data()).absorbed;
+            });
+        }
+    }
+
+    // Safety net: if any code path ever leaves an absorbed entry in segment_cache
+    // without erasing it (try_reverse_absorption does erase, but forward
+    // absorption rules don't go through that code), drop those too.
+    for (auto& [seqid, seg_cache] : segment_caches) {
+        for (auto it = seg_cache.begin(); it != seg_cache.end(); ) {
+            auto& feature = it->second->get_data();
+            if (is_segment(feature) && get_segment(feature).absorbed) {
+                it = seg_cache.erase(it);
+            } else {
+                ++it;
+            }
+        }
+    }
+
+    if (removed > 0) {
+        logging::info("Removed " + std::to_string(removed) +
+            " absorbed (tombstoned) segments from grove");
+    }
+
+    return removed;
+}
+
+build_summary builder::build_from_files(grove_type& grove,
                                 const std::vector<std::string>& files,
                                 uint32_t threads,
                                 chromosome_exon_caches* out_exon_caches) {

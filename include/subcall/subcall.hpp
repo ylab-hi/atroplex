@@ -21,8 +21,8 @@
 #include <genogrove/structure/grove/grove.hpp>
 #include <genogrove/data_type/interval.hpp>
 
+#include "build_summary.hpp"
 #include "genomic_feature.hpp"
-#include "index_stats.hpp"
 
 namespace subcall {
 
@@ -73,7 +73,7 @@ public:
 
 protected:
     std::unique_ptr<grove_type> grove;
-    std::optional<index_stats> build_stats;
+    std::optional<build_summary> build_stats;
     chromosome_exon_caches exon_caches_;
     chromosome_gene_segment_indices gene_indices_;
     std::filesystem::path output_dir;

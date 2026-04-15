@@ -20,8 +20,8 @@
 #include <genogrove/io/filetype_detector.hpp>
 
 // class
+#include "build_summary.hpp"
 #include "genomic_feature.hpp"
-#include "index_stats.hpp"
 #include "sample_info.hpp"
 
 namespace gio = genogrove::io;
@@ -47,7 +47,7 @@ public:
      * @param samples Vector of sample_info with metadata (from manifest or programmatic)
      * @param threads Number of threads (reserved for future use, currently ignored)
      */
-    static index_stats build_from_samples(
+    static build_summary build_from_samples(
         grove_type& grove,
         const std::vector<sample_info>& samples,
         uint32_t threads = 1,
@@ -68,7 +68,7 @@ public:
      * @param files Vector of file paths to process
      * @param threads Number of threads (reserved for future use, currently ignored)
      */
-    static index_stats build_from_files(
+    static build_summary build_from_files(
         grove_type& grove,
         const std::vector<std::string>& files,
         uint32_t threads = 1,
@@ -82,10 +82,22 @@ public:
 private:
     /// Post-build merge of biological replicates within groups.
     /// Iterates exon and segment caches (no grove traversal).
-    static void merge_replicates(
+    /// Returns the number of replicate entries collapsed into merged groups.
+    static size_t merge_replicates(
         chromosome_exon_caches& exon_caches,
         chromosome_segment_caches& segment_caches,
         int min_replicates
+    );
+
+    /// Physically remove absorbed (tombstoned) segments from the grove.
+    /// Drops the segment keys from the B+ tree, clears orphan EXON_TO_EXON
+    /// edges carrying the tombstone's segment_index, and prunes the
+    /// segment_caches and gene_indices of stale entries. Returns the number
+    /// of tombstones removed.
+    static size_t remove_tombstones(
+        grove_type& grove,
+        chromosome_segment_caches& segment_caches,
+        chromosome_gene_segment_indices& gene_indices
     );
 };
 

@@ -1,14 +1,7 @@
-add_executable(query_tests query_classification_test.cpp ${ATROPLEX_LIB_SOURCES})
-target_include_directories(query_tests PRIVATE
-    "${CMAKE_SOURCE_DIR}/include"
-    ${HTSLIB_INCLUDE_DIRS}
-)
-target_link_libraries(query_tests
+add_executable(query_tests query_classification_test.cpp)
+target_link_libraries(query_tests PRIVATE
+    atroplex_core
     gtest gtest_main
-    genogrove
-    cxxopts
-    ${HTSLIB_LIBRARIES}
-    ZLIB::ZLIB
 )
 
 add_custom_command(TARGET query_tests POST_BUILD

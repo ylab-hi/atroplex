@@ -19,6 +19,7 @@
 #include <filesystem>
 #include <mutex>
 
+#include "build_summary.hpp"
 #include "genomic_feature.hpp"
 #include "sample_info.hpp"
 #include "read_cluster.hpp"
@@ -54,9 +55,10 @@ public:
                       chromosome_segment_caches& segment_caches,
                       chromosome_gene_segment_indices& gene_indices,
                       size_t& segment_count,
-                      float min_expression = -1.0f,
-                      bool absorb = true,
-                      size_t fuzzy_tolerance = 5);
+                      float min_expression,
+                      bool absorb,
+                      size_t fuzzy_tolerance,
+                      build_counters& counters);
 
     /**
      * Parse BAM header to extract sample metadata.
