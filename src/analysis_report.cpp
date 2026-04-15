@@ -11,6 +11,7 @@
 #include "analysis_report.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <fstream>
 #include <iomanip>
 #include <numeric>
@@ -21,6 +22,17 @@
 #include "utility.hpp"
 
 namespace {
+
+std::string expr_type_label(sample_info::expression_type t) {
+    switch (t) {
+        case sample_info::expression_type::COUNTS: return "counts";
+        case sample_info::expression_type::TPM:    return "TPM";
+        case sample_info::expression_type::FPKM:   return "FPKM";
+        case sample_info::expression_type::RPKM:   return "RPKM";
+        case sample_info::expression_type::CPM:    return "CPM";
+        default:                                   return "expression";
+    }
+}
 
 double compute_median(std::vector<size_t>& values) {
     if (values.empty()) return 0;
@@ -49,24 +61,47 @@ void analysis_report::collect(grove_type& grove) {
     }
 
     // ── Per-gene accumulator (temporary, freed at end of chromosome) ─
+    //
+    // Grows only with features-in-this-gene, never with sample count. At
+    // chromosome-boundary finalization we compute diversity metrics from
+    // `segment_tx_counts` and `exon_seg_counts`, then discard the whole
+    // `active_genes` map.
+    struct pending_hub {
+        key_ptr exon = nullptr;
+        std::vector<key_ptr> targets;  // deduplicated downstream exons
+        size_t chain_pos = 0;          // 1-based position in first-visit segment
+        size_t chain_total = 0;        // total exons in that segment
+    };
     struct gene_acc {
         uint32_t gene_idx = 0;
         std::string biotype;
         size_t segment_count = 0;
         sample_bitset sample_bits;
         // Per-sample "transcripts touched": sum over segments the sample
-        // contributes to of that segment's full transcript_ids count.
-        // Over-counts for shared segments — the merged transcript_ids of a
-        // segment shared by N samples get credited to every sample, even
-        // though each sample only contributed a subset. Strict per-sample
-        // attribution would require a tx→sample map, which is the
-        // sample×feature structure the streaming rewrite exists to avoid.
-        // The TSV column is labelled `transcripts_touched` to surface this.
+        // contributes to of that segment's full transcript_ids count. This
+        // over-approximates for shared segments — the merged transcript_ids
+        // of a segment shared by N samples get credited to every sample,
+        // even though each sample only really contributed a subset. Strict
+        // per-sample attribution would require a tx→sample map, which is
+        // the sample×feature structure the streaming rewrite exists to
+        // avoid. The TSV column is labelled `transcripts_touched` so the
+        // over-approximation is visible to consumers.
         std::vector<size_t> sample_tx;
+        std::vector<size_t> segment_tx_counts;    // Phase 8.4: for effective isoforms
+        std::unordered_map<key_ptr, size_t> exon_seg_counts;  // Phase 8.4: segments-per-exon within gene
+        std::vector<key_ptr> first_visit_exons;   // Phase 8.4: exons whose global first visit occurred in this gene
+        std::vector<pending_hub> pending_hubs;    // Phase 8.3: hubs detected in this gene
     };
     std::unordered_map<uint32_t, gene_acc> active_genes;
 
-    auto finalize_gene = [&](const gene_acc& acc) {
+    // Phase 8.3: single set of per-sample tally buffers, allocated once and
+    // reused across every hub in every gene. std::fill-reset before each hub.
+    // Peak = O(num_samples), never O(num_hubs × num_samples).
+    std::vector<size_t> hub_branches(num_samples, 0);
+    std::vector<size_t> hub_shared(num_samples, 0);
+    std::vector<size_t> hub_unique(num_samples, 0);
+
+    auto finalize_gene = [&](const gene_acc& acc, const std::string& seqid_for_hub) {
         transcripts_per_gene.push_back(acc.segment_count);
 
         for (uint32_t sid : acc.sample_bits) {
@@ -76,6 +111,145 @@ void analysis_report::collect(grove_type& grove) {
             }
             if (sid < acc.sample_tx.size()) {
                 per_sample[sid].transcripts += acc.sample_tx[sid];
+            }
+        }
+
+        // ── Phase 8.4: diversity metrics for multi-segment genes ────────
+        if (acc.segment_count >= 2) {
+            // Effective isoforms: 2^H over the segment→transcript-count distribution
+            double total_tx = 0;
+            for (size_t c : acc.segment_tx_counts) total_tx += static_cast<double>(c);
+            double seg_H = 0;
+            if (total_tx > 0) {
+                for (size_t c : acc.segment_tx_counts) {
+                    if (c == 0) continue;
+                    double p = static_cast<double>(c) / total_tx;
+                    seg_H -= p * std::log2(p);
+                }
+            }
+            double effective_isoforms = std::pow(2.0, seg_H);
+
+            // Gene exon entropy: H over exon usage fractions within the gene
+            double total_usage = 0;
+            for (const auto& [e, cnt] : acc.exon_seg_counts) {
+                total_usage += static_cast<double>(cnt);
+            }
+            double exon_H = 0;
+            if (total_usage > 0) {
+                for (const auto& [e, cnt] : acc.exon_seg_counts) {
+                    if (cnt == 0) continue;
+                    double p = static_cast<double>(cnt) / total_usage;
+                    exon_H -= p * std::log2(p);
+                }
+            }
+
+            for (uint32_t sid : acc.sample_bits) {
+                per_sample[sid].effective_isoforms_sum += effective_isoforms;
+                per_sample[sid].gene_exon_entropy_sum += exon_H;
+                per_sample[sid].multi_segment_genes++;
+            }
+        }
+
+        // ── Phase 8.4: constitutive / alternative classification ────────
+        // An exon is constitutive if it participates in every segment of its
+        // gene. We classify each exon exactly once (on its first-visit gene)
+        // so no per-sample double counting.
+        for (key_ptr exon_key : acc.first_visit_exons) {
+            auto it = acc.exon_seg_counts.find(exon_key);
+            if (it == acc.exon_seg_counts.end()) continue;
+            bool constitutive = (it->second >= acc.segment_count);
+
+            auto& exon = get_exon(exon_key->get_data());
+            for (uint32_t sid : exon.sample_idx) {
+                if (constitutive) per_sample[sid].constitutive_exons++;
+                else               per_sample[sid].alternative_exons++;
+            }
+        }
+
+        // ── Phase 8.3: splicing hub rows ────────────────────────────────
+        // Write one row per pending hub in this gene, then drop the gene's
+        // hub data. The hub_branches/hub_shared/hub_unique buffers are
+        // outer-scope vectors reused across all hubs — sized O(num_samples),
+        // reset with std::fill before each hub so peak is never multiplied.
+        if (hub_stream && hub_stream->is_open() && !acc.pending_hubs.empty()) {
+            auto& hub_out = *hub_stream;
+            for (const auto& hub : acc.pending_hubs) {
+                auto& hub_exon = get_exon(hub.exon->get_data());
+
+                // Reset per-sample tallies for this hub
+                std::fill(hub_branches.begin(), hub_branches.end(), 0);
+                std::fill(hub_shared.begin(), hub_shared.end(), 0);
+                std::fill(hub_unique.begin(), hub_unique.end(), 0);
+
+                // Populate from downstream target bitsets
+                for (key_ptr tgt_key : hub.targets) {
+                    auto& tgt = get_exon(tgt_key->get_data());
+                    size_t tgt_sample_count = tgt.sample_count();
+                    bool tgt_unique = (tgt_sample_count == 1);
+                    for (uint32_t sid : tgt.sample_idx) {
+                        hub_branches[sid]++;
+                        if (tgt_unique) hub_unique[sid]++;
+                        else            hub_shared[sid]++;
+                    }
+                }
+
+                // Global row prefix
+                hub_out << hub_exon.gene_name() << "\t"
+                        << hub_exon.gene_id() << "\t"
+                        << hub_exon.id << "\t"
+                        << format_coordinate(seqid_for_hub, hub.exon->get_value()) << "\t"
+                        << hub.chain_pos << "\t"
+                        << hub.chain_total << "\t"
+                        << hub.targets.size() << "\t"
+                        << hub_exon.transcript_ids.size();
+
+                // Per-sample columns
+                for (size_t i = 0; i < hub_stream_sample_ids.size(); ++i) {
+                    uint32_t sid = hub_stream_sample_ids[i];
+                    if (!hub_exon.sample_idx.test(sid)) {
+                        hub_out << "\t.\t.\t.";
+                        if (hub_stream_is_sample[i]) hub_out << "\t.";
+                    } else {
+                        hub_out << "\t" << hub_branches[sid]
+                                << "\t" << hub_shared[sid]
+                                << "\t" << hub_unique[sid];
+                        if (hub_stream_is_sample[i]) {
+                            if (hub_exon.has_expression(sid)) {
+                                hub_out << "\t" << hub_exon.get_expression(sid);
+                            } else {
+                                hub_out << "\t.";
+                            }
+                        }
+                    }
+                }
+                hub_out << "\n";
+
+                // Branch detail rows: one per (hub, target)
+                if (branch_stream && branch_stream->is_open()) {
+                    auto& br_out = *branch_stream;
+                    for (key_ptr tgt_key : hub.targets) {
+                        auto& tgt = get_exon(tgt_key->get_data());
+                        br_out << hub_exon.gene_name() << "\t"
+                               << hub_exon.gene_id() << "\t"
+                               << hub_exon.id << "\t"
+                               << format_coordinate(seqid_for_hub, hub.exon->get_value()) << "\t"
+                               << tgt.id << "\t"
+                               << format_coordinate(seqid_for_hub, tgt_key->get_value());
+                        for (size_t i = 0; i < hub_stream_sample_ids.size(); ++i) {
+                            uint32_t sid = hub_stream_sample_ids[i];
+                            bool present = tgt.sample_idx.test(sid);
+                            br_out << "\t" << (present ? "1" : ".");
+                            if (hub_stream_is_sample[i]) {
+                                if (present && tgt.has_expression(sid)) {
+                                    br_out << "\t" << tgt.get_expression(sid);
+                                } else {
+                                    br_out << "\t.";
+                                }
+                            }
+                        }
+                        br_out << "\n";
+                    }
+                }
             }
         }
     };
@@ -103,9 +277,10 @@ void analysis_report::collect(grove_type& grove) {
                 if (!is_segment(feature)) continue;
 
                 auto& seg = get_segment(feature);
-                // Defensive: tombstones are physically removed by
-                // builder::remove_tombstones before analyze runs, so this
-                // branch should be unreachable. Skip just in case.
+                // Skip tombstones. By default they stay in the tree
+                // (builder::remove_tombstones only counts + prunes caches);
+                // only `--prune-tombstones` physically removes them. Either
+                // way this filter keeps analysis_report correct.
                 if (seg.absorbed) continue;
 
                 // ── Segment → per-sample ────────────────────────────
@@ -142,6 +317,7 @@ void analysis_report::collect(grove_type& grove) {
                 acc.sample_bits.merge(seg.sample_idx);
 
                 size_t tx_count = seg.transcript_ids.size();
+                acc.segment_tx_counts.push_back(tx_count);  // Phase 8.4: for effective isoforms
                 total_transcripts += tx_count;
                 for (uint32_t sid : seg.sample_idx) {
                     acc.sample_tx[sid] += tx_count;
@@ -166,7 +342,15 @@ void analysis_report::collect(grove_type& grove) {
 
                 if (!first_exons.empty()) {
                     auto* current = first_exons.front();
+                    size_t chain_pos = 1;
+                    size_t chain_total = static_cast<size_t>(seg.exon_count);
                     while (current) {
+                        // Phase 8.4: every visit counts toward the per-gene
+                        // exon-usage map, regardless of global first-visit
+                        // dedup (the map is keyed by exon pointer so repeats
+                        // within a segment don't over-count).
+                        acc.exon_seg_counts[current]++;
+
                         if (visited_exons.insert(current).second) {
                             auto& exon = get_exon(current->get_data());
                             size_t exon_sample_count = exon.sample_count();
@@ -180,6 +364,54 @@ void analysis_report::collect(grove_type& grove) {
                                 else if (exon_conserved) sc.conserved_exons++;
                                 else sc.shared_exons++;
                             }
+
+                            // Phase 8.4: remember this exon for constitutive
+                            // classification at gene finalization
+                            acc.first_visit_exons.push_back(current);
+
+                            // Phase 8.3: hub detection. On first visit only,
+                            // query ALL outgoing EXON_TO_EXON edges (not
+                            // filtered to the current segment) so we see the
+                            // full branching fan-out. Deduplicate targets,
+                            // register as pending if size > MIN_HUB_BRANCHES.
+                            if (hub_stream && hub_stream->is_open()) {
+                                auto all_next = grove.get_neighbors_if(current,
+                                    [](const edge_metadata& e) {
+                                        return e.type == edge_metadata::edge_type::EXON_TO_EXON;
+                                    });
+                                std::unordered_set<key_ptr> unique_targets(
+                                    all_next.begin(), all_next.end());
+                                if (unique_targets.size() > MIN_HUB_BRANCHES) {
+                                    pending_hub ph;
+                                    ph.exon = current;
+                                    ph.targets.assign(unique_targets.begin(), unique_targets.end());
+                                    ph.chain_pos = chain_pos;
+                                    ph.chain_total = chain_total;
+                                    acc.pending_hubs.push_back(std::move(ph));
+                                }
+                            }
+
+                            // Phase 8.5: stream conserved exon row inline.
+                            if (exon_conserved && conserved_exon_stream
+                                && conserved_exon_stream->is_open()) {
+                                auto& out = *conserved_exon_stream;
+                                out << exon.id << "\t"
+                                    << exon.gene_name() << "\t"
+                                    << exon.gene_id() << "\t"
+                                    << seqid << "\t"
+                                    << format_coordinate(seqid, current->get_value()) << "\t"
+                                    << exon.transcript_ids.size();
+                                for (size_t i = 0; i < conserved_stream_sample_ids.size(); ++i) {
+                                    if (!conserved_stream_is_sample[i]) continue;
+                                    uint32_t sid = conserved_stream_sample_ids[i];
+                                    if (exon.has_expression(sid)) {
+                                        out << "\t" << exon.get_expression(sid);
+                                    } else {
+                                        out << "\t.";
+                                    }
+                                }
+                                out << "\n";
+                            }
                         }
 
                         auto next = grove.get_neighbors_if(current,
@@ -188,6 +420,7 @@ void analysis_report::collect(grove_type& grove) {
                                     && e.id == edge_id;
                             });
                         current = next.empty() ? nullptr : next.front();
+                        chain_pos++;
                     }
                 }
             }
@@ -196,7 +429,7 @@ void analysis_report::collect(grove_type& grove) {
 
         // Finalize all genes for this chromosome
         for (auto& [gidx, acc] : active_genes) {
-            finalize_gene(acc);
+            finalize_gene(acc, seqid);
         }
         active_genes.clear();
     }
@@ -272,13 +505,15 @@ void analysis_report::write_per_sample(const std::string& path) const {
     // Note: `transcripts_touched` counts transcript_ids summed over every
     // segment this sample contributes to. Shared segments over-count —
     // each sample in a segment's sample_idx is credited with the segment's
-    // full transcript set, including transcripts contributed by other
-    // samples. Streaming-friendly approximation; strict attribution would
-    // require a tx→sample map.
+    // full transcript set, including transcripts originally contributed by
+    // other samples. This is an intentional streaming-friendly approximation;
+    // strict per-sample attribution would require a tx→sample map.
     out << "sample\ttype\tgenes\tsegments\texclusive_segments\tshared_segments"
         << "\tconserved_segments\texons\texclusive_exons\tshared_exons"
-        << "\tconserved_exons\ttranscripts_touched\tsingle_exon_segments"
-        << "\texpressed_segments\tmean_expression\n";
+        << "\tconserved_exons\tconstitutive_exons\talternative_exons"
+        << "\ttranscripts_touched\tsingle_exon_segments"
+        << "\texpressed_segments\tmean_expression"
+        << "\tmean_gene_exon_entropy\tmean_effective_isoforms\n";
     out << std::fixed;
 
     for (size_t sid = 0; sid < per_sample.size(); ++sid) {
@@ -291,6 +526,12 @@ void analysis_report::write_per_sample(const std::string& path) const {
         double mean_expr = (sc.expressed_segments > 0)
             ? sc.expression_sum / static_cast<double>(sc.expressed_segments)
             : 0;
+        double mean_exon_H = (sc.multi_segment_genes > 0)
+            ? sc.gene_exon_entropy_sum / static_cast<double>(sc.multi_segment_genes)
+            : 0;
+        double mean_eff_iso = (sc.multi_segment_genes > 0)
+            ? sc.effective_isoforms_sum / static_cast<double>(sc.multi_segment_genes)
+            : 0;
 
         out << label << "\t" << info.type
             << "\t" << sc.genes
@@ -302,12 +543,213 @@ void analysis_report::write_per_sample(const std::string& path) const {
             << "\t" << sc.exclusive_exons
             << "\t" << sc.shared_exons
             << "\t" << sc.conserved_exons
+            << "\t" << sc.constitutive_exons
+            << "\t" << sc.alternative_exons
             << "\t" << sc.transcripts
             << "\t" << sc.single_exon_segments
             << "\t" << sc.expressed_segments
             << "\t" << std::setprecision(2) << mean_expr
+            << "\t" << std::setprecision(3) << mean_exon_H
+            << "\t" << std::setprecision(2) << mean_eff_iso
             << "\n";
     }
 
     logging::info("Per-sample stats written to: " + path);
+}
+
+// ── Splicing hub streaming setup (Phase 8.3) ───────────────────────
+
+void analysis_report::begin_splicing_hub_streams(
+    const std::string& hubs_path,
+    const std::string& branches_path)
+{
+    auto& registry = sample_registry::instance();
+
+    hub_stream_sample_ids.clear();
+    hub_stream_is_sample.clear();
+    for (size_t i = 0; i < registry.size(); ++i) {
+        const auto& info = registry.get(static_cast<uint32_t>(i));
+        if (info.type == "replicate") continue;
+        hub_stream_sample_ids.push_back(static_cast<uint32_t>(i));
+        hub_stream_is_sample.push_back(info.type == "sample");
+    }
+
+    hub_stream = std::make_unique<std::ofstream>(hubs_path);
+    branch_stream = std::make_unique<std::ofstream>(branches_path);
+
+    if (!hub_stream->is_open()) {
+        logging::error("Cannot open splicing hubs file: " + hubs_path);
+        hub_stream.reset();
+    }
+    if (!branch_stream->is_open()) {
+        logging::error("Cannot open branch details file: " + branches_path);
+        branch_stream.reset();
+    }
+    if (!hub_stream || !hub_stream->is_open()) {
+        // Without the hub stream, inline detection is disabled. Drop branch too.
+        hub_stream.reset();
+        branch_stream.reset();
+        return;
+    }
+
+    *hub_stream << std::fixed;
+    if (branch_stream && branch_stream->is_open()) *branch_stream << std::fixed;
+
+    // splicing_hubs.tsv header
+    *hub_stream << "gene_name\tgene_id\texon_id\tcoordinate\texon_number\ttotal_exons"
+                << "\ttotal_branches\ttotal_transcripts";
+    for (size_t i = 0; i < hub_stream_sample_ids.size(); ++i) {
+        const auto& info = registry.get(hub_stream_sample_ids[i]);
+        std::string label = info.id.empty()
+            ? std::to_string(hub_stream_sample_ids[i]) : info.id;
+        *hub_stream << "\t" << label << ".branches"
+                    << "\t" << label << ".shared"
+                    << "\t" << label << ".unique";
+        if (hub_stream_is_sample[i]) {
+            *hub_stream << "\t" << label << "." << expr_type_label(info.expr_type);
+        }
+    }
+    *hub_stream << "\n";
+
+    // branch_details.tsv header
+    if (branch_stream && branch_stream->is_open()) {
+        *branch_stream << "hub_gene_name\thub_gene_id\thub_exon_id\thub_coordinate"
+                       << "\ttarget_exon_id\ttarget_coordinate";
+        for (size_t i = 0; i < hub_stream_sample_ids.size(); ++i) {
+            const auto& info = registry.get(hub_stream_sample_ids[i]);
+            std::string label = info.id.empty()
+                ? std::to_string(hub_stream_sample_ids[i]) : info.id;
+            *branch_stream << "\t" << label << ".present";
+            if (hub_stream_is_sample[i]) {
+                *branch_stream << "\t" << label << "." << expr_type_label(info.expr_type);
+            }
+        }
+        *branch_stream << "\n";
+    }
+
+    logging::info("Splicing hubs streaming to: " + hubs_path);
+    logging::info("Branch details streaming to: " + branches_path);
+}
+
+// ── Conserved exon streaming setup (Phase 8.5) ──────────────────────
+
+void analysis_report::begin_conserved_exon_stream(const std::string& path) {
+    auto& registry = sample_registry::instance();
+
+    conserved_stream_sample_ids.clear();
+    conserved_stream_is_sample.clear();
+
+    // Enumerate non-replicate entries in registry order
+    for (size_t i = 0; i < registry.size(); ++i) {
+        const auto& info = registry.get(static_cast<uint32_t>(i));
+        if (info.type == "replicate") continue;
+        conserved_stream_sample_ids.push_back(static_cast<uint32_t>(i));
+        conserved_stream_is_sample.push_back(info.type == "sample");
+    }
+
+    conserved_exon_stream = std::make_unique<std::ofstream>(path);
+    if (!conserved_exon_stream->is_open()) {
+        logging::error("Cannot open conserved exons file: " + path);
+        conserved_exon_stream.reset();
+        return;
+    }
+
+    auto& out = *conserved_exon_stream;
+    out << std::fixed;
+    out << "exon_id\tgene_name\tgene_id\tchromosome\tcoordinate\tn_transcripts";
+    for (size_t i = 0; i < conserved_stream_sample_ids.size(); ++i) {
+        if (!conserved_stream_is_sample[i]) continue;
+        const auto& info = registry.get(conserved_stream_sample_ids[i]);
+        std::string label = info.id.empty()
+            ? std::to_string(conserved_stream_sample_ids[i]) : info.id;
+        std::string expr_label = expr_type_label(info.expr_type);
+        out << "\t" << label << "." << expr_label;
+    }
+    out << "\n";
+
+    logging::info("Conserved exons streaming to: " + path);
+}
+
+// ── Sharing TSVs (Phase 8.2) ────────────────────────────────────────
+
+void analysis_report::write_exon_sharing(const std::string& path) const {
+    std::ofstream out(path);
+    if (!out.is_open()) {
+        logging::error("Cannot open exon sharing file: " + path);
+        return;
+    }
+
+    auto& registry = sample_registry::instance();
+
+    // Collect sample IDs that actually have features, in index order
+    std::vector<uint32_t> sample_ids;
+    std::vector<std::string> labels;
+    for (size_t sid = 0; sid < per_sample.size(); ++sid) {
+        if (per_sample[sid].segments == 0 && per_sample[sid].exons == 0) continue;
+        const auto& info = registry.get(static_cast<uint32_t>(sid));
+        sample_ids.push_back(static_cast<uint32_t>(sid));
+        labels.push_back(info.id.empty() ? std::to_string(sid) : info.id);
+    }
+
+    out << "metric\ttotal";
+    for (const auto& label : labels) out << "\t" << label;
+    out << "\n";
+
+    auto write_row = [&](const std::string& metric, size_t global,
+                         auto getter) {
+        out << metric << "\t" << global;
+        for (uint32_t sid : sample_ids) {
+            out << "\t" << getter(per_sample[sid]);
+        }
+        out << "\n";
+    };
+
+    write_row("total",        total_exons, [](const sample_counters& s) { return s.exons; });
+    write_row("exclusive",    size_t{0},   [](const sample_counters& s) { return s.exclusive_exons; });
+    write_row("shared",       size_t{0},   [](const sample_counters& s) { return s.shared_exons; });
+    write_row("conserved",    size_t{0},   [](const sample_counters& s) { return s.conserved_exons; });
+    write_row("constitutive", size_t{0},   [](const sample_counters& s) { return s.constitutive_exons; });
+    write_row("alternative",  size_t{0},   [](const sample_counters& s) { return s.alternative_exons; });
+
+    logging::info("Exon sharing written to: " + path);
+}
+
+void analysis_report::write_segment_sharing(const std::string& path) const {
+    std::ofstream out(path);
+    if (!out.is_open()) {
+        logging::error("Cannot open segment sharing file: " + path);
+        return;
+    }
+
+    auto& registry = sample_registry::instance();
+
+    std::vector<uint32_t> sample_ids;
+    std::vector<std::string> labels;
+    for (size_t sid = 0; sid < per_sample.size(); ++sid) {
+        if (per_sample[sid].segments == 0 && per_sample[sid].exons == 0) continue;
+        const auto& info = registry.get(static_cast<uint32_t>(sid));
+        sample_ids.push_back(static_cast<uint32_t>(sid));
+        labels.push_back(info.id.empty() ? std::to_string(sid) : info.id);
+    }
+
+    out << "metric\ttotal";
+    for (const auto& label : labels) out << "\t" << label;
+    out << "\n";
+
+    size_t total_segments = exons_per_segment.size();
+    auto write_row = [&](const std::string& metric, size_t global,
+                         auto getter) {
+        out << metric << "\t" << global;
+        for (uint32_t sid : sample_ids) {
+            out << "\t" << getter(per_sample[sid]);
+        }
+        out << "\n";
+    };
+
+    write_row("total",     total_segments, [](const sample_counters& s) { return s.segments; });
+    write_row("exclusive", size_t{0},      [](const sample_counters& s) { return s.exclusive_segments; });
+    write_row("shared",    size_t{0},      [](const sample_counters& s) { return s.shared_segments; });
+    write_row("conserved", size_t{0},      [](const sample_counters& s) { return s.conserved_segments; });
+
+    logging::info("Segment sharing written to: " + path);
 }

@@ -77,10 +77,32 @@ void analyze::execute(const cxxopts::ParseResult& args) {
         std::filesystem::create_directories(overview_dir);
 
         analysis_report report;
+
+        // Phase 8.5: open the conserved-exons stream BEFORE collect() so
+        // rows are written inline during traversal (no accumulator).
+        auto sharing_dir = analysis_dir / "sharing";
+        std::filesystem::create_directories(sharing_dir);
+        report.begin_conserved_exon_stream(
+            (sharing_dir / (basename + ".conserved_exons.tsv")).string());
+
+        // Phase 8.3: open splicing hub streams before collect() — rows are
+        // emitted at each gene's finalization (not at the end of the grove)
+        // so peak memory stays at O(num_samples), not O(num_hubs × num_samples).
+        auto hubs_dir = analysis_dir / "splicing_hubs";
+        std::filesystem::create_directories(hubs_dir);
+        report.begin_splicing_hub_streams(
+            (hubs_dir / (basename + ".splicing_hubs.tsv")).string(),
+            (hubs_dir / (basename + ".branch_details.tsv")).string());
+
         report.collect(*grove);
 
         report.write_overview((overview_dir / (basename + ".overview.tsv")).string());
         report.write_per_sample((overview_dir / (basename + ".per_sample.tsv")).string());
+
+        // Phase 8.2: sharing TSVs — metrics × samples transposition of
+        // per_sample counters, no extra memory
+        report.write_exon_sharing((sharing_dir / (basename + ".exon_sharing.tsv")).string());
+        report.write_segment_sharing((sharing_dir / (basename + ".segment_sharing.tsv")).string());
     }
 
     // TODO(Phase 8): Legacy analysis disabled — OOMs at 1000+ samples.
