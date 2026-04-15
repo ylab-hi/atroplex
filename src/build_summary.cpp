@@ -237,12 +237,16 @@ void build_summary::write_summary(const std::string& path) const {
     if (counters.input_transcripts > 0) {
         out << "  Input:            " << counters.input_transcripts << "\n";
     }
+    if (counters.scaffold_filtered_transcripts > 0) {
+        out << "  Scaffold-filtered: " << counters.scaffold_filtered_transcripts
+            << "  (skipped at ingest; disable with --include-scaffolds)\n";
+    }
     out << "  Merged:           " << counters.merged_transcripts
         << "  (folded into existing segments via FSM/terminal/ISM absorption)\n";
     out << "  Absorbed:         " << counters.absorbed_segments
         << "  (segments tombstoned by reverse absorption and removed)\n";
     out << "  Discarded:        " << counters.discarded_transcripts
-        << "  (--min-expression, mono-exon, fragment drops)\n";
+        << "  (expression filter, mono-exon, fragment drops)\n";
     if (counters.replicates_merged > 0) {
         out << "  Replicates merged: " << counters.replicates_merged << "\n";
     }

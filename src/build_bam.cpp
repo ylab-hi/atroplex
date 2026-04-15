@@ -28,6 +28,7 @@ void build_bam::build(grove_type& grove,
     const expression_filters& filters,
     bool absorb,
     size_t fuzzy_tolerance,
+    bool include_scaffolds,
     build_counters& counters) {
 
     // Step 1: Cluster reads by splice junction signature
@@ -48,6 +49,17 @@ void build_bam::build(grove_type& grove,
     for (const auto& cluster : clusters) {
         // Skip single-exon clusters (no splice junctions)
         if (cluster.consensus_junctions.empty()) continue;
+
+        // Scaffold filter (mirrors the GFF ingest path). Clusters on
+        // unplaced contigs, alt haplotypes, fix patches, and decoys
+        // are skipped unless --include-scaffolds is set. Each skipped
+        // cluster represents one transcript-level unit, so we count
+        // it against scaffold_filtered_transcripts and bail before
+        // bumping input_transcripts.
+        if (!is_main_chromosome(cluster.seqid, include_scaffolds)) {
+            counters.scaffold_filtered_transcripts++;
+            continue;
+        }
 
         counters.input_transcripts++;
 

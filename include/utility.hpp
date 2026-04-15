@@ -23,6 +23,29 @@
  */
 std::string normalize_chromosome(const std::string& seqid);
 
+/**
+ * Return true if `seqid` names a canonical main chromosome on the
+ * UCSC/GENCODE human assembly — chr1..chr22, chrX, chrY, chrM (or the
+ * unprefixed forms 1..22, X, Y, M, MT). Everything else — unplaced
+ * scaffolds (`chr1_KI270706v1_random`), unlocalized contigs
+ * (`chrUn_*`), fix patches (`*_fix`), alt haplotypes (`*_alt`), decoy
+ * sequences (`chrEBV`), and so on — returns false.
+ *
+ * The main-chromosome set is hard-coded for human; mouse and other
+ * species with different naming conventions should pass
+ * `include_scaffolds=true` to disable the filter entirely.
+ *
+ * Intended to be called with a raw GTF seqid **before** it is run
+ * through `normalize_chromosome()`, so that both the prefixed and
+ * unprefixed forms match. Scaffold names with extra suffixes (the
+ * long tail that blows up pan-transcriptome catalog size at cohort
+ * scale) all fail the strict match and are filtered out.
+ *
+ * @param seqid           The chromosome name as read from the GTF
+ * @param include_scaffolds  If true, always return true (no filtering)
+ */
+bool is_main_chromosome(const std::string& seqid, bool include_scaffolds = false);
+
 namespace logging {
     void info(const std::string& message);
     void warning(const std::string& message);

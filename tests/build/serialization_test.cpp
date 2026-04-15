@@ -55,7 +55,8 @@ protected:
 
         build_counters counters;
         build_gff::build(*grove_, anno_path, 0, exon_caches_, segment_caches_,
-                         gene_indices_, segment_count_, 0, expression_filters{}, false, 5, counters);
+                         gene_indices_, segment_count_, 0, expression_filters{}, false, 5,
+                         /*include_scaffolds=*/true, counters);
 
         // Register sample (with expression)
         sample_info samp_info("TEST_SAMPLE");
@@ -63,7 +64,8 @@ protected:
         [[maybe_unused]] auto samp_id = sample_registry::instance().register_data(samp_info);
 
         build_gff::build(*grove_, sample_path, 1, exon_caches_, segment_caches_,
-                         gene_indices_, segment_count_, 0, expression_filters{}, false, 5, counters);
+                         gene_indices_, segment_count_, 0, expression_filters{}, false, 5,
+                         /*include_scaffolds=*/true, counters);
     }
 
     // Serialize grove + registries to temp file (mirrors subcall::save_grove)

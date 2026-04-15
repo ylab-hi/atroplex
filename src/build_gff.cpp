@@ -33,6 +33,7 @@ void build_gff::build(grove_type& grove,
     const expression_filters& filters,
     bool absorb,
     size_t fuzzy_tolerance,
+    bool include_scaffolds,
     build_counters& counters) {
 
     gio::gff_reader reader(filepath.string());
@@ -54,6 +55,19 @@ void build_gff::build(grove_type& grove,
 
         if (line_count % 50000 == 0) {
             logging::progress(line_count, progress_prefix);
+        }
+
+        // Scaffold filter: skip entries on unplaced contigs, alt haplotypes,
+        // fix patches, decoys, etc. Default is main chromosomes only
+        // (chr1..chr22, chrX, chrY, chrM); --include-scaffolds disables
+        // the filter for non-human/non-mouse use cases. We only count the
+        // transcript-level entries so `scaffold_filtered_transcripts`
+        // mirrors the `input_transcripts` semantics.
+        if (!is_main_chromosome(entry.seqid, include_scaffolds)) {
+            if (entry.type == "transcript") {
+                counters.scaffold_filtered_transcripts++;
+            }
+            continue;
         }
 
         std::optional<std::string> gene_id = entry.get_gene_id();
