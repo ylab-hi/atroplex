@@ -48,6 +48,9 @@ void subcall::add_common_options(cxxopts::Options& options) {
             cxxopts::value<size_t>()->default_value("5"))
         ("min-replicates", "Merge biological replicates within groups; require features in >= N replicates (0 = no merge)",
             cxxopts::value<int>()->default_value("0"))
+        ("prune-tombstones", "Physically remove absorbed (tombstoned) segments from the grove after build. "
+            "Produces a smaller/cleaner .ggx at the cost of a slow post-build sweep "
+            "(grove.remove_key is O(E) per call today). Default: off — tombstones stay in the tree and are filtered at query time.")
         ;
 }
 
@@ -126,6 +129,7 @@ void subcall::setup_grove(const cxxopts::ParseResult& args) {
         bool absorb = !args.count("no-absorb");
         size_t fuzzy_tol = args["fuzzy-tolerance"].as<size_t>();
         int min_reps = args["min-replicates"].as<int>();
+        bool prune_tombstones = args.count("prune-tombstones") > 0;
         logging::info("Creating grove with order: " + std::to_string(order));
         if (min_expr >= 0) {
             logging::info("Filtering transcripts with expression < " + std::to_string(min_expr));
@@ -138,9 +142,12 @@ void subcall::setup_grove(const cxxopts::ParseResult& args) {
         if (min_reps > 0) {
             logging::info("Replicate merging enabled: min_replicates = " + std::to_string(min_reps));
         }
+        if (prune_tombstones) {
+            logging::info("Physical tombstone removal enabled (--prune-tombstones)");
+        }
         grove = std::make_unique<grove_type>(order);
         auto build_start = std::chrono::steady_clock::now();
-        build_stats = builder::build_from_samples(*grove, all_samples, threads, min_expr, absorb, min_reps, fuzzy_tol, &exon_caches_, &gene_indices_);
+        build_stats = builder::build_from_samples(*grove, all_samples, threads, min_expr, absorb, min_reps, fuzzy_tol, prune_tombstones, &exon_caches_, &gene_indices_);
         auto build_elapsed = std::chrono::duration<double>(std::chrono::steady_clock::now() - build_start).count();
         build_stats->build_time_seconds = build_elapsed;
         logging::info("Grove ready with spatial index and graph structure");
