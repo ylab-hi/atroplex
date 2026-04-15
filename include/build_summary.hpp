@@ -112,6 +112,12 @@ struct build_summary {
      * Mirrors analysis_report::collect — both are member mutators so callers
      * can configure instance-level state before collection.
      *
+     * **Precondition:** the instance must be default-constructed (or
+     * otherwise empty). collect() appends to its internal containers without
+     * clearing them first, so calling it twice on the same instance would
+     * double-count annotation_sources, biotype maps, per_chromosome entries,
+     * and the distribution aggregates. Use one build_summary per build.
+     *
      * @param grove          Grove reference (used for edge count + tree depth)
      * @param segment_caches Chromosome -> segment cache (post-sweep)
      * @param exon_caches    Chromosome -> exon cache

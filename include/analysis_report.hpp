@@ -85,6 +85,15 @@ struct analysis_report {
 
     // ── Collection ──────────────────────────────────────────────────
 
+    /**
+     * Traverse the grove and populate per-sample counters + distributions.
+     *
+     * **Precondition:** the instance must be default-constructed (or empty).
+     * collect() appends to its internal per-sample counters and distribution
+     * vectors without clearing them first, so calling it twice on the same
+     * instance would double-count every metric. Use one analysis_report per
+     * analyze invocation.
+     */
     void collect(grove_type& grove);
 
     // ── Output ──────────────────────────────────────────────────────
