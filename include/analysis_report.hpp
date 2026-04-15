@@ -88,6 +88,23 @@ struct analysis_report {
     };
     std::vector<sample_counters> per_sample;  // indexed by sample_id
 
+    // ── Per-source (one row per GFF column-2 source string) ────────
+    //
+    // Bounded by source_registry capacity (16 sources max). Each
+    // entry counts segments/exons that carry the source's bit, plus
+    // the "exclusive" subset where ONLY this source contributed
+    // (source_count() == 1). genes is the count of distinct genes
+    // that have any feature carrying this source — accumulated at
+    // gene finalization from gene_acc::sources_seen_in_gene.
+    struct source_stats {
+        size_t segments = 0;
+        size_t exclusive_segments = 0;
+        size_t exons = 0;
+        size_t exclusive_exons = 0;
+        size_t genes = 0;
+    };
+    std::map<std::string, source_stats> per_source;
+
     // ── Distributions (for median/max, bounded by feature count) ────
     std::vector<size_t> transcripts_per_gene;
     std::vector<size_t> exons_per_segment;
@@ -182,6 +199,13 @@ struct analysis_report {
 
     void write_overview(const std::string& path) const;
     void write_per_sample(const std::string& path) const;
+
+    /**
+     * Write per-source TSV: one row per GFF column-2 source.
+     * Columns: source, genes, segments, exclusive_segments, exons, exclusive_exons.
+     * Bounded by source_registry capacity (16 entries max).
+     */
+    void write_per_source(const std::string& path) const;
 
     /**
      * Write exon sharing TSV: metrics as rows, samples as columns.

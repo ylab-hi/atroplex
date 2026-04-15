@@ -93,6 +93,7 @@ void analysis_report::collect(grove_type& grove) {
         std::vector<key_ptr> first_visit_exons;   // Phase 8.4: exons whose global first visit occurred in this gene
         std::vector<pending_hub> pending_hubs;    // Phase 8.3: hubs detected in this gene
         std::vector<segment_chain_entry> segments_in_gene;  // Phase 8.6: per-gene chains for splicing_catalog detectors
+        uint16_t sources_seen_in_gene = 0;        // 8.7a: OR of all segment.sources bitfields in the gene
     };
     std::unordered_map<uint32_t, gene_acc> active_genes;
 
@@ -115,6 +116,14 @@ void analysis_report::collect(grove_type& grove) {
                 per_sample[sid].transcripts += acc.sample_tx[sid];
             }
         }
+
+        // 8.7a: bump per_source.genes for every source that contributed to
+        // any segment in this gene. sources_seen_in_gene is the OR of all
+        // segment.sources bitfields collected during the segment loop.
+        source_registry::instance().for_each(acc.sources_seen_in_gene,
+            [&](const std::string& src) {
+                per_source[src].genes++;
+            });
 
         // ── Phase 8.4: diversity metrics for multi-segment genes ────────
         if (acc.segment_count >= 2) {
@@ -376,6 +385,17 @@ void analysis_report::collect(grove_type& grove) {
                 }
                 acc.segment_count++;
                 acc.sample_bits.merge(seg.sample_idx);
+                acc.sources_seen_in_gene |= seg.sources;  // 8.7a: track sources per gene
+
+                // 8.7a: per-source segment counts. source_count == 1 means
+                // this segment was contributed by exactly one source, so it
+                // is "exclusive" to that source.
+                bool seg_source_exclusive = (seg.source_count() == 1);
+                source_registry::instance().for_each(seg.sources,
+                    [&](const std::string& src) {
+                        per_source[src].segments++;
+                        if (seg_source_exclusive) per_source[src].exclusive_segments++;
+                    });
 
                 size_t tx_count = seg.transcript_ids.size();
                 acc.segment_tx_counts.push_back(tx_count);  // Phase 8.4: for effective isoforms
@@ -434,6 +454,18 @@ void analysis_report::collect(grove_type& grove) {
                                 else if (exon_conserved) sc.conserved_exons++;
                                 else sc.shared_exons++;
                             }
+
+                            // 8.7a: per-source exon counts. Only emitted at
+                            // first global visit so each unique exon is
+                            // counted once per source (matches segment-side
+                            // semantics where each unique segment is one
+                            // contribution).
+                            bool exon_source_exclusive = (exon.source_count() == 1);
+                            source_registry::instance().for_each(exon.sources,
+                                [&](const std::string& src) {
+                                    per_source[src].exons++;
+                                    if (exon_source_exclusive) per_source[src].exclusive_exons++;
+                                });
 
                             // Phase 8.4: remember this exon for constitutive
                             // classification at gene finalization
@@ -636,6 +668,27 @@ void analysis_report::write_per_sample(const std::string& path) const {
     }
 
     logging::info("Per-sample stats written to: " + path);
+}
+
+void analysis_report::write_per_source(const std::string& path) const {
+    std::ofstream out(path);
+    if (!out.is_open()) {
+        logging::error("Cannot open per-source file: " + path);
+        return;
+    }
+
+    out << "source\tgenes\tsegments\texclusive_segments\texons\texclusive_exons\n";
+    for (const auto& [source, ss] : per_source) {
+        out << source
+            << "\t" << ss.genes
+            << "\t" << ss.segments
+            << "\t" << ss.exclusive_segments
+            << "\t" << ss.exons
+            << "\t" << ss.exclusive_exons
+            << "\n";
+    }
+
+    logging::info("Per-source stats written to: " + path);
 }
 
 // ── Splicing hub streaming setup (Phase 8.3) ───────────────────────

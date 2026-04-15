@@ -13,8 +13,6 @@
 #include <filesystem>
 
 #include "analysis_report.hpp"
-#include "index_stats.hpp"
-#include "splicing_catalog.hpp"
 #include "utility.hpp"
 
 namespace subcall {
@@ -107,6 +105,10 @@ void analyze::execute(const cxxopts::ParseResult& args) {
 
         report.write_overview((overview_dir / (basename + ".overview.tsv")).string());
         report.write_per_sample((overview_dir / (basename + ".per_sample.tsv")).string());
+        // Phase 8.7a: per-source aggregation (HAVANA / ENSEMBL / TALON / ...).
+        // Bounded by source_registry capacity (16 sources max), no extra
+        // traversal — counters are populated inline during collect().
+        report.write_per_source((overview_dir / (basename + ".per_source.tsv")).string());
 
         // Phase 8.2: sharing TSVs — metrics × samples transposition of
         // per_sample counters, no extra memory
