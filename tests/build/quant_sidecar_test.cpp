@@ -238,9 +238,15 @@ TEST_F(QuantSidecarTest, RepeatFinalizeIsNoOp) {
 
 // ── Reader error handling ───────────────────────────────────────────
 
+// Note on the brace-init pattern below (`Reader{path}` instead of
+// `Reader(path)`): when `path` is a local identifier in scope, C++'s
+// most-vexing-parse rule interprets `quant_sidecar::Reader(path)` as
+// declaring a default-constructed Reader named `path`, which is a
+// compile error because Reader has no default constructor. Brace
+// initialization is unambiguous — it creates a temporary.
 TEST_F(QuantSidecarTest, ReaderRejectsMissingFile) {
     EXPECT_THROW(
-        quant_sidecar::Reader(tmp_dir / "does_not_exist.qtx"),
+        quant_sidecar::Reader{tmp_dir / "does_not_exist.qtx"},
         std::runtime_error);
 }
 
@@ -258,7 +264,7 @@ TEST_F(QuantSidecarTest, ReaderRejectsBadMagic) {
         out.write(reinterpret_cast<const char*>(&hdr), sizeof(hdr));
     }
 
-    EXPECT_THROW(quant_sidecar::Reader(path), std::runtime_error);
+    EXPECT_THROW(quant_sidecar::Reader{path}, std::runtime_error);
 }
 
 TEST_F(QuantSidecarTest, ReaderRejectsFutureVersion) {
@@ -273,7 +279,7 @@ TEST_F(QuantSidecarTest, ReaderRejectsFutureVersion) {
         out.write(reinterpret_cast<const char*>(&hdr), sizeof(hdr));
     }
 
-    EXPECT_THROW(quant_sidecar::Reader(path), std::runtime_error);
+    EXPECT_THROW(quant_sidecar::Reader{path}, std::runtime_error);
 }
 
 TEST_F(QuantSidecarTest, ReaderRejectsTruncatedRecords) {
@@ -295,7 +301,7 @@ TEST_F(QuantSidecarTest, ReaderRejectsTruncatedRecords) {
         out.write(reinterpret_cast<const char*>(recs), sizeof(recs));
     }
 
-    EXPECT_THROW(quant_sidecar::Reader(path), std::runtime_error);
+    EXPECT_THROW(quant_sidecar::Reader{path}, std::runtime_error);
 }
 
 // ── Stable sort: insertion order preserved on duplicate keys ────────
