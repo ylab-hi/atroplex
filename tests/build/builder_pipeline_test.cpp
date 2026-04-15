@@ -173,12 +173,21 @@ TEST_F(BuilderPipelineTest, BuilderFullPipeline_CountersPopulated) {
     EXPECT_EQ(summary.total_genes, 1u);
 }
 
-// ── Tier 1.2: Physical removal of tombstones from the B+ tree ──────────────
+// ── Tier 1.2: Tombstones are counted and pruned from caches ────────────────
 //
-// After the sweep runs, no segment in live tree traversal should have
-// absorbed == true. This confirms remove_tombstones() actually unlinks
-// keys from the tree (rather than leaving them as stale entries).
-TEST_F(BuilderPipelineTest, RemoveTombstones_PhysicallyRemoved) {
+// remove_tombstones currently counts absorbed segments and prunes them
+// from segment_caches and gene_indices so downstream stats collection
+// never sees a tombstone. Physical removal from the B+ tree is deferred
+// pending a batch genogrove remove_key variant — grove.remove_key() is
+// O(E) per call today, and calling it per tombstone makes the sweep
+// O(N × E) which blocks realistic builds for hours.
+//
+// Verified here:
+//   - counters.absorbed_segments is populated
+//   - total_segments subtracts tombstones (= segment_count - absorbed)
+//   - the segment_feature with absorbed=true DOES remain in the tree
+//     (this is the temporary trade-off we accept)
+TEST_F(BuilderPipelineTest, RemoveTombstones_CountedNotRemoved) {
     auto ism_path = write_ism_gtf();
     auto parent_path = write_parent_gtf();
 
@@ -192,27 +201,40 @@ TEST_F(BuilderPipelineTest, RemoveTombstones_PhysicallyRemoved) {
     auto summary = builder::build_from_samples(
         grove, samples, 1, -1.0f, true, 0, 5);
 
+    // Counter is populated and total_segments subtracts it
     ASSERT_EQ(summary.counters.absorbed_segments, 1u)
         << "Fixture must produce exactly one tombstone";
+    EXPECT_EQ(summary.total_segments, 1u)
+        << "total_segments should subtract tombstones";
 
+    // Tombstoned segment stays in the tree (current behavior). Walk the
+    // B+ tree and confirm we find BOTH segments — parent (absorbed=false)
+    // and the tombstoned ISM (absorbed=true).
     auto live = walk_live_segments(grove);
-    EXPECT_EQ(live.size(), 1u)
-        << "Expected exactly one live segment (the parent) after sweep";
+    EXPECT_EQ(live.size(), 2u)
+        << "Both segments still present in B+ tree until batch "
+           "genogrove removal lands";
 
+    size_t absorbed_in_tree = 0;
+    size_t live_in_tree = 0;
     for (const auto* seg : live) {
-        EXPECT_FALSE(seg->absorbed)
-            << "Tree traversal should not surface any absorbed segment";
+        if (seg->absorbed) ++absorbed_in_tree;
+        else               ++live_in_tree;
     }
+    EXPECT_EQ(absorbed_in_tree, 1u);
+    EXPECT_EQ(live_in_tree, 1u);
 }
 
 // ── Tier 1.3: Orphan EXON_TO_EXON edges are pruned by the sweep ────────────
 //
-// When reverse absorption tombstones a segment, the old EXON_TO_EXON edges
-// carrying that segment's segment_index become orphans (they link two exons
-// that are legitimately in the live parent chain, but with a dead id).
-// remove_tombstones calls remove_edges_if to strip them. Verify edge_count
-// drops compared to a no-sweep baseline built via the same files.
-TEST_F(BuilderPipelineTest, RemoveTombstones_OrphanEdgesPruned) {
+// Disabled until physical tombstone removal is re-enabled (blocked on
+// batch genogrove remove_key variant — see remove_tombstones() comment).
+// With the current counter-only sweep the swept and unswept edge counts
+// are identical, which this test would report as a failure.
+//
+// When the physical removal returns, rename back to
+// `RemoveTombstones_OrphanEdgesPruned` and re-enable.
+TEST_F(BuilderPipelineTest, DISABLED_RemoveTombstones_OrphanEdgesPruned) {
     auto ism_path = write_ism_gtf();
     auto parent_path = write_parent_gtf();
 

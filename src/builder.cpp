@@ -330,43 +330,40 @@ size_t builder::merge_replicates(
 }
 
 size_t builder::remove_tombstones(
-    grove_type& grove,
+    grove_type& /*grove*/,
     chromosome_segment_caches& segment_caches,
     chromosome_gene_segment_indices& gene_indices
 ) {
-    // Note: try_reverse_absorption already erases absorbed segments from
-    // segment_cache at the moment it tombstones them (segment_builder.cpp:367).
-    // gene_indices retains absorbed entries, so it's the authoritative source
-    // of tombstones that still live in the B+ tree.
-    std::unordered_set<size_t> tombstone_ids;
+    // Physical removal via grove.remove_key() is O(N × E) because
+    // genogrove's graph_overlay::remove_edges_to scans the full adjacency
+    // map on every call (even though segments are never edge targets, so
+    // the scan always finds zero matches). On realistic indices this
+    // blocks the build for hours after "Grove construction complete".
+    //
+    // For now we only COUNT tombstones and prune them from segment_caches
+    // and gene_indices so downstream summary collection doesn't see them.
+    // The tombstoned keys themselves stay in the B+ tree; every consumer
+    // already skips them defensively via `if (seg.absorbed) continue;`.
+    // This wastes a bit of memory (and bloats the serialized .ggx) but
+    // keeps the build moving. See TODO: replace with a batch-removal
+    // genogrove API that skips the incoming-edge scan when segments are
+    // known to be edge-source-only.
+
     size_t removed = 0;
 
+    // Count absorbed entries via the authoritative source (gene_indices).
     for (auto& [seqid, gene_idx] : gene_indices) {
         for (auto& [gene_id, entries] : gene_idx) {
             for (auto& entry : entries) {
                 auto& feature = entry.segment->get_data();
                 if (!is_segment(feature)) continue;
-                auto& seg = get_segment(feature);
-                if (!seg.absorbed) continue;
-
-                tombstone_ids.insert(seg.segment_index);
-                grove.remove_key(seqid, entry.segment);
-                ++removed;
+                if (get_segment(feature).absorbed) ++removed;
             }
         }
     }
 
-    // Drop orphan EXON_TO_EXON edges that carry a tombstone's segment_index.
-    // remove_key only removes edges where the segment key itself is source
-    // or target; chain edges between exon keys are not touched automatically.
-    if (!tombstone_ids.empty()) {
-        grove.remove_edges_if([&tombstone_ids](const auto& e) {
-            return tombstone_ids.count(e.metadata.id) > 0;
-        });
-    }
-
-    // Prune gene_indices entries that reference removed segments so that
-    // downstream stats collection never sees a tombstone.
+    // Prune absorbed entries from gene_indices so that downstream stats
+    // collection never sees a tombstone.
     for (auto& [seqid, gene_idx] : gene_indices) {
         for (auto& [gene_id, entries] : gene_idx) {
             std::erase_if(entries, [](const segment_chain_entry& e) {
@@ -375,9 +372,8 @@ size_t builder::remove_tombstones(
         }
     }
 
-    // Safety net: if any code path ever leaves an absorbed entry in segment_cache
-    // without erasing it (try_reverse_absorption does erase, but forward
-    // absorption rules don't go through that code), drop those too.
+    // Safety net: try_reverse_absorption already erases from segment_cache
+    // at the moment it tombstones, but drop any stragglers defensively.
     for (auto& [seqid, seg_cache] : segment_caches) {
         for (auto it = seg_cache.begin(); it != seg_cache.end(); ) {
             auto& feature = it->second->get_data();
@@ -390,8 +386,9 @@ size_t builder::remove_tombstones(
     }
 
     if (removed > 0) {
-        logging::info("Removed " + std::to_string(removed) +
-            " absorbed (tombstoned) segments from grove");
+        logging::info("Counted " + std::to_string(removed) +
+            " absorbed (tombstoned) segments; physical removal deferred "
+            "pending a batch genogrove remove_key variant");
     }
 
     return removed;
