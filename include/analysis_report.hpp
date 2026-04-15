@@ -21,17 +21,24 @@
 /**
  * Streaming analysis report — single-pass grove traversal.
  *
- * Data is stored at three levels:
- *   - per_chromosome: genes, segments, exons per chromosome
- *   - per_sample:     genes, segments, exons, transcripts per sample
- *   - distributions:  transcripts_per_gene, exons_per_segment (for median/max)
+ * Data is stored at two levels:
+ *   - per_sample:    flat vector<sample_counters> indexed by sample_id
+ *                    (genes, segments, exons, transcripts, diversity)
+ *   - distributions: transcripts_per_gene, exons_per_segment
+ *                    (for median/max, one entry per feature — bounded)
  *
- * Global totals are derived from these at output time — not tracked separately.
+ * Global totals (total_genes, total_segments, total_exons) are derived from
+ * these at output time, not tracked separately.
+ *
+ * Per-gene accumulators live in a local `active_genes` map inside collect()
+ * and are cleared at every chromosome boundary, so memory scales with
+ * feature count, never with sample count.
  *
  * Usage:
  *   analysis_report report;
  *   report.collect(grove);
- *   report.write_overview("output.tsv");
+ *   report.write_overview("overview.tsv");
+ *   report.write_per_sample("per_sample.tsv");
  */
 struct analysis_report {
 
@@ -71,8 +78,10 @@ struct analysis_report {
     // ── Counters not derivable from per-sample ────────────────────────
     size_t total_transcripts = 0;  // sum of transcript_ids.size() across all segments
     size_t total_exons = 0;        // unique exons (pointer-deduplicated)
-    size_t absorbed_segments = 0;
     size_t total_edges = 0;
+    // Note: the absorbed-segment count is part of build_summary::counters —
+    // tombstones are physically removed by builder::remove_tombstones before
+    // analyze runs, so analysis_report can never observe one.
 
     // ── Collection ──────────────────────────────────────────────────
 

@@ -182,8 +182,8 @@ build_summary builder::build_from_samples(grove_type& grove,
     counters.absorbed_segments = remove_tombstones(grove, segment_caches, gene_indices);
 
     // --- Collect summary statistics ---
-    build_summary stats = build_summary::collect(
-        grove, segment_caches, exon_caches, segment_count, counters);
+    build_summary stats;
+    stats.collect(grove, segment_caches, exon_caches, segment_count, counters);
 
     // Log per-chromosome summary
     std::vector<std::string> seqids;

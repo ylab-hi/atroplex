@@ -107,21 +107,23 @@ struct build_summary {
     double build_time_seconds = 0;
 
     /**
-     * Collect a build_summary from builder caches post-sweep.
+     * Populate this build_summary from builder caches post-sweep.
      * Caller must have already run tombstone cleanup and replicate merging.
+     * Mirrors analysis_report::collect — both are member mutators so callers
+     * can configure instance-level state before collection.
      *
      * @param grove          Grove reference (used for edge count + tree depth)
      * @param segment_caches Chromosome -> segment cache (post-sweep)
      * @param exon_caches    Chromosome -> exon cache
      * @param segment_count  Running segment counter (pre-sweep total)
-     * @param counters       Build counters accumulated during build
+     * @param counters_in    Build counters accumulated during build
      */
-    static build_summary collect(
+    void collect(
         grove_type& grove,
         const chromosome_segment_caches& segment_caches,
         const chromosome_exon_caches& exon_caches,
         size_t segment_count,
-        const build_counters& counters
+        const build_counters& counters_in
     );
 
     /**

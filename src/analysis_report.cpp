@@ -54,7 +54,15 @@ void analysis_report::collect(grove_type& grove) {
         std::string biotype;
         size_t segment_count = 0;
         sample_bitset sample_bits;
-        std::vector<size_t> sample_tx;  // per-sample transcript count
+        // Per-sample "transcripts touched": sum over segments the sample
+        // contributes to of that segment's full transcript_ids count.
+        // Over-counts for shared segments — the merged transcript_ids of a
+        // segment shared by N samples get credited to every sample, even
+        // though each sample only contributed a subset. Strict per-sample
+        // attribution would require a tx→sample map, which is the
+        // sample×feature structure the streaming rewrite exists to avoid.
+        // The TSV column is labelled `transcripts_touched` to surface this.
+        std::vector<size_t> sample_tx;
     };
     std::unordered_map<uint32_t, gene_acc> active_genes;
 
@@ -97,10 +105,10 @@ void analysis_report::collect(grove_type& grove) {
                 if (!is_segment(feature)) continue;
 
                 auto& seg = get_segment(feature);
-                if (seg.absorbed) {
-                    absorbed_segments++;
-                    continue;
-                }
+                // Defensive: tombstones are physically removed by
+                // builder::remove_tombstones before analyze runs, so this
+                // branch should be unreachable. Skip just in case.
+                if (seg.absorbed) continue;
 
                 // ── Segment → per-sample ────────────────────────────
                 size_t seg_sample_count = seg.sample_count();
@@ -198,13 +206,6 @@ void analysis_report::collect(grove_type& grove) {
     total_exons = visited_exons.size();
     total_edges = grove.edge_count();
 
-    // Summary log
-    size_t total_seg = 0, total_ex = 0, total_genes = 0;
-    for (const auto& sc : per_sample) {
-        total_seg = std::max(total_seg, sc.segments);
-        total_ex = std::max(total_ex, sc.exons);
-        total_genes = std::max(total_genes, sc.genes);
-    }
     logging::info("Analysis report collected: " +
                   std::to_string(per_sample.size()) + " samples, " +
                   std::to_string(exons_per_segment.size()) + " segments, " +
@@ -251,7 +252,6 @@ void analysis_report::write_overview(const std::string& path) const {
     out << "segments/isoforms\t" << total_segments << "\n";
     out << "exons\t" << total_exons << "\n";
     out << "graph_edges\t" << total_edges << "\n";
-    out << "absorbed_segments\t" << absorbed_segments << "\n";
     out << "single_exon_segments\t" << single_exon << "\n";
     out << "single_isoform_genes\t" << single_iso << "\n";
     out << "multi_isoform_genes\t" << multi_iso << "\n";
@@ -271,9 +271,15 @@ void analysis_report::write_per_sample(const std::string& path) const {
 
     auto& registry = sample_registry::instance();
 
+    // Note: `transcripts_touched` counts transcript_ids summed over every
+    // segment this sample contributes to. Shared segments over-count —
+    // each sample in a segment's sample_idx is credited with the segment's
+    // full transcript set, including transcripts contributed by other
+    // samples. Streaming-friendly approximation; strict attribution would
+    // require a tx→sample map.
     out << "sample\ttype\tgenes\tsegments\texclusive_segments\tshared_segments"
         << "\tconserved_segments\texons\texclusive_exons\tshared_exons"
-        << "\tconserved_exons\ttranscripts\tsingle_exon_segments"
+        << "\tconserved_exons\ttranscripts_touched\tsingle_exon_segments"
         << "\texpressed_segments\tmean_expression\n";
     out << std::fixed;
 

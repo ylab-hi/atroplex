@@ -37,34 +37,33 @@ double compute_median(std::vector<size_t>& values) {
 
 } // anonymous namespace
 
-build_summary build_summary::collect(
+void build_summary::collect(
     grove_type& grove,
     const chromosome_segment_caches& segment_caches,
     const chromosome_exon_caches& exon_caches,
     size_t segment_count,
-    const build_counters& counters
+    const build_counters& counters_in
 ) {
-    build_summary stats;
-    stats.counters = counters;
+    counters = counters_in;
 
     // Annotation sources and entry count from registry
     auto& registry = sample_registry::instance();
     for (size_t i = 0; i < registry.size(); ++i) {
         const auto& info = registry.get(static_cast<uint32_t>(i));
         if (!info.id.empty()) {
-            stats.annotation_sources.push_back(info.id);
+            annotation_sources.push_back(info.id);
         }
         if (info.type != "replicate") {
-            stats.total_entries++;
+            total_entries++;
         }
     }
 
-    stats.total_chromosomes = segment_caches.size();
+    total_chromosomes = segment_caches.size();
     // Pre-sweep running total minus tombstones physically removed
-    stats.total_segments = (segment_count >= counters.absorbed_segments)
+    total_segments = (segment_count >= counters.absorbed_segments)
         ? segment_count - counters.absorbed_segments
         : segment_count;
-    stats.tree_order = grove.get_order();
+    tree_order = grove.get_order();
 
     // B+ tree depth per chromosome
     for (const auto& [index_name, root_node] : grove.get_root_nodes()) {
@@ -75,7 +74,7 @@ build_summary build_summary::collect(
             depth++;
         }
         if (current) depth++;
-        stats.tree_depth_per_chromosome[index_name] = depth;
+        tree_depth_per_chromosome[index_name] = depth;
     }
 
     // Gene / transcript aggregation from segment caches (post-sweep: no tombstones)
@@ -88,7 +87,7 @@ build_summary build_summary::collect(
     std::vector<size_t> exons_per_segment;
 
     for (const auto& [seqid, seg_cache] : segment_caches) {
-        stats.per_chromosome[seqid].segments = seg_cache.size();
+        per_chromosome[seqid].segments = seg_cache.size();
 
         for (const auto& [key, seg_ptr] : seg_cache) {
             auto& feature = seg_ptr->get_data();
@@ -104,25 +103,25 @@ build_summary build_summary::collect(
 
             for (const auto& [tx_id, biotype] : seg.transcript_biotypes) {
                 if (!biotype.empty()) {
-                    stats.transcripts_by_biotype[biotype]++;
+                    transcripts_by_biotype[biotype]++;
                 }
             }
 
             exons_per_segment.push_back(static_cast<size_t>(seg.exon_count));
             if (seg.exon_count == 1) {
-                stats.single_exon_segments++;
+                single_exon_segments++;
             }
         }
     }
 
     // Exon counts
     for (const auto& [seqid, exon_cache] : exon_caches) {
-        stats.per_chromosome[seqid].exons = exon_cache.size();
-        stats.total_exons += exon_cache.size();
+        per_chromosome[seqid].exons = exon_cache.size();
+        total_exons += exon_cache.size();
     }
 
     // Gene-level statistics
-    stats.total_genes = genes.size();
+    total_genes = genes.size();
     std::vector<size_t> transcripts_per_gene;
     transcripts_per_gene.reserve(genes.size());
     size_t total_tx = 0;
@@ -133,43 +132,41 @@ build_summary build_summary::collect(
         transcripts_per_gene.push_back(tx_count);
 
         if (!gi.biotype.empty()) {
-            stats.genes_by_biotype[gi.biotype]++;
+            genes_by_biotype[gi.biotype]++;
         }
-        if (tx_count > stats.max_transcripts_per_gene) {
-            stats.max_transcripts_per_gene = tx_count;
-            stats.max_transcripts_gene_id = gene_id;
+        if (tx_count > max_transcripts_per_gene) {
+            max_transcripts_per_gene = tx_count;
+            max_transcripts_gene_id = gene_id;
         }
         if (tx_count == 1) {
-            stats.single_isoform_genes++;
+            single_isoform_genes++;
         } else {
-            stats.multi_isoform_genes++;
+            multi_isoform_genes++;
         }
     }
 
-    stats.total_transcripts = total_tx;
+    total_transcripts = total_tx;
     if (!transcripts_per_gene.empty()) {
-        stats.mean_transcripts_per_gene =
+        mean_transcripts_per_gene =
             static_cast<double>(total_tx) / static_cast<double>(transcripts_per_gene.size());
-        stats.median_transcripts_per_gene = compute_median(transcripts_per_gene);
+        median_transcripts_per_gene = compute_median(transcripts_per_gene);
     }
 
     if (!exons_per_segment.empty()) {
         size_t total_exons_sum = std::accumulate(
             exons_per_segment.begin(), exons_per_segment.end(), size_t{0});
-        stats.mean_exons_per_segment =
+        mean_exons_per_segment =
             static_cast<double>(total_exons_sum) / static_cast<double>(exons_per_segment.size());
-        stats.median_exons_per_segment = compute_median(exons_per_segment);
-        stats.max_exons_per_segment = *std::max_element(
+        median_exons_per_segment = compute_median(exons_per_segment);
+        max_exons_per_segment = *std::max_element(
             exons_per_segment.begin(), exons_per_segment.end());
     }
 
     for (const auto& [seqid, gene_set] : chr_gene_ids) {
-        stats.per_chromosome[seqid].genes = gene_set.size();
+        per_chromosome[seqid].genes = gene_set.size();
     }
 
-    stats.total_edges = grove.edge_count();
-
-    return stats;
+    total_edges = grove.edge_count();
 }
 
 void build_summary::write_summary(const std::string& path) const {
@@ -247,7 +244,7 @@ void build_summary::write_summary(const std::string& path) const {
     out << "  Discarded:        " << counters.discarded_transcripts
         << "  (--min-expression, mono-exon, fragment drops)\n";
     if (counters.replicates_merged > 0) {
-        out << "  Replicates merged:" << counters.replicates_merged << "\n";
+        out << "  Replicates merged: " << counters.replicates_merged << "\n";
     }
     out << "\n";
 
