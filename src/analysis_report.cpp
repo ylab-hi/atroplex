@@ -90,8 +90,6 @@ void analysis_report::collect(grove_type& grove) {
         if (!root) continue;
         active_genes.clear();
 
-        logging::info("  " + seqid);
-
         auto* node = root;
         while (!node->get_is_leaf()) {
             auto& children = node->get_children();

@@ -206,7 +206,8 @@ void subcall::load_grove(const std::string& path) {
     grove = std::make_unique<grove_type>(grove_type::deserialize(ifs));
 
     logging::info("Loaded index from: " + path);
-    logging::info("  Genes: " + std::to_string(gene_registry::instance().size()) +
+    logging::info("Chromosomes: " + std::to_string(grove->get_root_nodes().size()) +
+                  ", Genes: " + std::to_string(gene_registry::instance().size()) +
                   ", Sources: " + std::to_string(source_registry::instance().size()) +
                   ", Transcripts: " + std::to_string(transcript_registry::instance().size()) +
                   ", Samples: " + std::to_string(sample_registry::instance().size()));

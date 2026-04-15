@@ -197,20 +197,13 @@ build_summary builder::build_from_samples(grove_type& grove,
     build_summary stats;
     stats.collect(grove, segment_caches, exon_caches, segment_count, counters);
 
-    // Log per-chromosome summary
-    std::vector<std::string> seqids;
-    for (const auto& [seqid, _] : segment_caches) {
-        seqids.push_back(seqid);
-    }
-    std::sort(seqids.begin(), seqids.end(), chromosome_compare);
-
-    logging::info("Per-chromosome summary:");
-    for (const auto& seqid : seqids) {
-        auto& cs = stats.per_chromosome[seqid];
-        logging::info("  " + seqid + ": " +
-            std::to_string(cs.exons) + " exons, " +
-            std::to_string(cs.segments) + " segments");
-    }
+    // Concise one-line registry summary (detailed per-chromosome breakdown
+    // still lives on stats.per_chromosome and surfaces in the .ggx.summary).
+    logging::info("Chromosomes: " + std::to_string(stats.per_chromosome.size()) +
+                  ", Genes: " + std::to_string(stats.total_genes) +
+                  ", Sources: " + std::to_string(source_registry::instance().size()) +
+                  ", Transcripts: " + std::to_string(stats.total_transcripts) +
+                  ", Samples: " + std::to_string(sample_registry::instance().size()));
 
     // Move caches to caller if requested
     if (out_exon_caches) {
