@@ -116,49 +116,6 @@ build_summary builder::build_from_samples(grove_type& grove,
 
             // Build with persistent caches for cross-file deduplication
             build_gff::build(grove, filepath, registry_id, exon_caches, segment_caches, gene_indices, segment_count, threads, min_expression, absorb, fuzzy_tolerance, counters);
-
-            // Estimate grove memory usage after each file
-            size_t mem_segments = 0, mem_exons = 0, mem_gene_idx = 0;
-            for (const auto& [sid, seg_cache] : segment_caches) {
-                for (const auto& [key, seg_ptr] : seg_cache) {
-                    auto& seg = get_segment(seg_ptr->get_data());
-                    mem_segments += sizeof(segment_feature)
-                        + seg.transcript_ids.data_bytes()  // sorted flat vector
-                        + seg.sample_idx.word_count() * 8  // dynamic bitset words
-                        + seg.expression.data_bytes()      // lazy flat array
-                        + seg.transcript_biotypes.size() * 40;  // uint32_t key + string value
-                }
-            }
-            for (const auto& [sid, exon_cache] : exon_caches) {
-                for (const auto& [coord, exon_ptr] : exon_cache) {
-                    auto& exon = get_exon(exon_ptr->get_data());
-                    mem_exons += sizeof(exon_feature)
-                        + exon.id.capacity()
-                        + exon.transcript_ids.data_bytes()  // sorted flat vector
-                        + exon.sample_idx.word_count() * 8  // dynamic bitset words
-                        + exon.expression.data_bytes();     // lazy flat array
-                }
-            }
-            for (const auto& [sid, gidx] : gene_indices) {
-                for (const auto& [gene_id, entries] : gidx) {
-                    for (const auto& e : entries) {
-                        mem_gene_idx += sizeof(segment_chain_entry)
-                            + e.exon_chain.capacity() * sizeof(key_ptr)
-                            + e.structure_key.capacity();
-                    }
-                }
-            }
-            size_t mem_edges = grove.edge_count() * (sizeof(edge_metadata) + 32);
-            size_t mem_total = mem_segments + mem_exons + mem_edges + mem_gene_idx;
-
-            auto fmt_mb = [](size_t bytes) {
-                return std::to_string(bytes / (1024 * 1024)) + " MB";
-            };
-            logging::info("Memory estimate: " + fmt_mb(mem_total) +
-                " (segments: " + fmt_mb(mem_segments) +
-                ", exons: " + fmt_mb(mem_exons) +
-                ", edges: " + fmt_mb(mem_edges) +
-                ", gene_idx: " + fmt_mb(mem_gene_idx) + ")");
         } else if (ftype == gio::filetype::BAM || ftype == gio::filetype::SAM) {
             logging::info("[" + std::to_string(current) + "/" + std::to_string(total) + "] Processing BAM: " + filepath.filename().string() +
                          (info.id.empty() ? "" : " (id: " + info.id + ")"));
@@ -192,6 +149,56 @@ build_summary builder::build_from_samples(grove_type& grove,
     }
     logging::info("Grove construction complete: " + std::to_string(live_segments)
         + " segments" + tombstone_note);
+
+    // End-of-build memory estimate — walks segment_caches / exon_caches /
+    // gene_indices once and sums struct-owned heap allocations. Approximate
+    // (misses hash-table bucket overhead, grove tree nodes, and allocator
+    // slack) but useful for sizing expectations. Moved here from the old
+    // per-file logging because that made build runtime O(N_files ×
+    // total_features) for a non-load-bearing log line.
+    {
+        size_t mem_segments = 0, mem_exons = 0, mem_gene_idx = 0;
+        for (const auto& [sid, seg_cache] : segment_caches) {
+            for (const auto& [key, seg_ptr] : seg_cache) {
+                auto& seg = get_segment(seg_ptr->get_data());
+                mem_segments += sizeof(segment_feature)
+                    + seg.transcript_ids.data_bytes()
+                    + seg.sample_idx.word_count() * 8
+                    + seg.expression.data_bytes()
+                    + seg.transcript_biotypes.size() * 40;
+            }
+        }
+        for (const auto& [sid, exon_cache] : exon_caches) {
+            for (const auto& [coord, exon_ptr] : exon_cache) {
+                auto& exon = get_exon(exon_ptr->get_data());
+                mem_exons += sizeof(exon_feature)
+                    + exon.id.capacity()
+                    + exon.transcript_ids.data_bytes()
+                    + exon.sample_idx.word_count() * 8
+                    + exon.expression.data_bytes();
+            }
+        }
+        for (const auto& [sid, gidx] : gene_indices) {
+            for (const auto& [gene_id, entries] : gidx) {
+                for (const auto& e : entries) {
+                    mem_gene_idx += sizeof(segment_chain_entry)
+                        + e.exon_chain.capacity() * sizeof(key_ptr)
+                        + e.structure_key.capacity();
+                }
+            }
+        }
+        size_t mem_edges = grove.edge_count() * (sizeof(edge_metadata) + 32);
+        size_t mem_total = mem_segments + mem_exons + mem_edges + mem_gene_idx;
+
+        auto fmt_mb = [](size_t bytes) {
+            return std::to_string(bytes / (1024 * 1024)) + " MB";
+        };
+        logging::info("Memory estimate: " + fmt_mb(mem_total) +
+            " (segments: " + fmt_mb(mem_segments) +
+            ", exons: " + fmt_mb(mem_exons) +
+            ", edges: " + fmt_mb(mem_edges) +
+            ", gene_idx: " + fmt_mb(mem_gene_idx) + ")");
+    }
 
     // --- Collect summary statistics ---
     build_summary stats;
