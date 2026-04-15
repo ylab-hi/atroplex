@@ -32,9 +32,20 @@ protected:
         source_registry::reset();
         sample_registry::reset();
 
-        tmp_dir = fs::temp_directory_path() / ("atroplex_builder_test_" +
-            std::to_string(::testing::UnitTest::GetInstance()->random_seed()));
-        fs::create_directories(tmp_dir);
+        // Per-test unique directory — avoids any cross-test aliasing when
+        // all tests in the binary share the same gtest random_seed().
+        // Using the test name guarantees uniqueness across the suite and
+        // makes failing fixtures easy to inspect.
+        const auto* info = ::testing::UnitTest::GetInstance()->current_test_info();
+        std::string dir_name = "atroplex_builder_test_";
+        dir_name += info ? info->name() : "unknown";
+        tmp_dir = fs::temp_directory_path() / dir_name;
+
+        std::error_code ec;
+        fs::remove_all(tmp_dir, ec);             // start clean
+        fs::create_directories(tmp_dir, ec);
+        ASSERT_FALSE(ec) << "Failed to create tmp_dir " << tmp_dir << ": " << ec.message();
+        ASSERT_TRUE(fs::exists(tmp_dir)) << "tmp_dir missing after create: " << tmp_dir;
     }
 
     void TearDown() override {
@@ -44,29 +55,53 @@ protected:
 
     fs::path tmp_dir;
 
+    // Helper: write `contents` to tmp_dir/`name`, flush+close explicitly,
+    // and verify the file exists with nonzero size before returning.
+    // Any failure becomes an immediate test assertion (fast-fail), so we
+    // never hand a half-written path to the builder.
+    fs::path write_gtf(const std::string& name, const std::string& contents) {
+        fs::path p = tmp_dir / name;
+        {
+            std::ofstream out(p, std::ios::binary | std::ios::trunc);
+            if (!out.is_open()) {
+                ADD_FAILURE() << "Failed to open " << p << " for writing";
+                return p;
+            }
+            out << contents;
+            out.flush();
+            out.close();
+            if (!out) {
+                ADD_FAILURE() << "Write/flush/close failed for " << p;
+                return p;
+            }
+        }
+        if (!fs::exists(p)) {
+            ADD_FAILURE() << "File does not exist after write: " << p;
+        } else if (fs::file_size(p) == 0) {
+            ADD_FAILURE() << "File is empty after write: " << p;
+        }
+        return p;
+    }
+
     // Write a GTF containing a 3-exon ISM (G1: ISM_FIRST)
     fs::path write_ism_gtf() {
-        fs::path p = tmp_dir / "ism.gtf";
-        std::ofstream out(p);
-        out << "chr1\tTEST\tgene\t1000\t5000\t.\t+\t.\tgene_id \"G1\"; gene_name \"TestGene\"; gene_biotype \"protein_coding\";\n";
-        out << "chr1\tTEST\ttranscript\t2000\t5000\t.\t+\t.\tgene_id \"G1\"; transcript_id \"ISM_FIRST\"; gene_name \"TestGene\"; gene_biotype \"protein_coding\";\n";
-        out << "chr1\tTEST\texon\t2000\t2300\t.\t+\t.\tgene_id \"G1\"; transcript_id \"ISM_FIRST\"; exon_number \"1\";\n";
-        out << "chr1\tTEST\texon\t3500\t3800\t.\t+\t.\tgene_id \"G1\"; transcript_id \"ISM_FIRST\"; exon_number \"2\";\n";
-        out << "chr1\tTEST\texon\t4500\t5000\t.\t+\t.\tgene_id \"G1\"; transcript_id \"ISM_FIRST\"; exon_number \"3\";\n";
-        return p;
+        return write_gtf("ism.gtf",
+            "chr1\tTEST\tgene\t1000\t5000\t.\t+\t.\tgene_id \"G1\"; gene_name \"TestGene\"; gene_biotype \"protein_coding\";\n"
+            "chr1\tTEST\ttranscript\t2000\t5000\t.\t+\t.\tgene_id \"G1\"; transcript_id \"ISM_FIRST\"; gene_name \"TestGene\"; gene_biotype \"protein_coding\";\n"
+            "chr1\tTEST\texon\t2000\t2300\t.\t+\t.\tgene_id \"G1\"; transcript_id \"ISM_FIRST\"; exon_number \"1\";\n"
+            "chr1\tTEST\texon\t3500\t3800\t.\t+\t.\tgene_id \"G1\"; transcript_id \"ISM_FIRST\"; exon_number \"2\";\n"
+            "chr1\tTEST\texon\t4500\t5000\t.\t+\t.\tgene_id \"G1\"; transcript_id \"ISM_FIRST\"; exon_number \"3\";\n");
     }
 
     // Write a GTF containing the 4-exon parent that absorbs the ISM above
     fs::path write_parent_gtf() {
-        fs::path p = tmp_dir / "parent.gtf";
-        std::ofstream out(p);
-        out << "chr1\tTEST\tgene\t1000\t5000\t.\t+\t.\tgene_id \"G1\"; gene_name \"TestGene\"; gene_biotype \"protein_coding\";\n";
-        out << "chr1\tTEST\ttranscript\t1000\t5000\t.\t+\t.\tgene_id \"G1\"; transcript_id \"PARENT_LATER\"; gene_name \"TestGene\"; gene_biotype \"protein_coding\";\n";
-        out << "chr1\tTEST\texon\t1000\t1200\t.\t+\t.\tgene_id \"G1\"; transcript_id \"PARENT_LATER\"; exon_number \"1\";\n";
-        out << "chr1\tTEST\texon\t2000\t2300\t.\t+\t.\tgene_id \"G1\"; transcript_id \"PARENT_LATER\"; exon_number \"2\";\n";
-        out << "chr1\tTEST\texon\t3500\t3800\t.\t+\t.\tgene_id \"G1\"; transcript_id \"PARENT_LATER\"; exon_number \"3\";\n";
-        out << "chr1\tTEST\texon\t4500\t5000\t.\t+\t.\tgene_id \"G1\"; transcript_id \"PARENT_LATER\"; exon_number \"4\";\n";
-        return p;
+        return write_gtf("parent.gtf",
+            "chr1\tTEST\tgene\t1000\t5000\t.\t+\t.\tgene_id \"G1\"; gene_name \"TestGene\"; gene_biotype \"protein_coding\";\n"
+            "chr1\tTEST\ttranscript\t1000\t5000\t.\t+\t.\tgene_id \"G1\"; transcript_id \"PARENT_LATER\"; gene_name \"TestGene\"; gene_biotype \"protein_coding\";\n"
+            "chr1\tTEST\texon\t1000\t1200\t.\t+\t.\tgene_id \"G1\"; transcript_id \"PARENT_LATER\"; exon_number \"1\";\n"
+            "chr1\tTEST\texon\t2000\t2300\t.\t+\t.\tgene_id \"G1\"; transcript_id \"PARENT_LATER\"; exon_number \"2\";\n"
+            "chr1\tTEST\texon\t3500\t3800\t.\t+\t.\tgene_id \"G1\"; transcript_id \"PARENT_LATER\"; exon_number \"3\";\n"
+            "chr1\tTEST\texon\t4500\t5000\t.\t+\t.\tgene_id \"G1\"; transcript_id \"PARENT_LATER\"; exon_number \"4\";\n");
     }
 
     // Walk the live grove (B+ tree leaves) and collect every segment key.
