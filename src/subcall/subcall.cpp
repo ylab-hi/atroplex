@@ -59,6 +59,11 @@ void subcall::add_common_options(cxxopts::Options& options) {
         ("prune-tombstones", "Physically remove absorbed (tombstoned) segments from the grove after build. "
             "Produces a smaller/cleaner .ggx at the cost of a slow post-build sweep "
             "(grove.remove_key is O(E) per call today). Default: off — tombstones stay in the tree and are filtered at query time.")
+        ("include-scaffolds", "Keep transcripts on unplaced scaffolds, alt contigs, fix patches, "
+            "and decoy sequences in addition to the main chromosomes (chr1..chr22, chrX, chrY, chrM). "
+            "Default: off — scaffold features are filtered at ingest to keep the pan-transcriptome index "
+            "focused on main-chromosome biology. Enable for non-human/non-mouse species or when you "
+            "specifically need scaffold contributions.")
         ;
 }
 
@@ -95,6 +100,10 @@ void subcall::run(const cxxopts::ParseResult& args) {
 }
 
 void subcall::setup_grove(const cxxopts::ParseResult& args) {
+    // Capture the scaffold-inclusion preference early so it's visible to
+    // anything the subclass does during execute(), not just the build path.
+    include_scaffolds = args.count("include-scaffolds") > 0;
+
     if (args.count("genogrove")) {
         std::string gg_path = args["genogrove"].as<std::string>();
         logging::info("Loading grove from: " + gg_path);
@@ -190,9 +199,14 @@ void subcall::setup_grove(const cxxopts::ParseResult& args) {
         if (prune_tombstones) {
             logging::info("Physical tombstone removal enabled (--prune-tombstones)");
         }
+        if (include_scaffolds) {
+            logging::info("Scaffold filter disabled (--include-scaffolds): all seqids retained");
+        } else {
+            logging::info("Scaffold filter active: main chromosomes only (chr1..chr22, chrX, chrY, chrM)");
+        }
         grove = std::make_unique<grove_type>(order);
         auto build_start = std::chrono::steady_clock::now();
-        build_stats = builder::build_from_samples(*grove, all_samples, threads, filters, absorb, min_reps, fuzzy_tol, prune_tombstones, &exon_caches_, &gene_indices_);
+        build_stats = builder::build_from_samples(*grove, all_samples, threads, filters, absorb, min_reps, fuzzy_tol, prune_tombstones, include_scaffolds, &exon_caches_, &gene_indices_);
         auto build_elapsed = std::chrono::duration<double>(std::chrono::steady_clock::now() - build_start).count();
         build_stats->build_time_seconds = build_elapsed;
         logging::info("Grove ready with spatial index and graph structure");

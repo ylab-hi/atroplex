@@ -77,6 +77,7 @@ protected:
     chromosome_exon_caches exon_caches_;
     chromosome_gene_segment_indices gene_indices_;
     std::filesystem::path output_dir;
+    bool include_scaffolds = false;  // set from --include-scaffolds (default: main chromosomes only)
 
     /**
      * Resolve the output directory from --output-dir or the parent of a fallback path.

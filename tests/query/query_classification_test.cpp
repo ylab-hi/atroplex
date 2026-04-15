@@ -66,7 +66,8 @@ protected:
         build_counters counters;
         build_gff::build(*grove, anno_path, annotation_id, exon_caches,
                          segment_caches, gene_indices, segment_count,
-                         0, expression_filters{}, false, 5, counters);
+                         0, expression_filters{}, false, 5,
+                         /*include_scaffolds=*/true, counters);
 
         // Register and build sample
         sample_info sample_info_obj("TEST_SAMPLE");
@@ -75,7 +76,8 @@ protected:
 
         build_gff::build(*grove, sample_path, sample_id, exon_caches,
                          segment_caches, gene_indices, segment_count,
-                         0, expression_filters{}, false, 5, counters);
+                         0, expression_filters{}, false, 5,
+                         /*include_scaffolds=*/true, counters);
 
         ASSERT_GT(segment_count, 0);
     }

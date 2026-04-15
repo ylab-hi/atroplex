@@ -56,6 +56,7 @@ public:
         int min_replicates,
         size_t fuzzy_tolerance,
         bool prune_tombstones,
+        bool include_scaffolds = false,
         chromosome_exon_caches* out_exon_caches = nullptr,
         chromosome_gene_segment_indices* out_gene_indices = nullptr
     );

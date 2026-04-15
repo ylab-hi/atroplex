@@ -53,6 +53,7 @@ build_summary builder::build_from_samples(grove_type& grove,
                                   int min_replicates,
                                   size_t fuzzy_tolerance,
                                   bool prune_tombstones,
+                                  bool include_scaffolds,
                                   chromosome_exon_caches* out_exon_caches,
                                   chromosome_gene_segment_indices* out_gene_indices) {
     if (samples.empty()) {
@@ -115,7 +116,7 @@ build_summary builder::build_from_samples(grove_type& grove,
             uint32_t registry_id = sample_registry::instance().register_data(info);
 
             // Build with persistent caches for cross-file deduplication
-            build_gff::build(grove, filepath, registry_id, exon_caches, segment_caches, gene_indices, segment_count, threads, filters, absorb, fuzzy_tolerance, counters);
+            build_gff::build(grove, filepath, registry_id, exon_caches, segment_caches, gene_indices, segment_count, threads, filters, absorb, fuzzy_tolerance, include_scaffolds, counters);
         } else if (ftype == gio::filetype::BAM || ftype == gio::filetype::SAM) {
             logging::info("[" + std::to_string(current) + "/" + std::to_string(total) + "] Processing BAM: " + filepath.filename().string() +
                          (info.id.empty() ? "" : " (id: " + info.id + ")"));
@@ -123,7 +124,7 @@ build_summary builder::build_from_samples(grove_type& grove,
             uint32_t registry_id = sample_registry::instance().register_data(info);
 
             build_bam::build(grove, filepath, registry_id, exon_caches, segment_caches,
-                            gene_indices, segment_count, filters, absorb, fuzzy_tolerance, counters);
+                            gene_indices, segment_count, filters, absorb, fuzzy_tolerance, include_scaffolds, counters);
         } else {
             logging::warning("Unsupported file type for: " + filepath.string());
         }
@@ -438,5 +439,5 @@ build_summary builder::build_from_files(grove_type& grove,
         samples.push_back(std::move(info));
     }
 
-    return build_from_samples(grove, samples, threads, expression_filters{}, true, 0, 5, false, out_exon_caches);
+    return build_from_samples(grove, samples, threads, expression_filters{}, true, 0, 5, false, false, out_exon_caches);
 }

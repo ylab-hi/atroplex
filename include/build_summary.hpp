@@ -27,16 +27,23 @@
  *
  * Categories:
  *   input_transcripts  — raw transcripts observed across all input files
+ *                        (counted AFTER the scaffold filter, so this reflects
+ *                        only transcripts on retained seqids)
  *   merged_transcripts — transcripts folded into an existing segment without
  *                        creating a new one (Rule 0 FSM, Rule 5 terminal
  *                        variant, forward Rules 1-4 ISM subsequence,
  *                        fuzzy-FSM subsequence match)
  *   absorbed_segments  — existing segments tombstoned by reverse absorption
  *                        and physically removed by the tombstone sweep
- *   discarded_transcripts — transcripts dropped entirely (--min-expression
- *                        filter, mono-exon Rules 6/8, Rules 3/4 fragment
- *                        drops against reference parents)
+ *   discarded_transcripts — transcripts dropped entirely (expression filter,
+ *                        mono-exon Rules 6/8, Rules 3/4 fragment drops against
+ *                        reference parents)
  *   replicates_merged  — replicate entries collapsed by --min-replicates
+ *   scaffold_filtered_transcripts — transcripts skipped at ingest because
+ *                        their seqid is not a canonical main chromosome
+ *                        (chr1..chr22, chrX, chrY, chrM). Disabled with
+ *                        --include-scaffolds. Counted before any other
+ *                        processing so scaffold features never enter the grove.
  */
 struct build_counters {
     size_t input_transcripts = 0;
@@ -44,6 +51,7 @@ struct build_counters {
     size_t absorbed_segments = 0;
     size_t discarded_transcripts = 0;
     size_t replicates_merged = 0;
+    size_t scaffold_filtered_transcripts = 0;
 };
 
 /**

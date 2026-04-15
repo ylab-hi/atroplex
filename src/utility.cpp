@@ -40,6 +40,34 @@ std::string normalize_chromosome(const std::string& seqid) {
     return seqid;
 }
 
+bool is_main_chromosome(const std::string& seqid, bool include_scaffolds) {
+    if (include_scaffolds) return true;
+    if (seqid.empty()) return false;
+
+    // Strip an optional "chr" prefix so both `chr1` and `1` match.
+    std::string core = (seqid.size() >= 3 && seqid.substr(0, 3) == "chr")
+        ? seqid.substr(3)
+        : seqid;
+    if (core.empty()) return false;
+
+    // Sex + mitochondria. Accept both "M" (UCSC) and "MT" (Ensembl).
+    if (core == "X" || core == "Y" || core == "M" || core == "MT") return true;
+
+    // Numeric autosomes. Strict: all digits, value in 1..22. Rejects
+    // any scaffold that has a digit prefix but additional suffix
+    // characters (e.g., "1_KI270706v1_random") because the first
+    // non-digit kicks out of the loop.
+    for (char c : core) {
+        if (!std::isdigit(static_cast<unsigned char>(c))) return false;
+    }
+    int n = 0;
+    for (char c : core) {
+        n = n * 10 + (c - '0');
+        if (n > 22) return false;
+    }
+    return n >= 1 && n <= 22;
+}
+
 namespace logging {
     // ANSI color codes
     const std::string RESET = "\033[0m";

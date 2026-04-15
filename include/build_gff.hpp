@@ -65,6 +65,7 @@ public:
                       const expression_filters& filters,
                       bool absorb,
                       size_t fuzzy_tolerance,
+                      bool include_scaffolds,
                       build_counters& counters);
 
     /**
