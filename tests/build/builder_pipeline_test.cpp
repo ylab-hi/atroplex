@@ -150,7 +150,8 @@ TEST_F(BuilderPipelineTest, BuilderFullPipeline_CountersPopulated) {
     auto summary = builder::build_from_samples(
         grove, samples,
         /*threads=*/1, /*filters=*/expression_filters{}, /*absorb=*/true,
-        /*min_replicates=*/0, /*fuzzy_tolerance=*/5);
+        /*min_replicates=*/0, /*fuzzy_tolerance=*/5,
+        /*prune_tombstones=*/false);
 
     // 2 transcripts read from the two files
     EXPECT_EQ(summary.counters.input_transcripts, 2u);
@@ -331,7 +332,10 @@ TEST_F(BuilderPipelineTest, BuildSummary_WrittenFileContainsCounters) {
 
     grove_type grove(3);
     auto summary = builder::build_from_samples(
-        grove, samples, 1, -1.0f, true, 0, 5);
+        grove, samples,
+        /*threads=*/1, /*filters=*/expression_filters{}, /*absorb=*/true,
+        /*min_replicates=*/0, /*fuzzy_tolerance=*/5,
+        /*prune_tombstones=*/false);
 
     fs::path summary_path = tmp_dir / "test.ggx.summary";
     summary.write_summary(summary_path.string());
