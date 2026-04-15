@@ -41,7 +41,15 @@ void subcall::add_common_options(cxxopts::Options& options) {
             cxxopts::value<std::vector<std::string>>())
         ("k,order", "Genogrove tree order",
             cxxopts::value<int>()->default_value("3"))
-        ("min-expression", "Minimum expression value to include a transcript (filters low-count novels)",
+        ("min-counts", "Minimum `counts` value for a transcript to be kept. Only applies to samples whose manifest `expression_attribute` column lists `counts`. Disabled by default.",
+            cxxopts::value<float>()->default_value("-1"))
+        ("min-TPM", "Minimum `TPM` value for a transcript to be kept. Only applies to samples whose manifest `expression_attribute` column lists `TPM`. Disabled by default.",
+            cxxopts::value<float>()->default_value("-1"))
+        ("min-FPKM", "Minimum `FPKM` value for a transcript to be kept. Only applies to samples whose manifest `expression_attribute` column lists `FPKM`. Disabled by default.",
+            cxxopts::value<float>()->default_value("-1"))
+        ("min-RPKM", "Minimum `RPKM` value for a transcript to be kept. Only applies to samples whose manifest `expression_attribute` column lists `RPKM`. Disabled by default.",
+            cxxopts::value<float>()->default_value("-1"))
+        ("min-cov", "Minimum `cov` value for a transcript to be kept. Only applies to samples whose manifest `expression_attribute` column lists `cov`. Disabled by default.",
             cxxopts::value<float>()->default_value("-1"))
         ("no-absorb", "Disable ISM (Incomplete Splice Match) segment absorption into longer parents")
         ("fuzzy-tolerance", "Max bp difference for fuzzy exon boundary matching during absorption (0 = exact only)",
@@ -125,15 +133,52 @@ void subcall::setup_grove(const cxxopts::ParseResult& args) {
 
     // Build grove if we have samples
     if (!all_samples.empty()) {
-        float min_expr = args["min-expression"].as<float>();
+        expression_filters filters;
+        filters.min_counts = args["min-counts"].as<float>();
+        filters.min_TPM    = args["min-TPM"].as<float>();
+        filters.min_FPKM   = args["min-FPKM"].as<float>();
+        filters.min_RPKM   = args["min-RPKM"].as<float>();
+        filters.min_cov    = args["min-cov"].as<float>();
+
         bool absorb = !args.count("no-absorb");
         size_t fuzzy_tol = args["fuzzy-tolerance"].as<size_t>();
         int min_reps = args["min-replicates"].as<int>();
         bool prune_tombstones = args.count("prune-tombstones") > 0;
         logging::info("Creating grove with order: " + std::to_string(order));
-        if (min_expr >= 0) {
-            logging::info("Filtering transcripts with expression < " + std::to_string(min_expr));
+
+        if (filters.any_active()) {
+            std::string note = "Expression filters:";
+            if (filters.min_counts >= 0) note += " counts>=" + std::to_string(filters.min_counts);
+            if (filters.min_TPM    >= 0) note += " TPM>="    + std::to_string(filters.min_TPM);
+            if (filters.min_FPKM   >= 0) note += " FPKM>="   + std::to_string(filters.min_FPKM);
+            if (filters.min_RPKM   >= 0) note += " RPKM>="   + std::to_string(filters.min_RPKM);
+            if (filters.min_cov    >= 0) note += " cov>="    + std::to_string(filters.min_cov);
+            logging::info(note);
+
+            // Warn if a filter is set but no sample declares that attribute
+            // in its manifest `expression_attribute` column.
+            auto any_sample_declares = [&](const std::string& attr) {
+                for (const auto& s : all_samples) {
+                    for (const auto& a : s.expression_attributes) {
+                        if (a == attr) return true;
+                    }
+                }
+                return false;
+            };
+            auto check = [&](const std::string& name, float value) {
+                if (value >= 0 && !any_sample_declares(name)) {
+                    logging::warning("--min-" + name + " " + std::to_string(value) +
+                        " set but no sample in the manifest declares `" + name +
+                        "` in its expression_attribute column — filter has no effect");
+                }
+            };
+            check("counts", filters.min_counts);
+            check("TPM",    filters.min_TPM);
+            check("FPKM",   filters.min_FPKM);
+            check("RPKM",   filters.min_RPKM);
+            check("cov",    filters.min_cov);
         }
+
         if (!absorb) {
             logging::info("ISM segment absorption disabled");
         } else if (fuzzy_tol > 0) {
@@ -147,7 +192,7 @@ void subcall::setup_grove(const cxxopts::ParseResult& args) {
         }
         grove = std::make_unique<grove_type>(order);
         auto build_start = std::chrono::steady_clock::now();
-        build_stats = builder::build_from_samples(*grove, all_samples, threads, min_expr, absorb, min_reps, fuzzy_tol, prune_tombstones, &exon_caches_, &gene_indices_);
+        build_stats = builder::build_from_samples(*grove, all_samples, threads, filters, absorb, min_reps, fuzzy_tol, prune_tombstones, &exon_caches_, &gene_indices_);
         auto build_elapsed = std::chrono::duration<double>(std::chrono::steady_clock::now() - build_start).count();
         build_stats->build_time_seconds = build_elapsed;
         logging::info("Grove ready with spatial index and graph structure");

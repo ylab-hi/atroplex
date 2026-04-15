@@ -44,7 +44,7 @@ public:
      * @param segment_caches Chromosome-level segment caches
      * @param gene_indices Per-gene segment index (for absorption)
      * @param segment_count Running segment counter
-     * @param min_expression Minimum read count to include a cluster (default: -1 = no filter)
+     * @param filters Type-specific expression thresholds. BAM clusters only have a read-count signal, so only `filters.min_counts` is honored; other attribute thresholds are ignored.
      * @param absorb Enable absorption rules
      * @param fuzzy_tolerance Fuzzy matching tolerance in bp
      */
@@ -55,7 +55,7 @@ public:
                       chromosome_segment_caches& segment_caches,
                       chromosome_gene_segment_indices& gene_indices,
                       size_t& segment_count,
-                      float min_expression,
+                      const expression_filters& filters,
                       bool absorb,
                       size_t fuzzy_tolerance,
                       build_counters& counters);

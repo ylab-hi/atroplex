@@ -53,7 +53,7 @@ protected:
         // absorb=false to keep all segments as separate candidates
         build_counters counters;
         build_gff::build(*grove, fixture, sample_id, exon_caches, segment_caches,
-                         gene_indices, segment_count, 0, -1.0f, false, 5, counters);
+                         gene_indices, segment_count, 0, expression_filters{}, false, 5, counters);
 
         ASSERT_GT(segment_count, 0) << "No segments built from fixture";
     }
@@ -383,7 +383,7 @@ protected:
 
         build_counters counters;
         build_gff::build(*grove, gtf, sample_id, exon_caches, segment_caches,
-                         gene_indices, segment_count, 0, -1.0f, false, 5, counters);
+                         gene_indices, segment_count, 0, expression_filters{}, false, 5, counters);
     }
 
     std::unique_ptr<grove_type> grove;

@@ -50,12 +50,12 @@ public:
     static build_summary build_from_samples(
         grove_type& grove,
         const std::vector<sample_info>& samples,
-        uint32_t threads = 1,
-        float min_expression = -1.0f,
-        bool absorb = true,
-        int min_replicates = 0,
-        size_t fuzzy_tolerance = 5,
-        bool prune_tombstones = false,
+        uint32_t threads,
+        const expression_filters& filters,
+        bool absorb,
+        int min_replicates,
+        size_t fuzzy_tolerance,
+        bool prune_tombstones,
         chromosome_exon_caches* out_exon_caches = nullptr,
         chromosome_gene_segment_indices* out_gene_indices = nullptr
     );

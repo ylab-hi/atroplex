@@ -69,6 +69,38 @@ namespace gdt = genogrove::data_type;
  * Flexible key-value storage:
  *   - attributes: Map for any additional metadata
  */
+/// Type-specific expression thresholds set via CLI flags.
+/// Each field is the minimum value a transcript must carry for that
+/// attribute to keep it; -1 means the filter is disabled. Applied with
+/// AND semantics: a sample's declared expression_attributes are
+/// intersected with the set of enabled filters, and the transcript is
+/// kept only if every resulting filter passes.
+struct expression_filters {
+    float min_counts = -1.0f;
+    float min_TPM    = -1.0f;
+    float min_FPKM   = -1.0f;
+    float min_RPKM   = -1.0f;
+    float min_cov    = -1.0f;
+
+    /// Return the threshold for a given GFF attribute name, or -1 if the
+    /// attribute is unknown or has no threshold set. Case-sensitive match
+    /// to the GFF convention (counts, TPM, FPKM, RPKM, cov).
+    float for_attribute(const std::string& attr) const {
+        if (attr == "counts") return min_counts;
+        if (attr == "TPM")    return min_TPM;
+        if (attr == "FPKM")   return min_FPKM;
+        if (attr == "RPKM")   return min_RPKM;
+        if (attr == "cov")    return min_cov;
+        return -1.0f;
+    }
+
+    /// True if at least one threshold is set.
+    bool any_active() const {
+        return min_counts >= 0 || min_TPM >= 0 || min_FPKM >= 0
+            || min_RPKM >= 0 || min_cov >= 0;
+    }
+};
+
 struct sample_info {
     // Expression quantification types
     enum class expression_type {
@@ -113,6 +145,18 @@ struct sample_info {
     // If UNKNOWN, auto-detect from GFF attributes (TPM, FPKM, cov, etc.)
     // If set, only parse that specific attribute from GFF
     expression_type expr_type = expression_type::UNKNOWN;
+
+    // Declared GFF attributes carrying quantitative expression for this
+    // sample's transcripts (e.g., {"counts"} for TALON, {"cov","TPM"} for
+    // StringTie, empty for annotations). Populated from the manifest's
+    // optional `expression_attribute` column ('.' or empty = no filtering).
+    // Multiple values may be listed comma-separated — each one is evaluated
+    // against its corresponding CLI threshold (--min-counts / --min-TPM /
+    // --min-FPKM / --min-RPKM / --min-cov) with AND semantics.
+    // The FIRST declared attribute is what gets stored on the segment via
+    // expression_store (one float per sample per feature) and what shows up
+    // as the `.{expr_type}` column header in per_sample outputs.
+    std::vector<std::string> expression_attributes;
 
     // Extensible key-value attributes
     std::unordered_map<std::string, std::string> attributes;
@@ -282,6 +326,13 @@ struct sample_info {
         auto expr_int = static_cast<std::underlying_type_t<expression_type>>(expr_type);
         os.write(reinterpret_cast<const char*>(&expr_int), sizeof(expr_int));
 
+        // Expression attributes (declared GFF attributes carrying quantification)
+        size_t ea_count = expression_attributes.size();
+        os.write(reinterpret_cast<const char*>(&ea_count), sizeof(ea_count));
+        for (const auto& attr : expression_attributes) {
+            write_string(attr);
+        }
+
         // Attributes map
         size_t attr_count = attributes.size();
         os.write(reinterpret_cast<const char*>(&attr_count), sizeof(attr_count));
@@ -339,6 +390,14 @@ struct sample_info {
         std::underlying_type_t<expression_type> expr_int;
         is.read(reinterpret_cast<char*>(&expr_int), sizeof(expr_int));
         info.expr_type = static_cast<expression_type>(expr_int);
+
+        // Expression attributes
+        size_t ea_count;
+        is.read(reinterpret_cast<char*>(&ea_count), sizeof(ea_count));
+        info.expression_attributes.reserve(ea_count);
+        for (size_t i = 0; i < ea_count; ++i) {
+            info.expression_attributes.push_back(read_string());
+        }
 
         // Attributes map
         size_t attr_count;

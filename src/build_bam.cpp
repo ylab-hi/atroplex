@@ -25,7 +25,7 @@ void build_bam::build(grove_type& grove,
     chromosome_segment_caches& segment_caches,
     chromosome_gene_segment_indices& gene_indices,
     size_t& segment_count,
-    float min_expression,
+    const expression_filters& filters,
     bool absorb,
     size_t fuzzy_tolerance,
     build_counters& counters) {
@@ -51,9 +51,11 @@ void build_bam::build(grove_type& grove,
 
         counters.input_transcripts++;
 
-        // Filter by minimum read count (expression proxy)
+        // Filter by minimum read count (expression proxy). BAM clusters
+        // only have a read-count signal, so only `--min-counts` applies.
+        // Other attribute thresholds (TPM/FPKM/cov) are a no-op for BAM.
         float read_count = static_cast<float>(cluster.read_count());
-        if (min_expression >= 0 && read_count < min_expression) {
+        if (filters.min_counts >= 0 && read_count < filters.min_counts) {
             counters.discarded_transcripts++;
             continue;
         }

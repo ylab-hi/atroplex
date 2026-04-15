@@ -62,7 +62,7 @@ public:
                       chromosome_gene_segment_indices& gene_indices,
                       size_t& segment_count,
                       uint32_t num_threads,
-                      float min_expression,
+                      const expression_filters& filters,
                       bool absorb,
                       size_t fuzzy_tolerance,
                       build_counters& counters);
@@ -117,7 +117,7 @@ public:
         gene_segment_index_type& gene_index,
         std::optional<uint32_t> sample_id,
         size_t& segment_count,
-        float min_expression,
+        const expression_filters& filters,
         bool absorb,
         size_t fuzzy_tolerance,
         build_counters& counters
@@ -145,7 +145,7 @@ private:
         gene_segment_index_type& gene_index,
         std::optional<uint32_t> sample_id,
         size_t& segment_count,
-        float min_expression,
+        const expression_filters& filters,
         bool absorb,
         size_t fuzzy_tolerance,
         build_counters& counters

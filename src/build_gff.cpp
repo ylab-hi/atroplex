@@ -30,7 +30,7 @@ void build_gff::build(grove_type& grove,
     chromosome_gene_segment_indices& gene_indices,
     size_t& segment_count,
     uint32_t /*num_threads*/,
-    float min_expression,
+    const expression_filters& filters,
     bool absorb,
     size_t fuzzy_tolerance,
     build_counters& counters) {
@@ -68,7 +68,7 @@ void build_gff::build(grove_type& grove,
             process_gene(grove, grove_mutex, current_gene_entries,
                 exon_caches[current_chrom], segment_caches[current_chrom],
                 gene_indices[current_chrom],
-                sample_id, segment_count, min_expression, absorb, fuzzy_tolerance, counters);
+                sample_id, segment_count, filters, absorb, fuzzy_tolerance, counters);
             current_gene_entries.clear();
         }
 
@@ -82,7 +82,7 @@ void build_gff::build(grove_type& grove,
         process_gene(grove, grove_mutex, current_gene_entries,
             exon_caches[current_chrom], segment_caches[current_chrom],
             gene_indices[current_chrom],
-            sample_id, segment_count, min_expression, absorb, fuzzy_tolerance, counters);
+            sample_id, segment_count, filters, absorb, fuzzy_tolerance, counters);
     }
 
     logging::progress_done(segment_count, "Processed " + filepath.filename().string());
@@ -97,7 +97,7 @@ void build_gff::process_gene(
     gene_segment_index_type& gene_index,
     std::optional<uint32_t> sample_id,
     size_t& segment_count,
-    float min_expression,
+    const expression_filters& filters,
     bool absorb,
     size_t fuzzy_tolerance,
     build_counters& counters
@@ -136,7 +136,7 @@ void build_gff::process_gene(
     for (const auto& transcript_id : tx_order) {
         process_transcript(grove, grove_mutex, transcript_id, transcripts[transcript_id],
             exon_cache, segment_cache, gene_index, sample_id, segment_count,
-            min_expression, absorb, fuzzy_tolerance, counters);
+            filters, absorb, fuzzy_tolerance, counters);
     }
 }
 
@@ -150,7 +150,7 @@ void build_gff::process_transcript(
     gene_segment_index_type& gene_index,
     std::optional<uint32_t> sample_id,
     size_t& segment_count,
-    float min_expression,
+    const expression_filters& filters,
     bool absorb,
     size_t fuzzy_tolerance,
     build_counters& counters
@@ -162,54 +162,85 @@ void build_gff::process_transcript(
     }
     counters.input_transcripts++;
 
-    // Extract expression and transcript biotype from transcript-level entry
-    float expression_value = -1.0f;
-    std::string transcript_biotype;
-    for (const auto& entry : transcript_entries) {
-        if (entry.type == "transcript") {
-            static const std::pair<const char*, sample_info::expression_type> expr_attrs[] = {
-                {"counts", sample_info::expression_type::COUNTS},
-                {"TPM",    sample_info::expression_type::TPM},
-                {"FPKM",   sample_info::expression_type::FPKM},
-                {"RPKM",   sample_info::expression_type::RPKM},
-                {"cov",    sample_info::expression_type::UNKNOWN},
-            };
-            for (const auto& [attr_name, expr_type] : expr_attrs) {
-                auto it = entry.attributes.find(attr_name);
-                if (it != entry.attributes.end()) {
-                    try {
-                        expression_value = std::stof(it->second);
-                        if (sample_id.has_value()) {
-                            auto& registry = sample_registry::instance();
-                            if (registry.contains(*sample_id)) {
-                                auto& info = registry.get(*sample_id);
-                                if (!info.has_expression_type()) {
-                                    info.expr_type = expr_type;
-                                }
-                            }
-                        }
-                    } catch (const std::exception& e) {
-                        logging::warning("Invalid expression value '" + it->second +
-                            "' for transcript " + transcript_id + ": " + e.what());
-                    }
-                    break;
-                }
-            }
-
-            auto bt_it = entry.attributes.find("transcript_type");
-            if (bt_it == entry.attributes.end()) {
-                bt_it = entry.attributes.find("transcript_biotype");
-            }
-            if (bt_it != entry.attributes.end()) {
-                transcript_biotype = bt_it->second;
-            }
-
-            break;
+    // Resolve the sample's declared expression_attributes (set from the
+    // manifest's optional `expression_attribute` column). Empty vector
+    // means no filtering and no expression storage for this sample.
+    const std::vector<std::string>* declared_attrs = nullptr;
+    if (sample_id.has_value()) {
+        auto& registry = sample_registry::instance();
+        if (registry.contains(*sample_id)) {
+            declared_attrs = &registry.get(*sample_id).expression_attributes;
         }
     }
 
-    // Filter: skip transcripts below expression threshold
-    if (min_expression >= 0 && expression_value >= 0 && expression_value < min_expression) {
+    // Extract transcript biotype and any declared-attribute values from
+    // the transcript-level entry. expression_value = the FIRST declared
+    // attribute's value (used for storage on the segment); the filter
+    // loop below walks ALL declared attributes and evaluates each one
+    // against its corresponding threshold (AND semantics).
+    float expression_value = -1.0f;
+    bool drop_by_filter = false;
+    std::string transcript_biotype;
+    for (const auto& entry : transcript_entries) {
+        if (entry.type != "transcript") continue;
+
+        if (declared_attrs && !declared_attrs->empty()) {
+            bool first = true;
+            for (const auto& attr : *declared_attrs) {
+                auto it = entry.attributes.find(attr);
+                if (it == entry.attributes.end()) {
+                    continue;  // pass-through: nothing to evaluate for this attr
+                }
+                float value = -1.0f;
+                try {
+                    value = std::stof(it->second);
+                } catch (const std::exception& e) {
+                    logging::warning("Invalid " + attr + " value '" + it->second +
+                        "' for transcript " + transcript_id + ": " + e.what());
+                    continue;
+                }
+                if (first) {
+                    // First declared attribute becomes the stored value +
+                    // display label for per_sample outputs. Tag the sample
+                    // with its expression_type once (idempotent).
+                    expression_value = value;
+                    first = false;
+                    if (sample_id.has_value()) {
+                        auto& registry = sample_registry::instance();
+                        if (registry.contains(*sample_id)) {
+                            auto& info = registry.get(*sample_id);
+                            if (!info.has_expression_type()) {
+                                if      (attr == "counts") info.expr_type = sample_info::expression_type::COUNTS;
+                                else if (attr == "TPM")    info.expr_type = sample_info::expression_type::TPM;
+                                else if (attr == "FPKM")   info.expr_type = sample_info::expression_type::FPKM;
+                                else if (attr == "RPKM")   info.expr_type = sample_info::expression_type::RPKM;
+                                // `cov` stays UNKNOWN to match the legacy header convention
+                            }
+                        }
+                    }
+                }
+                // Evaluate the filter for this attribute (AND semantics):
+                // skip if the CLI threshold is set and the transcript's
+                // value is below it.
+                float threshold = filters.for_attribute(attr);
+                if (threshold >= 0 && value < threshold) {
+                    drop_by_filter = true;
+                }
+            }
+        }
+
+        auto bt_it = entry.attributes.find("transcript_type");
+        if (bt_it == entry.attributes.end()) {
+            bt_it = entry.attributes.find("transcript_biotype");
+        }
+        if (bt_it != entry.attributes.end()) {
+            transcript_biotype = bt_it->second;
+        }
+
+        break;
+    }
+
+    if (drop_by_filter) {
         counters.discarded_transcripts++;
         return;
     }

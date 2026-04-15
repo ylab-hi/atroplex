@@ -149,7 +149,7 @@ TEST_F(BuilderPipelineTest, BuilderFullPipeline_CountersPopulated) {
     grove_type grove(3);
     auto summary = builder::build_from_samples(
         grove, samples,
-        /*threads=*/1, /*min_expression=*/-1.0f, /*absorb=*/true,
+        /*threads=*/1, /*filters=*/expression_filters{}, /*absorb=*/true,
         /*min_replicates=*/0, /*fuzzy_tolerance=*/5);
 
     // 2 transcripts read from the two files
@@ -196,7 +196,7 @@ TEST_F(BuilderPipelineTest, RemoveTombstones_DefaultKeepsInTree) {
     // prune_tombstones = false (default)
     auto summary = builder::build_from_samples(
         grove, samples,
-        /*threads=*/1, /*min_expression=*/-1.0f, /*absorb=*/true,
+        /*threads=*/1, /*filters=*/expression_filters{}, /*absorb=*/true,
         /*min_replicates=*/0, /*fuzzy_tolerance=*/5,
         /*prune_tombstones=*/false);
 
@@ -239,7 +239,7 @@ TEST_F(BuilderPipelineTest, RemoveTombstones_PruneFlagPhysicallyRemoves) {
     grove_type grove(3);
     auto summary = builder::build_from_samples(
         grove, samples,
-        /*threads=*/1, /*min_expression=*/-1.0f, /*absorb=*/true,
+        /*threads=*/1, /*filters=*/expression_filters{}, /*absorb=*/true,
         /*min_replicates=*/0, /*fuzzy_tolerance=*/5,
         /*prune_tombstones=*/true);
 
@@ -277,7 +277,7 @@ TEST_F(BuilderPipelineTest, RemoveTombstones_PruneFlagDropsOrphanEdges) {
         grove_type grove(3);
         auto summary = builder::build_from_samples(
             grove, samples,
-            /*threads=*/1, /*min_expression=*/-1.0f, /*absorb=*/true,
+            /*threads=*/1, /*filters=*/expression_filters{}, /*absorb=*/true,
             /*min_replicates=*/0, /*fuzzy_tolerance=*/5,
             /*prune_tombstones=*/true);
         ASSERT_EQ(summary.counters.absorbed_segments, 1u);
@@ -301,7 +301,7 @@ TEST_F(BuilderPipelineTest, RemoveTombstones_PruneFlagDropsOrphanEdges) {
         grove_type grove(3);
         auto summary = builder::build_from_samples(
             grove, samples,
-            /*threads=*/1, /*min_expression=*/-1.0f, /*absorb=*/true,
+            /*threads=*/1, /*filters=*/expression_filters{}, /*absorb=*/true,
             /*min_replicates=*/0, /*fuzzy_tolerance=*/5,
             /*prune_tombstones=*/false);
         ASSERT_EQ(summary.counters.absorbed_segments, 1u);

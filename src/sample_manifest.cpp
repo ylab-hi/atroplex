@@ -189,6 +189,22 @@ sample_info sample_manifest::parse_row(
     info.source_url = get_field("source_url");
     info.publication = get_field("publication");
 
+    // Expression attributes — optional comma-separated list of GFF
+    // attribute names whose values carry quantitative expression
+    // (counts, TPM, FPKM, RPKM, cov). Empty or "." means no filtering
+    // and no expression storage for this sample.
+    std::string ea_raw = get_field("expression_attribute");
+    if (!ea_raw.empty()) {
+        auto ea_tokens = split(ea_raw, ',');
+        for (auto& tok : ea_tokens) {
+            tok.erase(0, tok.find_first_not_of(" \t\r\n"));
+            tok.erase(tok.find_last_not_of(" \t\r\n") + 1);
+            if (!tok.empty()) {
+                info.expression_attributes.push_back(std::move(tok));
+            }
+        }
+    }
+
     return info;
 }
 
