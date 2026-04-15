@@ -94,6 +94,15 @@ void analyze::execute(const cxxopts::ParseResult& args) {
             (hubs_dir / (basename + ".splicing_hubs.tsv")).string(),
             (hubs_dir / (basename + ".branch_details.tsv")).string());
 
+        // Phase 8.6: open splicing events stream before collect() — events
+        // are detected per-gene at gene finalization and rows are streamed
+        // inline. Per-gene segment chains are captured during the existing
+        // exon walk and dropped at chromosome boundary.
+        auto events_dir = analysis_dir / "splicing_events";
+        std::filesystem::create_directories(events_dir);
+        report.begin_splicing_events_stream(
+            (events_dir / (basename + ".splicing_events.tsv")).string());
+
         report.collect(*grove);
 
         report.write_overview((overview_dir / (basename + ".overview.tsv")).string());

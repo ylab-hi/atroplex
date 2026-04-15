@@ -19,6 +19,7 @@
 #include <unordered_set>
 
 #include "sample_info.hpp"
+#include "splicing_catalog.hpp"
 #include "utility.hpp"
 
 namespace {
@@ -91,6 +92,7 @@ void analysis_report::collect(grove_type& grove) {
         std::unordered_map<key_ptr, size_t> exon_seg_counts;  // Phase 8.4: segments-per-exon within gene
         std::vector<key_ptr> first_visit_exons;   // Phase 8.4: exons whose global first visit occurred in this gene
         std::vector<pending_hub> pending_hubs;    // Phase 8.3: hubs detected in this gene
+        std::vector<segment_chain_entry> segments_in_gene;  // Phase 8.6: per-gene chains for splicing_catalog detectors
     };
     std::unordered_map<uint32_t, gene_acc> active_genes;
 
@@ -252,6 +254,65 @@ void analysis_report::collect(grove_type& grove) {
                 }
             }
         }
+
+        // ── Phase 8.6: splicing event rows ─────────────────────────────
+        // detect_gene_events runs cassette / alt-splice / intron
+        // retention / alt-terminal / mutually-exclusive detectors over
+        // the segments captured in this gene. Events are written
+        // inline and their per-gene vectors are dropped with `acc` at
+        // the next chromosome boundary.
+        if (splicing_events_stream && splicing_events_stream->is_open()
+            && !acc.segments_in_gene.empty()) {
+            // Resolve gene_id / gene_name from the first live segment.
+            std::string gene_id;
+            std::string gene_name;
+            for (const auto& entry : acc.segments_in_gene) {
+                if (!entry.segment) continue;
+                auto& s = get_segment(entry.segment->get_data());
+                gene_id = s.gene_id();
+                gene_name = s.gene_name();
+                break;
+            }
+
+            auto events = splicing_catalog::detect_gene_events(
+                gene_id, seqid_for_hub, acc.segments_in_gene, grove);
+
+            auto& ev_out = *splicing_events_stream;
+            for (const auto& event : events) {
+                ev_out << event.gene_id
+                       << "\t" << event.gene_name
+                       << "\t" << splicing_catalog::event_type_str(event.type)
+                       << "\t" << event.chromosome
+                       << "\t" << splicing_catalog::format_exon(event.upstream_exon)
+                       << "\t" << splicing_catalog::format_exon(event.downstream_exon)
+                       << "\t";
+                for (size_t i = 0; i < event.affected_exons.size(); ++i) {
+                    if (i > 0) ev_out << ",";
+                    ev_out << splicing_catalog::format_exon(event.affected_exons[i]);
+                }
+                for (uint32_t sid : splicing_events_sample_ids) {
+                    auto psi_it = event.sample_psi.find(sid);
+                    auto inc_it = event.sample_included.find(sid);
+                    auto tot_it = event.sample_total.find(sid);
+                    if (psi_it != event.sample_psi.end()) {
+                        ev_out << "\t" << psi_it->second;
+                    } else {
+                        ev_out << "\t.";
+                    }
+                    if (inc_it != event.sample_included.end()) {
+                        ev_out << "\t" << inc_it->second;
+                    } else {
+                        ev_out << "\t.";
+                    }
+                    if (tot_it != event.sample_total.end()) {
+                        ev_out << "\t" << tot_it->second;
+                    } else {
+                        ev_out << "\t.";
+                    }
+                }
+                ev_out << "\n";
+            }
+        }
     };
 
     // Track visited exons (pointer dedup)
@@ -344,7 +405,16 @@ void analysis_report::collect(grove_type& grove) {
                     auto* current = first_exons.front();
                     size_t chain_pos = 1;
                     size_t chain_total = static_cast<size_t>(seg.exon_count);
+                    // Phase 8.6: capture the ordered chain for this segment so
+                    // splicing_catalog::detect_gene_events can run at gene
+                    // finalization. Only populated when the splicing events
+                    // stream is armed — avoids the per-gene chain memory for
+                    // analyze runs that don't need events.
+                    std::vector<key_ptr> chain_for_event_detection;
+                    bool capture_chain = splicing_events_stream && splicing_events_stream->is_open();
+                    if (capture_chain) chain_for_event_detection.reserve(chain_total);
                     while (current) {
+                        if (capture_chain) chain_for_event_detection.push_back(current);
                         // Phase 8.4: every visit counts toward the per-gene
                         // exon-usage map, regardless of global first-visit
                         // dedup (the map is keyed by exon pointer so repeats
@@ -421,6 +491,17 @@ void analysis_report::collect(grove_type& grove) {
                             });
                         current = next.empty() ? nullptr : next.front();
                         chain_pos++;
+                    }
+
+                    // Phase 8.6: push the captured chain onto the per-gene
+                    // list so splicing_catalog::detect_gene_events can run
+                    // at finalization. structure_key left empty — detectors
+                    // only read `segment` and `exon_chain`.
+                    if (capture_chain) {
+                        segment_chain_entry entry;
+                        entry.segment = key;
+                        entry.exon_chain = std::move(chain_for_event_detection);
+                        acc.segments_in_gene.push_back(std::move(entry));
                     }
                 }
             }
@@ -629,6 +710,41 @@ void analysis_report::begin_splicing_hub_streams(
 
     logging::info("Splicing hubs streaming to: " + hubs_path);
     logging::info("Branch details streaming to: " + branches_path);
+}
+
+// ── Splicing event streaming setup (Phase 8.6) ─────────────────────
+
+void analysis_report::begin_splicing_events_stream(const std::string& path) {
+    auto& registry = sample_registry::instance();
+
+    splicing_events_sample_ids.clear();
+    for (size_t i = 0; i < registry.size(); ++i) {
+        const auto& info = registry.get(static_cast<uint32_t>(i));
+        if (info.type == "replicate") continue;
+        splicing_events_sample_ids.push_back(static_cast<uint32_t>(i));
+    }
+
+    splicing_events_stream = std::make_unique<std::ofstream>(path);
+    if (!splicing_events_stream->is_open()) {
+        logging::error("Cannot open splicing events file: " + path);
+        splicing_events_stream.reset();
+        return;
+    }
+
+    auto& out = *splicing_events_stream;
+    out << std::fixed;
+    out << "gene_id\tgene_name\tevent_type\tchromosome\tupstream_exon"
+        << "\tdownstream_exon\taffected_exons";
+    for (uint32_t sid : splicing_events_sample_ids) {
+        const auto& info = registry.get(sid);
+        std::string label = info.id.empty() ? std::to_string(sid) : info.id;
+        out << "\t" << label << ".psi"
+            << "\t" << label << ".included"
+            << "\t" << label << ".total";
+    }
+    out << "\n";
+
+    logging::info("Splicing events streaming to: " + path);
 }
 
 // ── Conserved exon streaming setup (Phase 8.5) ──────────────────────

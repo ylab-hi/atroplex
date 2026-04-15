@@ -97,14 +97,26 @@ public:
         const std::vector<splicing_event>& events
     );
 
-private:
-    /// Detect splicing events for a single gene by comparing all segment exon chains
+    /// Detect splicing events for a single gene by comparing all segment exon chains.
+    /// Exposed publicly so streaming callers (analysis_report::collect) can run
+    /// event detection per-gene at chromosome-bounded gene finalization and write
+    /// rows inline without holding the full catalog in memory.
     static std::vector<splicing_event> detect_gene_events(
         const std::string& gene_id,
         const std::string& chromosome,
         const std::vector<segment_chain_entry>& segments,
         grove_type& grove
     );
+
+    /// Convert a splicing_event_type to its TSV-friendly string form.
+    /// Exposed publicly for streaming row writers.
+    static std::string event_type_str(splicing_event_type type);
+
+    /// Format an exon key_ptr as its coordinate string for TSV output.
+    /// Exposed publicly for streaming row writers.
+    static std::string format_exon(key_ptr exon);
+
+private:
 
     /// Detect cassette exon events: exons present in some paths, absent in others
     static void detect_cassette_exons(
@@ -152,12 +164,6 @@ private:
         splicing_event& event,
         const std::vector<segment_chain_entry>& segments
     );
-
-    /// Convert event type to string
-    static std::string event_type_str(splicing_event_type type);
-
-    /// Format exon coordinate as string
-    static std::string format_exon(key_ptr exon);
 };
 
 #endif //ATROPLEX_SPLICING_CATALOG_HPP

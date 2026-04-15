@@ -146,6 +146,25 @@ struct analysis_report {
     void begin_splicing_hub_streams(const std::string& hubs_path,
                                     const std::string& branches_path);
 
+    // ── Phase 8.6: splicing event stream ────────────────────────────
+    //
+    // At gene finalization we have the ordered exon chains captured
+    // during the segment walk; the existing `splicing_catalog`
+    // detectors classify cassette / alt_5' / alt_3' / intron retention
+    // / alt-terminal / mutually-exclusive events from that. Rows are
+    // written inline from inside `finalize_gene`, and the per-gene
+    // `segments_in_gene` vector dies with the gene at chromosome
+    // boundary via `active_genes.clear()`.
+    std::unique_ptr<std::ofstream> splicing_events_stream;
+    std::vector<uint32_t> splicing_events_sample_ids;
+
+    /**
+     * Open the splicing events TSV, write its header, and arm inline
+     * streaming. Must be called after sample_registry is populated and
+     * before collect().
+     */
+    void begin_splicing_events_stream(const std::string& path);
+
     // ── Collection ──────────────────────────────────────────────────
 
     /**
