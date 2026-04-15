@@ -53,13 +53,15 @@ bool is_main_chromosome(const std::string& seqid, bool include_scaffolds) {
     // Sex + mitochondria. Accept both "M" (UCSC) and "MT" (Ensembl).
     if (core == "X" || core == "Y" || core == "M" || core == "MT") return true;
 
-    // Numeric autosomes. Strict: all digits, value in 1..22. Rejects
-    // any scaffold that has a digit prefix but additional suffix
-    // characters (e.g., "1_KI270706v1_random") because the first
-    // non-digit kicks out of the loop.
+    // Numeric autosomes. Strict: all digits, no leading zero, value
+    // in 1..22. Rejects any scaffold with a digit prefix followed by
+    // suffix characters (e.g. "1_KI270706v1_random") because the first
+    // non-digit kicks out of the loop, and rejects zero-padded forms
+    // ("01", "022") because no canonical GTF uses those.
     for (char c : core) {
         if (!std::isdigit(static_cast<unsigned char>(c))) return false;
     }
+    if (core.size() > 1 && core[0] == '0') return false;
     int n = 0;
     for (char c : core) {
         n = n * 10 + (c - '0');

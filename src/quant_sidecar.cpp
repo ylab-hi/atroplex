@@ -51,12 +51,15 @@ void Writer::finalize() {
 
     // Sort by segment_index ascending. Duplicates are not expected —
     // the build path accumulates per-segment expression in segment_builder
-    // before a value reaches us — but we don't dedup here, since the
-    // build invariant is enforced upstream.
-    std::sort(records_.begin(), records_.end(),
-              [](const Record& a, const Record& b) {
-                  return a.segment_index < b.segment_index;
-              });
+    // before a value reaches us — but we use `stable_sort` anyway so
+    // that if the upstream invariant ever breaks, the serialized output
+    // is deterministic (insertion order wins on ties) instead of
+    // implementation-defined. The stability cost is negligible at the
+    // typical per-sample record count (<10K).
+    std::stable_sort(records_.begin(), records_.end(),
+                     [](const Record& a, const Record& b) {
+                         return a.segment_index < b.segment_index;
+                     });
 
     // Atomic write: stage to path_ + ".tmp", then rename. This keeps
     // half-written sidecars from being mistaken for real ones if the

@@ -44,3 +44,23 @@ target_link_libraries(builder_pipeline_tests PRIVATE
 )
 
 gtest_discover_tests(builder_pipeline_tests WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+
+# Utility helpers: is_main_chromosome scaffold filter edge cases.
+# Pure unit tests, no GTF fixtures needed.
+add_executable(utility_tests utility_test.cpp)
+target_link_libraries(utility_tests PRIVATE
+    atroplex_core
+    gtest gtest_main
+)
+
+gtest_discover_tests(utility_tests WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+
+# Quantification sidecar (.qtx) round-trip tests.
+# Tests Writer/Reader in isolation, no build pipeline involvement.
+add_executable(quant_sidecar_tests quant_sidecar_test.cpp)
+target_link_libraries(quant_sidecar_tests PRIVATE
+    atroplex_core
+    gtest gtest_main
+)
+
+gtest_discover_tests(quant_sidecar_tests WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})

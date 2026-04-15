@@ -168,6 +168,7 @@ Export-specific options: `--sample`, `--gene`, `--region chr:start-end`, `--min-
 | `--fuzzy-tolerance` | Max bp difference for fuzzy exon boundary matching (default: 5) |
 | `--min-replicates` | Merge biological replicates; require features in >= N replicates (default: 0, no merge) |
 | `--prune-tombstones` | Physically remove absorbed segments from the grove post-build (slower, smaller .ggx) |
+| `--include-scaffolds` | Keep transcripts on unplaced scaffolds, alt contigs, fix patches, and decoy sequences. Default: off — GFF/BAM ingest is filtered to canonical main chromosomes only (`chr1..chr22`, `chrX`, `chrY`, `chrM`). Enable for non-human/non-mouse species or when you specifically need scaffold contributions. |
 
 ## Input Files
 
