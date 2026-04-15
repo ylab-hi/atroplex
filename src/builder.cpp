@@ -172,8 +172,6 @@ build_summary builder::build_from_samples(grove_type& grove,
         }
     }
 
-    logging::info("Grove construction complete: " + std::to_string(segment_count) + " segments");
-
     // --- Post-build replicate merging ---
     if (min_replicates > 0) {
         counters.replicates_merged = merge_replicates(exon_caches, segment_caches, min_replicates);
@@ -182,6 +180,18 @@ build_summary builder::build_from_samples(grove_type& grove,
     // --- Count (and optionally physically remove) absorbed segments ---
     counters.absorbed_segments = remove_tombstones(
         grove, segment_caches, gene_indices, prune_tombstones);
+
+    // Live segments = total minus tombstones that were reverse-absorbed.
+    size_t live_segments = (segment_count >= counters.absorbed_segments)
+        ? segment_count - counters.absorbed_segments
+        : segment_count;
+    std::string tombstone_note;
+    if (counters.absorbed_segments > 0) {
+        tombstone_note = " (" + std::to_string(counters.absorbed_segments)
+            + (prune_tombstones ? " tombstones pruned)" : " tombstones)");
+    }
+    logging::info("Grove construction complete: " + std::to_string(live_segments)
+        + " segments" + tombstone_note);
 
     // --- Collect summary statistics ---
     build_summary stats;
@@ -401,17 +411,6 @@ size_t builder::remove_tombstones(
             } else {
                 ++it;
             }
-        }
-    }
-
-    if (removed > 0) {
-        if (physical) {
-            logging::info("Pruned " + std::to_string(removed) +
-                " absorbed (tombstoned) segments from grove");
-        } else {
-            logging::info("Counted " + std::to_string(removed) +
-                " absorbed (tombstoned) segments; tombstones kept in grove "
-                "(pass --prune-tombstones for physical removal)");
         }
     }
 
