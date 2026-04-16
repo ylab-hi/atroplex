@@ -528,10 +528,21 @@ void analysis_report::collect(grove_type& grove,
                 std::vector<quant_sidecar::Reader::ValueRecord> seg_expr_records;
                 if (qtx_reader) {
                     seg_expr_records = qtx_reader->lookup(seg.segment_index);
+                    // expression_sum adds every record (sum-aggregation
+                    // semantic when multiple same-sample transcripts merged
+                    // into this segment). expressed_segments counts distinct
+                    // samples only — records within a segment block are
+                    // sorted by sample_id, so duplicates are adjacent and a
+                    // prev-id sentinel is enough to dedup without an
+                    // auxiliary set.
+                    std::optional<uint32_t> prev_sid;
                     for (const auto& rec : seg_expr_records) {
                         auto& sc = per_sample[rec.sample_id];
                         sc.expression_sum += static_cast<double>(rec.value);
-                        sc.expressed_segments++;
+                        if (prev_sid != rec.sample_id) {
+                            sc.expressed_segments++;
+                            prev_sid = rec.sample_id;
+                        }
                     }
                 }
 
