@@ -79,16 +79,22 @@ build_summary builder::build_from_samples(grove_type& grove,
     // build_from_files, callers without an output directory).
     //
     // The final single-file output is written at `qtx_path`; per-sample
-    // temp streams go in `{qtx_path}.tmp/` and are K-way merged into the
-    // final file after the main build + tombstone + replicate phases
-    // complete. The temp dir is deleted on successful merge; kept for
-    // debugging on failure.
+    // temp streams go in `{qtx_path}.streams/` and are K-way merged into
+    // the final file after the main build + tombstone + replicate phases
+    // complete. The streams directory is deleted on successful merge;
+    // kept for debugging on failure. (`.tmp` suffix is reserved for
+    // merge_to_qtx's own atomic-rename scratch file.)
     std::filesystem::path qtx_output_path;
     std::filesystem::path qtx_temp_dir;
     bool sidecar_enabled = !qtx_path.empty();
     if (sidecar_enabled) {
         qtx_output_path = qtx_path;
-        qtx_temp_dir    = qtx_output_path.string() + ".tmp";
+        // Use `.streams` suffix rather than `.tmp` to avoid collision
+        // with merge_to_qtx's own atomic-rename scratch file, which
+        // sits at `{qtx_path}.tmp`. The streams directory holds per-
+        // sample `.stream` files during build and is deleted after a
+        // successful merge.
+        qtx_temp_dir    = qtx_output_path.string() + ".streams";
         std::error_code ec;
         std::filesystem::create_directories(qtx_temp_dir, ec);
         if (ec) {
