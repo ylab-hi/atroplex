@@ -92,6 +92,7 @@ void analysis_report::collect(grove_type& grove) {
         std::unordered_map<key_ptr, size_t> exon_seg_counts;  // Phase 8.4: segments-per-exon within gene
         std::vector<key_ptr> first_visit_exons;   // Phase 8.4: exons whose global first visit occurred in this gene
         std::vector<pending_hub> pending_hubs;    // Phase 8.3: hubs detected in this gene
+        size_t max_hub_targets_in_gene = 0;       // widest fan-out among this gene's hubs (for lazy branch_counts grow)
         std::vector<segment_chain_entry> segments_in_gene;  // Phase 8.6: per-gene chains for splicing_catalog detectors
         uint16_t sources_seen_in_gene = 0;        // 8.7a: OR of all segment.sources bitfields in the gene
     };
@@ -103,6 +104,17 @@ void analysis_report::collect(grove_type& grove) {
     std::vector<size_t> hub_branches(num_samples, 0);
     std::vector<size_t> hub_shared(num_samples, 0);
     std::vector<size_t> hub_unique(num_samples, 0);
+
+    // Phase 8.6b: PSI + entropy buffers. hub_psi_den is recomputed once per
+    // gene (same denominator for every hub in the gene); hub_psi_num and
+    // branch_counts are reset per-hub. branch_counts is a flat
+    // num_samples × max_targets_in_gene matrix grown lazily via resize() —
+    // over the run it reaches num_samples × global_max_targets and then
+    // stops reallocating. Peak stays at O(num_samples × global_max_targets),
+    // independent of num_hubs.
+    std::vector<size_t> hub_psi_num(num_samples, 0);
+    std::vector<size_t> hub_psi_den(num_samples, 0);
+    std::vector<size_t> branch_counts;  // grown per-gene in finalize_gene
 
     auto finalize_gene = [&](const gene_acc& acc, const std::string& seqid_for_hub) {
         transcripts_per_gene.push_back(acc.segment_count);
@@ -189,15 +201,43 @@ void analysis_report::collect(grove_type& grove) {
         // reset with std::fill before each hub so peak is never multiplied.
         if (hub_stream && hub_stream->is_open() && !acc.pending_hubs.empty()) {
             auto& hub_out = *hub_stream;
+
+            // ── Pass 1 (Phase 8.6b): PSI denominator, shared across all
+            // hubs in this gene. hub_psi_den[S] = number of segments in
+            // this gene that sample S contributes to — sample S's "path
+            // budget" in gene G. Same value is reused for every hub.
+            std::fill(hub_psi_den.begin(), hub_psi_den.end(), 0);
+            for (const auto& seg_entry : acc.segments_in_gene) {
+                if (!seg_entry.segment) continue;
+                auto& seg = get_segment(seg_entry.segment->get_data());
+                for (uint32_t sid : seg.sample_idx) {
+                    hub_psi_den[sid]++;
+                }
+            }
+
+            // Grow branch_counts lazily to fit the widest hub in this gene.
+            // Over the run this stabilizes at num_samples × global_max_targets
+            // and stops reallocating.
+            size_t needed = num_samples * acc.max_hub_targets_in_gene;
+            if (branch_counts.size() < needed) branch_counts.resize(needed);
+
             for (const auto& hub : acc.pending_hubs) {
                 auto& hub_exon = get_exon(hub.exon->get_data());
+                const size_t K = hub.targets.size();
 
-                // Reset per-sample tallies for this hub
+                // Reset per-sample tallies for this hub. branch_counts is
+                // indexed with THIS hub's K stride, so we only need to zero
+                // [0, num_samples × K) — higher cells will be rewritten by
+                // hubs with larger K in the same gene (if any).
                 std::fill(hub_branches.begin(), hub_branches.end(), 0);
                 std::fill(hub_shared.begin(), hub_shared.end(), 0);
                 std::fill(hub_unique.begin(), hub_unique.end(), 0);
+                std::fill(hub_psi_num.begin(), hub_psi_num.end(), 0);
+                std::fill(branch_counts.begin(),
+                          branch_counts.begin() + static_cast<long>(num_samples * K),
+                          0);
 
-                // Populate from downstream target bitsets
+                // Populate branches/shared/unique from downstream target bitsets
                 for (key_ptr tgt_key : hub.targets) {
                     auto& tgt = get_exon(tgt_key->get_data());
                     size_t tgt_sample_count = tgt.sample_count();
@@ -206,6 +246,40 @@ void analysis_report::collect(grove_type& grove) {
                         hub_branches[sid]++;
                         if (tgt_unique) hub_unique[sid]++;
                         else            hub_shared[sid]++;
+                    }
+                }
+
+                // ── Pass 2 (Phase 8.6b): PSI numerator + per-target branch
+                // distribution. Walk every segment in this gene, find the
+                // hub's position in its chain, and fan out the segment's
+                // sample_idx into both counters.
+                for (const auto& seg_entry : acc.segments_in_gene) {
+                    if (!seg_entry.segment) continue;
+                    const auto& chain = seg_entry.exon_chain;
+
+                    size_t pos = SIZE_MAX;
+                    for (size_t i = 0; i < chain.size(); ++i) {
+                        if (chain[i] == hub.exon) { pos = i; break; }
+                    }
+                    if (pos == SIZE_MAX) continue;  // segment doesn't touch hub
+
+                    auto& seg = get_segment(seg_entry.segment->get_data());
+
+                    // PSI numerator
+                    for (uint32_t sid : seg.sample_idx) hub_psi_num[sid]++;
+
+                    // Entropy: find the downstream target this segment picks
+                    if (pos + 1 < chain.size()) {
+                        key_ptr next_exon = chain[pos + 1];
+                        size_t t = SIZE_MAX;
+                        for (size_t ti = 0; ti < K; ++ti) {
+                            if (hub.targets[ti] == next_exon) { t = ti; break; }
+                        }
+                        if (t != SIZE_MAX) {
+                            for (uint32_t sid : seg.sample_idx) {
+                                branch_counts[sid * K + t]++;
+                            }
+                        }
                     }
                 }
 
@@ -219,16 +293,46 @@ void analysis_report::collect(grove_type& grove) {
                         << hub.targets.size() << "\t"
                         << hub_exon.transcript_ids.size();
 
-                // Per-sample columns
+                // Per-sample columns: .branches, .shared, .unique, .psi,
+                // .entropy, optional .{expr_type}. Gated on "sample is at
+                // the hub" — being at the hub implies being in the gene,
+                // so hub_psi_den[sid] > 0 when hub_exon.sample_idx.test(sid).
                 for (size_t i = 0; i < hub_stream_sample_ids.size(); ++i) {
                     uint32_t sid = hub_stream_sample_ids[i];
                     if (!hub_exon.sample_idx.test(sid)) {
-                        hub_out << "\t.\t.\t.";
+                        hub_out << "\t.\t.\t.\t.\t.";
                         if (hub_stream_is_sample[i]) hub_out << "\t.";
                     } else {
+                        // PSI: hub_psi_den[sid] > 0 is guaranteed here
+                        double psi = (hub_psi_den[sid] > 0)
+                            ? static_cast<double>(hub_psi_num[sid])
+                              / static_cast<double>(hub_psi_den[sid])
+                            : 0.0;
+
+                        // Entropy over this sample's branch distribution
+                        size_t total = 0;
+                        for (size_t ti = 0; ti < K; ++ti) {
+                            total += branch_counts[sid * K + ti];
+                        }
+                        double entropy = 0.0;
+                        if (total > 0) {
+                            for (size_t ti = 0; ti < K; ++ti) {
+                                size_t c = branch_counts[sid * K + ti];
+                                if (c == 0) continue;
+                                double p = static_cast<double>(c)
+                                         / static_cast<double>(total);
+                                entropy -= p * std::log2(p);
+                            }
+                        }
+
                         hub_out << "\t" << hub_branches[sid]
                                 << "\t" << hub_shared[sid]
                                 << "\t" << hub_unique[sid];
+                        {
+                            auto prev_prec = hub_out.precision(4);
+                            hub_out << "\t" << psi << "\t" << entropy;
+                            hub_out.precision(prev_prec);
+                        }
                         if (hub_stream_is_sample[i]) {
                             if (hub_exon.has_expression(sid)) {
                                 hub_out << "\t" << hub_exon.get_expression(sid);
@@ -440,7 +544,11 @@ void analysis_report::collect(grove_type& grove) {
                     // stream is armed — avoids the per-gene chain memory for
                     // analyze runs that don't need events.
                     std::vector<key_ptr> chain_for_event_detection;
-                    bool capture_chain = splicing_events_stream && splicing_events_stream->is_open();
+                    // Capture if either splicing events OR splicing hubs are armed.
+                    // Hubs need the chain for per-hub PSI + entropy (Phase 8.6b),
+                    // which walks segments_in_gene at finalize time.
+                    bool capture_chain = (splicing_events_stream && splicing_events_stream->is_open())
+                                      || (hub_stream && hub_stream->is_open());
                     if (capture_chain) chain_for_event_detection.reserve(chain_total);
                     while (current) {
                         if (capture_chain) chain_for_event_detection.push_back(current);
@@ -498,6 +606,9 @@ void analysis_report::collect(grove_type& grove) {
                                     ph.targets.assign(unique_targets.begin(), unique_targets.end());
                                     ph.chain_pos = chain_pos;
                                     ph.chain_total = chain_total;
+                                    if (ph.targets.size() > acc.max_hub_targets_in_gene) {
+                                        acc.max_hub_targets_in_gene = ph.targets.size();
+                                    }
                                     acc.pending_hubs.push_back(std::move(ph));
                                 }
                             }
@@ -808,7 +919,9 @@ void analysis_report::begin_splicing_hub_streams(
             ? std::to_string(hub_stream_sample_ids[i]) : info.id;
         *hub_stream << "\t" << label << ".branches"
                     << "\t" << label << ".shared"
-                    << "\t" << label << ".unique";
+                    << "\t" << label << ".unique"
+                    << "\t" << label << ".psi"
+                    << "\t" << label << ".entropy";
         if (hub_stream_is_sample[i]) {
             *hub_stream << "\t" << label << "." << expr_type_label(info.expr_type);
         }
