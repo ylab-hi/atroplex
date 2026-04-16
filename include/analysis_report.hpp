@@ -19,6 +19,7 @@
 #include <vector>
 
 #include "genomic_feature.hpp"
+#include "quant_sidecar.hpp"
 
 /**
  * Streaming analysis report — single-pass grove traversal.
@@ -78,6 +79,14 @@ struct analysis_report {
         double effective_isoforms_sum = 0; // Σ 2^H(segment→tx dist)
         size_t multi_segment_genes = 0;
 
+        // Quantification (populated only when collect() receives a non-null
+        // qtx_reader). expression_sum is the sum of per-segment values for
+        // every (segment, sample) record in the sidecar; expressed_segments
+        // is the count of distinct segments with a value for this sample.
+        // mean_expression at output time is expression_sum / expressed_segments.
+        double expression_sum = 0;
+        size_t expressed_segments = 0;
+
         // Biotypes
         std::map<std::string, size_t> genes_by_biotype;
         std::map<std::string, size_t> transcripts_by_biotype;
@@ -132,6 +141,7 @@ struct analysis_report {
     std::unique_ptr<std::ofstream> conserved_exon_stream;
     std::vector<uint32_t> conserved_stream_sample_ids;  // sample IDs to emit columns for
     std::vector<bool> conserved_stream_is_sample;       // parallel: true if type=="sample"
+    bool conserved_emit_expression = false;             // emit per-sample expression columns when qtx reader available
 
     /**
      * Open the conserved-exons TSV, write its header, and arm inline
@@ -143,7 +153,8 @@ struct analysis_report {
      * collect(). Each row carries per-sample expression columns for
      * entries with type=="sample".
      */
-    void begin_conserved_exon_stream(const std::string& path);
+    void begin_conserved_exon_stream(const std::string& path,
+                                     bool emit_expression_columns = false);
 
     // ── Phase 8.3: splicing hub streams ─────────────────────────────
     //
@@ -156,6 +167,7 @@ struct analysis_report {
     std::unique_ptr<std::ofstream> branch_stream;
     std::vector<uint32_t> hub_stream_sample_ids;   // parallel labels
     std::vector<bool> hub_stream_is_sample;
+    bool hub_emit_expression = false;              // emit per-sample expression columns when qtx reader available
     static constexpr size_t MIN_HUB_BRANCHES = 10;
 
     /**
@@ -166,7 +178,8 @@ struct analysis_report {
      * collect().
      */
     void begin_splicing_hub_streams(const std::string& hubs_path,
-                                    const std::string& branches_path);
+                                    const std::string& branches_path,
+                                    bool emit_expression_columns = false);
 
     // ── Phase 8.6: splicing event stream ────────────────────────────
     //
@@ -196,9 +209,10 @@ struct analysis_report {
      * collect() appends to its internal per-sample counters and distribution
      * vectors without clearing them first, so calling it twice on the same
      * instance would double-count every metric. Use one analysis_report per
-     * analyze invocation.
+     * inspect invocation.
      */
-    void collect(grove_type& grove);
+    void collect(grove_type& grove,
+                 quant_sidecar::Reader* qtx_reader = nullptr);
 
     // ── Output ──────────────────────────────────────────────────────
 

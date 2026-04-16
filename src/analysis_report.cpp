@@ -24,6 +24,19 @@
 
 namespace {
 
+/// Render a sample's declared expression_type as the short suffix used
+/// in per-sample output column headers (e.g., `SAMPLE.counts`).
+std::string expr_type_label(sample_info::expression_type t) {
+    switch (t) {
+        case sample_info::expression_type::COUNTS: return "counts";
+        case sample_info::expression_type::TPM:    return "TPM";
+        case sample_info::expression_type::FPKM:   return "FPKM";
+        case sample_info::expression_type::RPKM:   return "RPKM";
+        case sample_info::expression_type::CPM:    return "CPM";
+        default:                                   return "expression";
+    }
+}
+
 double compute_median(std::vector<size_t>& values) {
     if (values.empty()) return 0;
     auto mid = values.begin() + static_cast<long>(values.size()) / 2;
@@ -37,8 +50,12 @@ double compute_median(std::vector<size_t>& values) {
 
 } // anonymous namespace
 
-void analysis_report::collect(grove_type& grove) {
+void analysis_report::collect(grove_type& grove,
+                              quant_sidecar::Reader* qtx_reader) {
     logging::info("Collecting analysis report...");
+    if (qtx_reader) {
+        logging::info("Quantitative columns enabled (reading from .qtx sidecar)");
+    }
 
     size_t num_samples = sample_registry::instance().size();
     per_sample.resize(num_samples);
@@ -86,6 +103,17 @@ void analysis_report::collect(grove_type& grove) {
         uint16_t sources_seen_in_gene = 0;        // 8.7a: OR of all segment.sources bitfields in the gene
     };
     std::unordered_map<uint32_t, gene_acc> active_genes;
+
+    // Per-exon × per-sample expression accumulator, cleared per-chromosome
+    // alongside `active_genes`. The sidecar stores per-segment values; we
+    // attribute them to every exon in the segment's chain so hub /
+    // branch / conserved-exon row emission can quote a per-exon expression
+    // value (= total sample-level support flowing through this exon).
+    // Empty when qtx_reader is null — no allocations, no lookups, no
+    // accumulator overhead in the legacy/no-sidecar path.
+    using exon_expr_map_t = std::unordered_map<key_ptr,
+                                               std::unordered_map<uint32_t, float>>;
+    exon_expr_map_t exon_expr_sum;
 
     // Phase 8.3: single set of per-sample tally buffers, allocated once and
     // reused across every hub in every gene. std::fill-reset before each hub.
@@ -283,13 +311,20 @@ void analysis_report::collect(grove_type& grove) {
                         << hub_exon.transcript_ids.size();
 
                 // Per-sample columns: .branches, .shared, .unique, .psi,
-                // .entropy. Gated on "sample is at the hub" — being at
-                // the hub implies being in the gene, so hub_psi_den[sid]
-                // > 0 when hub_exon.sample_idx.test(sid).
+                // .entropy, optional .{expr_type}. Gated on "sample is
+                // at the hub" — being at the hub implies being in the
+                // gene, so hub_psi_den[sid] > 0 when
+                // hub_exon.sample_idx.test(sid).
+                auto hub_expr_it = (qtx_reader && hub_emit_expression)
+                    ? exon_expr_sum.find(hub.exon)
+                    : exon_expr_sum.end();
                 for (size_t i = 0; i < hub_stream_sample_ids.size(); ++i) {
                     uint32_t sid = hub_stream_sample_ids[i];
                     if (!hub_exon.sample_idx.test(sid)) {
                         hub_out << "\t.\t.\t.\t.\t.";
+                        if (hub_emit_expression && hub_stream_is_sample[i]) {
+                            hub_out << "\t.";
+                        }
                     } else {
                         // PSI: hub_psi_den[sid] > 0 is guaranteed here
                         double psi = (hub_psi_den[sid] > 0)
@@ -321,6 +356,16 @@ void analysis_report::collect(grove_type& grove) {
                             hub_out << "\t" << psi << "\t" << entropy;
                             hub_out.precision(prev_prec);
                         }
+                        if (hub_emit_expression && hub_stream_is_sample[i]) {
+                            if (hub_expr_it != exon_expr_sum.end()) {
+                                auto v_it = hub_expr_it->second.find(sid);
+                                if (v_it != hub_expr_it->second.end()) {
+                                    hub_out << "\t" << v_it->second;
+                                    continue;
+                                }
+                            }
+                            hub_out << "\t.";
+                        }
                     }
                 }
                 hub_out << "\n";
@@ -336,10 +381,23 @@ void analysis_report::collect(grove_type& grove) {
                                << format_coordinate(seqid_for_hub, hub.exon->get_value()) << "\t"
                                << tgt.id << "\t"
                                << format_coordinate(seqid_for_hub, tgt_key->get_value());
+                        auto tgt_expr_it = (qtx_reader && hub_emit_expression)
+                            ? exon_expr_sum.find(tgt_key)
+                            : exon_expr_sum.end();
                         for (size_t i = 0; i < hub_stream_sample_ids.size(); ++i) {
                             uint32_t sid = hub_stream_sample_ids[i];
                             bool present = tgt.sample_idx.test(sid);
                             br_out << "\t" << (present ? "1" : ".");
+                            if (hub_emit_expression && hub_stream_is_sample[i]) {
+                                if (present && tgt_expr_it != exon_expr_sum.end()) {
+                                    auto v_it = tgt_expr_it->second.find(sid);
+                                    if (v_it != tgt_expr_it->second.end()) {
+                                        br_out << "\t" << v_it->second;
+                                        continue;
+                                    }
+                                }
+                                br_out << "\t.";
+                            }
                         }
                         br_out << "\n";
                     }
@@ -416,6 +474,7 @@ void analysis_report::collect(grove_type& grove) {
     for (auto& [seqid, root] : roots) {
         if (!root) continue;
         active_genes.clear();
+        exon_expr_sum.clear();
 
         auto* node = root;
         while (!node->get_is_leaf()) {
@@ -450,6 +509,30 @@ void analysis_report::collect(grove_type& grove) {
                     else if (seg_conserved) sc.conserved_segments++;
                     else sc.shared_segments++;
                     if (seg.exon_count == 1) sc.single_exon_segments++;
+                }
+
+                // ── Quantification (sidecar read) ───────────────────
+                // When a .qtx reader is available, look up this segment's
+                // per-sample expression records once and:
+                //   1. accumulate per-sample stats (expression_sum,
+                //      expressed_segments) for the sample_stats output
+                //   2. attribute the value to every exon in this segment's
+                //      chain via exon_expr_sum[exon_key][sample_id] so
+                //      hub / branch / conserved-exon emission can quote a
+                //      per-exon value derived from the segments containing
+                //      the exon
+                // Records are pre-sorted by sample_id within a block. We
+                // walk the segment's exon chain via the same SEGMENT_TO_EXON
+                // / EXON_TO_EXON edges the main exon walk uses below, but
+                // do it inline here so the per-segment lookup happens once.
+                std::vector<quant_sidecar::Reader::ValueRecord> seg_expr_records;
+                if (qtx_reader) {
+                    seg_expr_records = qtx_reader->lookup(seg.segment_index);
+                    for (const auto& rec : seg_expr_records) {
+                        auto& sc = per_sample[rec.sample_id];
+                        sc.expression_sum += static_cast<double>(rec.value);
+                        sc.expressed_segments++;
+                    }
                 }
 
                 // ── Gene accumulation ───────────────────────────────
@@ -510,7 +593,7 @@ void analysis_report::collect(grove_type& grove) {
                     // splicing_catalog::detect_gene_events can run at gene
                     // finalization. Only populated when the splicing events
                     // stream is armed — avoids the per-gene chain memory for
-                    // analyze runs that don't need events.
+                    // inspect runs that don't need events.
                     std::vector<key_ptr> chain_for_event_detection;
                     // Capture if either splicing events OR splicing hubs are armed.
                     // Hubs need the chain for per-hub PSI + entropy (Phase 8.6b),
@@ -525,6 +608,18 @@ void analysis_report::collect(grove_type& grove) {
                         // dedup (the map is keyed by exon pointer so repeats
                         // within a segment don't over-count).
                         acc.exon_seg_counts[current]++;
+
+                        // Quantification: attribute this segment's per-sample
+                        // expression to every exon in its chain. The result
+                        // is "total read support flowing through this exon
+                        // across all segments containing it, per sample".
+                        // Cleared per-chromosome alongside `active_genes`.
+                        if (qtx_reader && !seg_expr_records.empty()) {
+                            auto& exon_map = exon_expr_sum[current];
+                            for (const auto& rec : seg_expr_records) {
+                                exon_map[rec.sample_id] += rec.value;
+                            }
+                        }
 
                         if (visited_exons.insert(current).second) {
                             auto& exon = get_exon(current->get_data());
@@ -591,6 +686,23 @@ void analysis_report::collect(grove_type& grove) {
                                     << seqid << "\t"
                                     << format_coordinate(seqid, current->get_value()) << "\t"
                                     << exon.transcript_ids.size();
+                                if (conserved_emit_expression) {
+                                    auto exon_map_it = qtx_reader
+                                        ? exon_expr_sum.find(current)
+                                        : exon_expr_sum.end();
+                                    for (size_t i = 0; i < conserved_stream_sample_ids.size(); ++i) {
+                                        if (!conserved_stream_is_sample[i]) continue;
+                                        uint32_t sid = conserved_stream_sample_ids[i];
+                                        if (exon_map_it != exon_expr_sum.end()) {
+                                            auto v_it = exon_map_it->second.find(sid);
+                                            if (v_it != exon_map_it->second.end()) {
+                                                out << "\t" << v_it->second;
+                                                continue;
+                                            }
+                                        }
+                                        out << "\t.";
+                                    }
+                                }
                                 out << "\n";
                             }
                         }
@@ -624,6 +736,7 @@ void analysis_report::collect(grove_type& grove) {
             finalize_gene(acc, seqid);
         }
         active_genes.clear();
+        exon_expr_sum.clear();
     }
 
     total_exons = visited_exons.size();
@@ -700,11 +813,25 @@ void analysis_report::write_per_sample(const std::string& path) const {
     // full transcript set, including transcripts originally contributed by
     // other samples. This is an intentional streaming-friendly approximation;
     // strict per-sample attribution would require a tx→sample map.
+    // expressed_segments / mean_expression appear only when the qtx
+    // reader was plugged in at collect() time. We detect this by checking
+    // whether any sample has expressed_segments > 0; if so we emit both
+    // columns. Otherwise we omit them so no-sidecar runs produce a clean
+    // TSV that matches the legacy (pre-sidecar) shape.
+    bool emit_expression_stats = false;
+    for (const auto& sc : per_sample) {
+        if (sc.expressed_segments > 0) { emit_expression_stats = true; break; }
+    }
+
     out << "sample\ttype\tgenes\tsegments\texclusive_segments\tshared_segments"
         << "\tconserved_segments\texons\texclusive_exons\tshared_exons"
         << "\tconserved_exons\tconstitutive_exons\talternative_exons"
         << "\ttranscripts_touched\tsingle_exon_segments"
-        << "\tmean_gene_exon_entropy\tmean_effective_isoforms\n";
+        << "\tmean_gene_exon_entropy\tmean_effective_isoforms";
+    if (emit_expression_stats) {
+        out << "\texpressed_segments\tmean_expression";
+    }
+    out << "\n";
     out << std::fixed;
 
     for (size_t sid = 0; sid < per_sample.size(); ++sid) {
@@ -736,8 +863,15 @@ void analysis_report::write_per_sample(const std::string& path) const {
             << "\t" << sc.transcripts
             << "\t" << sc.single_exon_segments
             << "\t" << std::setprecision(3) << mean_exon_H
-            << "\t" << std::setprecision(2) << mean_eff_iso
-            << "\n";
+            << "\t" << std::setprecision(2) << mean_eff_iso;
+        if (emit_expression_stats) {
+            double mean_expr = (sc.expressed_segments > 0)
+                ? sc.expression_sum / static_cast<double>(sc.expressed_segments)
+                : 0.0;
+            out << "\t" << sc.expressed_segments
+                << "\t" << std::setprecision(3) << mean_expr;
+        }
+        out << "\n";
     }
 
     logging::info("Per-sample stats written to: " + path);
@@ -829,8 +963,10 @@ void analysis_report::write_biotype(const std::string& path) const {
 
 void analysis_report::begin_splicing_hub_streams(
     const std::string& hubs_path,
-    const std::string& branches_path)
+    const std::string& branches_path,
+    bool emit_expression_columns)
 {
+    hub_emit_expression = emit_expression_columns;
     auto& registry = sample_registry::instance();
 
     hub_stream_sample_ids.clear();
@@ -875,6 +1011,9 @@ void analysis_report::begin_splicing_hub_streams(
                     << "\t" << label << ".unique"
                     << "\t" << label << ".psi"
                     << "\t" << label << ".entropy";
+        if (hub_emit_expression && hub_stream_is_sample[i]) {
+            *hub_stream << "\t" << label << "." << expr_type_label(info.expr_type);
+        }
     }
     *hub_stream << "\n";
 
@@ -887,6 +1026,9 @@ void analysis_report::begin_splicing_hub_streams(
             std::string label = info.id.empty()
                 ? std::to_string(hub_stream_sample_ids[i]) : info.id;
             *branch_stream << "\t" << label << ".present";
+            if (hub_emit_expression && hub_stream_is_sample[i]) {
+                *branch_stream << "\t" << label << "." << expr_type_label(info.expr_type);
+            }
         }
         *branch_stream << "\n";
     }
@@ -932,7 +1074,9 @@ void analysis_report::begin_splicing_events_stream(const std::string& path) {
 
 // ── Conserved exon streaming setup (Phase 8.5) ──────────────────────
 
-void analysis_report::begin_conserved_exon_stream(const std::string& path) {
+void analysis_report::begin_conserved_exon_stream(const std::string& path,
+                                                  bool emit_expression_columns) {
+    conserved_emit_expression = emit_expression_columns;
     auto& registry = sample_registry::instance();
 
     conserved_stream_sample_ids.clear();
@@ -955,7 +1099,18 @@ void analysis_report::begin_conserved_exon_stream(const std::string& path) {
 
     auto& out = *conserved_exon_stream;
     out << std::fixed;
-    out << "exon_id\tgene_name\tgene_id\tchromosome\tcoordinate\tn_transcripts\n";
+    out << "exon_id\tgene_name\tgene_id\tchromosome\tcoordinate\tn_transcripts";
+    if (conserved_emit_expression) {
+        // Per-sample expression columns for sample-typed entries only
+        for (size_t i = 0; i < conserved_stream_sample_ids.size(); ++i) {
+            if (!conserved_stream_is_sample[i]) continue;
+            const auto& info = registry.get(conserved_stream_sample_ids[i]);
+            std::string label = info.id.empty()
+                ? std::to_string(conserved_stream_sample_ids[i]) : info.id;
+            out << "\t" << label << "." << expr_type_label(info.expr_type);
+        }
+    }
+    out << "\n";
 
     logging::info("Conserved exons streaming to: " + path);
 }

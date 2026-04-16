@@ -23,6 +23,7 @@
 
 #include "build_summary.hpp"
 #include "genomic_feature.hpp"
+#include "quant_sidecar.hpp"
 
 namespace subcall {
 
@@ -78,6 +79,20 @@ protected:
     chromosome_gene_segment_indices gene_indices_;
     std::filesystem::path output_dir;
     bool include_scaffolds = false;  // set from --include-scaffolds (default: main chromosomes only)
+
+    /// Quantification sidecar reader, opened lazily by setup_grove when a
+    /// `{prefix}.qtx` file is found alongside the loaded `.ggx`. Empty when
+    /// no sidecar is present (legacy groves, query against a structure-only
+    /// catalog, etc.). Subclasses access via qtx_reader_ptr() and check for
+    /// null before using.
+    std::optional<quant_sidecar::Reader> qtx_reader;
+
+    /// Returns a non-owning pointer to the qtx reader, or nullptr when no
+    /// sidecar was loaded. Use this in subclass code so the consuming
+    /// callsite handles the absent-sidecar case explicitly.
+    quant_sidecar::Reader* qtx_reader_ptr() {
+        return qtx_reader ? &*qtx_reader : nullptr;
+    }
 
     /**
      * Resolve the output directory from --output-dir or the parent of a fallback path.
