@@ -153,16 +153,20 @@ TEST_F(HubPsiEntropyTest, PsiAndEntropyCorrectForKnownHub) {
     // Verify we got the expected number of segments: 12 hub-using + 1 non-hub = 13
     ASSERT_EQ(segment_count, 13u) << "Expected 13 segments (12 through hub + 1 bypass)";
 
-    // Set up analysis_report with hub streaming
+    // Set up analysis_report with hub streaming, scoped so the report
+    // destructs (flushing the ofstream buffer to disk) before we parse.
     fs::path hubs_path = tmp_dir / "hubs.tsv";
     fs::path branches_path = tmp_dir / "branches.tsv";
 
-    analysis_report report;
-    report.begin_splicing_hub_streams(hubs_path.string(), branches_path.string());
-    report.collect(grove);
+    {
+        analysis_report report;
+        report.begin_splicing_hub_streams(hubs_path.string(), branches_path.string());
+        report.collect(grove);
+    } // report destructs here → hub_stream flushes + closes
 
     // Verify hub file was written
     ASSERT_TRUE(fs::exists(hubs_path)) << "splicing_hubs.tsv not created";
+    ASSERT_GT(fs::file_size(hubs_path), 0u) << "Hub file is empty";
 
     // Parse the TSV
     auto [header, rows] = parse_tsv(hubs_path);
