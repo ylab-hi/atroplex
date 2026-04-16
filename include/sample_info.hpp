@@ -153,9 +153,10 @@ struct sample_info {
     // Multiple values may be listed comma-separated — each one is evaluated
     // against its corresponding CLI threshold (--min-counts / --min-TPM /
     // --min-FPKM / --min-RPKM / --min-cov) with AND semantics.
-    // The FIRST declared attribute is what gets stored on the segment via
-    // expression_store (one float per sample per feature) and what shows up
-    // as the `.{expr_type}` column header in per_sample outputs.
+    // The FIRST declared attribute is what gets written to the per-sample
+    // `.qtx` sidecar file as `(segment_index, value)` records. Expression
+    // values no longer live on grove features — sidecars are read at query
+    // time when quantitative analysis is requested.
     std::vector<std::string> expression_attributes;
 
     // Extensible key-value attributes

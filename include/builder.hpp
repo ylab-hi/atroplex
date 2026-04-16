@@ -57,6 +57,11 @@ public:
         size_t fuzzy_tolerance,
         bool prune_tombstones,
         bool include_scaffolds = false,
+        /// Final .qtx output path. Empty means no quantification sidecar
+        /// is written. A temp directory is derived from this path
+        /// (`<qtx_path>.tmp/`) for per-sample streams that are K-way
+        /// merged into the final single file at end of build.
+        const std::string& qtx_path = "",
         chromosome_exon_caches* out_exon_caches = nullptr,
         chromosome_gene_segment_indices* out_gene_indices = nullptr
     );

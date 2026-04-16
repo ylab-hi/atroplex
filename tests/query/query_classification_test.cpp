@@ -88,7 +88,6 @@ protected:
         std::string transcript_id;
         structural_category category;
         std::vector<uint32_t> sample_ids;
-        std::map<uint32_t, float> sample_expression;
         std::string gene_id;
     };
 
@@ -146,9 +145,6 @@ protected:
 
                 seg.sample_idx.for_each([&](uint32_t sid) {
                     qr.sample_ids.push_back(sid);
-                    if (seg.expression.has(sid)) {
-                        qr.sample_expression[sid] = seg.expression.get(sid);
-                    }
                 });
             }
 
@@ -234,24 +230,6 @@ TEST_F(QueryClassificationTest, NovelTranscript_NoSamplePresence) {
     // The key assertion is that it's not classified as FSM.
     EXPECT_NE(r->category, structural_category::FSM)
         << "Q_NOVEL should NOT be FSM";
-}
-
-// ── Expression tracking ────────────────────────────────────────────
-
-TEST_F(QueryClassificationTest, SharedTranscript_HasSampleExpression) {
-    auto results = classify_query_transcripts();
-    auto* r = find_result(results, "Q_SHARED");
-    ASSERT_NE(r, nullptr);
-
-    // TX_S1 has counts=150, which gets stored on the shared segment
-    auto expr_it = r->sample_expression.find(sample_id);
-    if (expr_it != r->sample_expression.end()) {
-        EXPECT_GT(expr_it->second, 0.0f)
-            << "Sample expression should be positive (counts=150 in fixture)";
-    }
-    // Annotation has no expression data
-    EXPECT_EQ(r->sample_expression.count(annotation_id), 0)
-        << "Annotation should have no expression";
 }
 
 // ── Gene assignment ────────────────────────────────────────────────

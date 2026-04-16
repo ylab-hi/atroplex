@@ -175,110 +175,6 @@ public:
 };
 
 /**
- * Lazily allocated flat expression array.
- * Stores per-sample expression values as a vector<float> indexed by sample registry ID.
- * Uses -1.0f as sentinel for "no data". Only allocates when the first value is set.
- * Null pointer (no allocation) when no expression data exists — 8 bytes per feature.
- */
-class expression_store {
-    static constexpr float SENTINEL = -1.0f;
-    std::unique_ptr<std::vector<float>> data_;
-
-    void ensure(uint32_t sid) {
-        if (!data_) {
-            data_ = std::make_unique<std::vector<float>>(sid + 1, SENTINEL);
-        } else if (sid >= data_->size()) {
-            data_->resize(sid + 1, SENTINEL);
-        }
-    }
-
-public:
-    expression_store() = default;
-
-    // Copy support (unique_ptr needs explicit copy)
-    expression_store(const expression_store& other)
-        : data_(other.data_ ? std::make_unique<std::vector<float>>(*other.data_) : nullptr) {}
-    expression_store& operator=(const expression_store& other) {
-        if (this != &other) {
-            data_ = other.data_ ? std::make_unique<std::vector<float>>(*other.data_) : nullptr;
-        }
-        return *this;
-    }
-    expression_store(expression_store&&) noexcept = default;
-    expression_store& operator=(expression_store&&) noexcept = default;
-
-    void set(uint32_t sid, float value) {
-        ensure(sid);
-        (*data_)[sid] = value;
-    }
-
-    float get(uint32_t sid) const {
-        if (!data_ || sid >= data_->size()) return 0.0f;
-        float v = (*data_)[sid];
-        return v > SENTINEL ? v : 0.0f;
-    }
-
-    bool has(uint32_t sid) const {
-        if (!data_ || sid >= data_->size()) return false;
-        return (*data_)[sid] > SENTINEL;
-    }
-
-    bool empty() const { return !data_; }
-
-    /// Remove expression for a specific sample (reset to sentinel)
-    void remove(uint32_t sid) {
-        if (data_ && sid < data_->size()) {
-            (*data_)[sid] = SENTINEL;
-        }
-    }
-
-    /// Accumulate: add value to existing (or set if not present)
-    void accumulate(uint32_t sid, float value) {
-        float current = has(sid) ? get(sid) : 0.0f;
-        set(sid, current + value);
-    }
-
-    /// Merge another store into this one (accumulating values)
-    void merge(const expression_store& other) {
-        if (!other.data_) return;
-        for (size_t i = 0; i < other.data_->size(); ++i) {
-            float v = (*other.data_)[i];
-            if (v > SENTINEL) {
-                accumulate(static_cast<uint32_t>(i), v);
-            }
-        }
-    }
-
-    /// Iterate over (sample_id, value) pairs where expression exists
-    template<typename Fn>
-    void for_each(Fn&& fn) const {
-        if (!data_) return;
-        for (size_t i = 0; i < data_->size(); ++i) {
-            float v = (*data_)[i];
-            if (v > SENTINEL) {
-                fn(static_cast<uint32_t>(i), v);
-            }
-        }
-    }
-
-    /// Convert to unordered_map for output struct compatibility
-    std::unordered_map<uint32_t, float> to_map() const {
-        std::unordered_map<uint32_t, float> m;
-        for_each([&](uint32_t sid, float v) { m[sid] = v; });
-        return m;
-    }
-
-    /// Bytes of heap data allocated (for memory estimation)
-    size_t data_bytes() const {
-        return data_ ? data_->capacity() * sizeof(float) : 0;
-    }
-
-    // Serialization
-    void serialize(std::ostream& os) const;
-    [[nodiscard]] static expression_store deserialize(std::istream& is);
-};
-
-/**
  * Sorted flat vector for compact set storage.
  * Drop-in replacement for unordered_set<uint32_t> with much lower memory overhead:
  * unordered_set costs ~40-56 bytes base + ~12 bytes per entry (hash node + bucket pointer).
@@ -539,9 +435,6 @@ struct exon_feature {
     // Sample tracking — dynamic bitset indexed by sample_registry IDs
     sample_bitset sample_idx;
 
-    // Expression quantification (lazily allocated, -1.0f sentinel for missing)
-    expression_store expression;
-
     // Additional annotations
     int exon_number;                 // Exon number within transcript (-1 for unknown)
 
@@ -589,12 +482,6 @@ struct exon_feature {
         return sample_idx.count();
     }
 
-    // --- Expression methods ---
-
-    void set_expression(uint32_t sample_id, float value) { expression.set(sample_id, value); }
-    float get_expression(uint32_t sample_id) const { return expression.get(sample_id); }
-    bool has_expression(uint32_t sample_id) const { return expression.has(sample_id); }
-
     // --- Pan-transcriptome statistics ---
 
     float frequency(size_t total_samples) const {
@@ -636,9 +523,6 @@ struct segment_feature {
 
     // Sample tracking — dynamic bitset indexed by sample_registry IDs
     sample_bitset sample_idx;
-
-    // Expression quantification (lazily allocated, -1.0f sentinel for missing)
-    expression_store expression;
 
     // Transcript biotype mapping (interned transcript_id -> biotype)
     // e.g., protein_coding, retained_intron, nonsense_mediated_decay
@@ -691,12 +575,6 @@ struct segment_feature {
     size_t sample_count() const {
         return sample_idx.count();
     }
-
-    // --- Expression methods ---
-
-    void set_expression(uint32_t sample_id, float value) { expression.set(sample_id, value); }
-    float get_expression(uint32_t sample_id) const { return expression.get(sample_id); }
-    bool has_expression(uint32_t sample_id) const { return expression.has(sample_id); }
 
     // --- Read support methods ---
 

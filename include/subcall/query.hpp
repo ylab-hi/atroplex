@@ -45,9 +45,6 @@ struct query_result {
     // Per-sample presence (sample_id -> present)
     std::vector<uint32_t> sample_ids;
 
-    // Per-sample expression (sample_id -> expression value)
-    std::map<uint32_t, float> sample_expression;
-
     // Match quality
     double junction_match_score = 0.0;
     int matching_junctions = 0;
@@ -109,25 +106,9 @@ private:
      */
     std::vector<query_result> classify_transcripts(const std::string& input_path);
 
-    /**
-     * Run DTU analysis between groups for a given contrast
-     */
-    std::vector<dtu_result> run_dtu(const query_contrast& contrast,
-                                     const std::vector<query_result>& results,
-                                     const cxxopts::ParseResult& args);
-
-    /**
-     * Apply Benjamini-Hochberg FDR correction
-     */
-    static void apply_fdr_correction(std::vector<dtu_result>& results,
-                                     double fdr_threshold);
-
     // Output
     void write_classification(const std::string& path,
                               const std::vector<query_result>& results);
-    void write_dtu_results(const std::string& path,
-                           const query_contrast& contrast,
-                           const std::vector<dtu_result>& results);
     void write_summary(const std::string& path,
                        const std::vector<query_result>& classification,
                        const std::vector<std::pair<query_contrast,

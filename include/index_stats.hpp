@@ -76,7 +76,6 @@ struct index_stats {
         size_t n_transcripts = 0;     // total transcripts using this exon
         bool constitutive = false;    // present in all transcripts of its gene
         std::unordered_map<uint32_t, size_t> sample_transcripts;  // per-sample transcript count
-        std::unordered_map<uint32_t, float> sample_expression;    // per-sample expression (if available)
     };
     std::vector<conserved_exon_entry> conserved_exon_details;
 
@@ -114,7 +113,6 @@ struct index_stats {
 
         std::unordered_map<uint32_t, double> sample_psi;          // traditional PSI: hub tx / gene tx per sample
         std::unordered_map<uint32_t, double> sample_entropy;     // Shannon entropy of branch usage
-        std::unordered_map<uint32_t, float> sample_expression;   // per-sample expression at hub exon
 
         // Individual branch targets (for detail file)
         struct branch_target {
@@ -122,7 +120,6 @@ struct index_stats {
             std::string coordinate;
             sample_bitset sample_idx;
             std::unordered_map<uint32_t, size_t> sample_transcripts; // per-sample tx count through this target
-            std::unordered_map<uint32_t, float> sample_expression;   // per-sample expression at target exon
         };
         std::vector<branch_target> targets;
     };
@@ -162,8 +159,6 @@ struct index_stats {
         double gene_exon_entropy = 0; // mean Shannon entropy over exon usage (per multi-segment gene, averaged)
         double effective_isoforms = 0; // mean exp(entropy of segment→tx distribution) per gene
         double deduplication_ratio = 0; // segments / transcripts
-        double mean_expression = 0;   // mean expression across segments (if available)
-        size_t expressed_segments = 0; // segments with expression data
         std::map<std::string, size_t> genes_by_biotype;        // per-sample gene biotype
         std::map<std::string, size_t> transcripts_by_biotype;  // per-sample transcript biotype
     };

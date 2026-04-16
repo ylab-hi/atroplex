@@ -78,10 +78,6 @@ struct analysis_report {
         double effective_isoforms_sum = 0; // Σ 2^H(segment→tx dist)
         size_t multi_segment_genes = 0;
 
-        // Expression
-        double expression_sum = 0;
-        size_t expressed_segments = 0;
-
         // Biotypes
         std::map<std::string, size_t> genes_by_biotype;
         std::map<std::string, size_t> transcripts_by_biotype;

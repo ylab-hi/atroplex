@@ -1,13 +1,14 @@
 /*
- * Round-trip tests for the `.qtx` sidecar format (quant_sidecar::Writer /
- * quant_sidecar::Reader).
+ * Round-trip tests for the `.qtx` sidecar format.
  *
- * These tests treat the Writer + Reader as a black box: write a known
- * set of records, reopen the file, and verify header fields + record
- * contents via both `lookup` (binary search) and `for_each` (linear
- * scan). No build pipeline is involved — the goal is to catch format
- * regressions in isolation before they propagate into end-to-end
- * workflows once sidecars are wired into the build path.
+ * The new sidecar format is segment-major: per-sample temp streams
+ * (SampleStreamWriter) get K-way merged into a single `.qtx` file
+ * (merge_to_qtx), which the Reader then opens for segment-indexed
+ * lookup of per-sample values.
+ *
+ * These tests exercise the round-trip end-to-end: write a handful of
+ * per-sample streams with known records, merge them, reopen with Reader,
+ * and verify lookups return the right (sample_id, value) sets.
  */
 
 #include <gtest/gtest.h>
@@ -16,6 +17,7 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <string>
 #include <vector>
 
 #include "quant_sidecar.hpp"
@@ -25,8 +27,6 @@ namespace fs = std::filesystem;
 class QuantSidecarTest : public ::testing::Test {
 protected:
     void SetUp() override {
-        // Per-test unique directory so a failed test leaves an
-        // inspectable artifact behind without colliding with siblings.
         const auto* info = ::testing::UnitTest::GetInstance()->current_test_info();
         std::string dir_name = "atroplex_qtx_test_";
         dir_name += info ? info->name() : "unknown";
@@ -43,297 +43,281 @@ protected:
         fs::remove_all(tmp_dir, ec);
     }
 
+    // Helper: write a per-sample stream file and finalize it.
+    fs::path write_stream(uint32_t sample_id,
+                          const std::vector<std::pair<uint64_t, float>>& records) {
+        fs::path p = tmp_dir / (std::to_string(sample_id) + ".stream");
+        {
+            quant_sidecar::SampleStreamWriter w(p, sample_id);
+            for (auto [seg, val] : records) {
+                w.append(seg, val);
+            }
+            w.finalize();
+        }
+        return p;
+    }
+
+    // Helper: build a small catalog of (sample_id, records) + metadata and
+    // merge it into a .qtx at the given path.
+    fs::path merge_samples(
+        const std::vector<std::pair<uint32_t, std::vector<std::pair<uint64_t, float>>>>& samples,
+        const std::string& qtx_name = "out.qtx") {
+        std::vector<fs::path> streams;
+        std::vector<quant_sidecar::SampleMetadata> metas;
+        for (const auto& [sid, recs] : samples) {
+            streams.push_back(write_stream(sid, recs));
+            metas.push_back({sid, /*expr_type=*/0, "sample_" + std::to_string(sid)});
+        }
+        fs::path out = tmp_dir / qtx_name;
+        quant_sidecar::merge_to_qtx(out, streams, metas);
+        return out;
+    }
+
     fs::path tmp_dir;
 };
 
-// ── Round trip: header + records ────────────────────────────────────
+// ── SampleStreamWriter round-trip (basic sanity) ────────────────────
 
-TEST_F(QuantSidecarTest, EmptyFileRoundTrip) {
-    fs::path path = tmp_dir / "empty.qtx";
-
+TEST_F(QuantSidecarTest, StreamWriter_EmptyFinalizes) {
+    fs::path p = tmp_dir / "empty.stream";
     {
-        quant_sidecar::Writer w(path, /*expr_type=*/4, /*grove_id=*/0xabcdef12);
+        quant_sidecar::SampleStreamWriter w(p, /*sample_id=*/42);
         EXPECT_TRUE(w.empty());
         w.finalize();
     }
-    ASSERT_TRUE(fs::exists(path));
-
-    quant_sidecar::Reader r(path);
-    EXPECT_EQ(r.size(), 0u);
-    EXPECT_TRUE(r.empty());
-    EXPECT_EQ(r.header().count, 0u);
-    EXPECT_EQ(r.header().expr_type, 4u);
-    EXPECT_EQ(r.header().grove_id, 0xabcdef12u);
-    EXPECT_EQ(r.header().version, quant_sidecar::QTX_VERSION);
-    EXPECT_EQ(std::memcmp(r.header().magic,
-                          quant_sidecar::MAGIC,
-                          sizeof(quant_sidecar::MAGIC)), 0);
-    EXPECT_TRUE(r.grove_id_matches(0xabcdef12));
-    EXPECT_FALSE(r.grove_id_matches(0));
+    EXPECT_TRUE(fs::exists(p)) << "Empty finalize should still produce a file";
+    EXPECT_GE(fs::file_size(p), sizeof(quant_sidecar::StreamHeader));
 }
 
-TEST_F(QuantSidecarTest, SmallFileRoundTrip) {
-    fs::path path = tmp_dir / "small.qtx";
-
-    // Append in unsorted order to verify finalize() sorts.
+TEST_F(QuantSidecarTest, StreamWriter_DestructorFinalizes) {
+    fs::path p = tmp_dir / "dtor.stream";
     {
-        quant_sidecar::Writer w(path, /*expr_type=*/1, /*grove_id=*/0xdeadbeef);
-        w.append(7,   0.5f);
-        w.append(1,   42.0f);
-        w.append(42, 123.75f);
-        w.append(3,   0.0f);   // zero is a valid value
-        EXPECT_EQ(w.size(), 4u);
-        EXPECT_FALSE(w.empty());
-        w.finalize();
+        quant_sidecar::SampleStreamWriter w(p, /*sample_id=*/7);
+        w.append(100, 1.5f);
+        w.append(50,  2.5f);
+        // No explicit finalize; destructor should flush.
     }
-
-    quant_sidecar::Reader r(path);
-    ASSERT_EQ(r.size(), 4u);
-    EXPECT_EQ(r.header().count, 4u);
-    EXPECT_EQ(r.header().expr_type, 1u);
-    EXPECT_EQ(r.header().grove_id, 0xdeadbeefu);
-
-    // Records come back sorted by segment_index regardless of
-    // insertion order.
-    auto& recs = r.records();
-    ASSERT_EQ(recs.size(), 4u);
-    EXPECT_EQ(recs[0].segment_index, 1u);
-    EXPECT_FLOAT_EQ(recs[0].value, 42.0f);
-    EXPECT_EQ(recs[1].segment_index, 3u);
-    EXPECT_FLOAT_EQ(recs[1].value, 0.0f);
-    EXPECT_EQ(recs[2].segment_index, 7u);
-    EXPECT_FLOAT_EQ(recs[2].value, 0.5f);
-    EXPECT_EQ(recs[3].segment_index, 42u);
-    EXPECT_FLOAT_EQ(recs[3].value, 123.75f);
+    EXPECT_TRUE(fs::exists(p));
 }
 
-// ── lookup() hits, misses, bounds ───────────────────────────────────
-
-TEST_F(QuantSidecarTest, LookupHitAndMiss) {
-    fs::path path = tmp_dir / "lookup.qtx";
-
-    {
-        quant_sidecar::Writer w(path, /*expr_type=*/2, /*grove_id=*/0);
-        w.append(100, 1.0f);
-        w.append(200, 2.0f);
-        w.append(300, 3.0f);
-        w.append(400, 4.0f);
-        w.append(500, 5.0f);
-        w.finalize();
-    }
-
-    quant_sidecar::Reader r(path);
-
-    // Hits
-    auto hit_200 = r.lookup(200);
-    ASSERT_TRUE(hit_200.has_value());
-    EXPECT_FLOAT_EQ(*hit_200, 2.0f);
-
-    auto hit_500 = r.lookup(500);
-    ASSERT_TRUE(hit_500.has_value());
-    EXPECT_FLOAT_EQ(*hit_500, 5.0f);
-
-    // Boundary hit (first record)
-    auto hit_first = r.lookup(100);
-    ASSERT_TRUE(hit_first.has_value());
-    EXPECT_FLOAT_EQ(*hit_first, 1.0f);
-
-    // Misses
-    EXPECT_FALSE(r.lookup(0).has_value());         // below range
-    EXPECT_FALSE(r.lookup(150).has_value());       // between records
-    EXPECT_FALSE(r.lookup(600).has_value());       // above range
-    EXPECT_FALSE(r.lookup(0xffffffffull).has_value());  // way above
+TEST_F(QuantSidecarTest, StreamWriter_RepeatFinalizeIsNoOp) {
+    fs::path p = tmp_dir / "idempotent.stream";
+    quant_sidecar::SampleStreamWriter w(p, 1);
+    w.append(1, 1.0f);
+    w.finalize();
+    w.finalize();  // must not throw
+    w.finalize();
+    EXPECT_TRUE(fs::exists(p));
 }
 
-// ── for_each() ordering ─────────────────────────────────────────────
+// ── Merge + Reader round-trip ───────────────────────────────────────
 
-TEST_F(QuantSidecarTest, ForEachIteratesSorted) {
-    fs::path path = tmp_dir / "for_each.qtx";
-
-    {
-        quant_sidecar::Writer w(path, /*expr_type=*/3, /*grove_id=*/99);
-        // Shuffled insertion order
-        w.append(50,   5.0f);
-        w.append(10,   1.0f);
-        w.append(40,   4.0f);
-        w.append(20,   2.0f);
-        w.append(30,   3.0f);
-        w.finalize();
-    }
-
-    quant_sidecar::Reader r(path);
-
-    std::vector<std::pair<uint64_t, float>> seen;
-    r.for_each([&](uint64_t sid, float val) {
-        seen.emplace_back(sid, val);
+TEST_F(QuantSidecarTest, Merge_SingleSample) {
+    // Sample 7 has values at segments 1, 3, 5
+    fs::path out = merge_samples({
+        {7, {{5, 50.0f}, {1, 10.0f}, {3, 30.0f}}}  // insertion unsorted
     });
 
-    ASSERT_EQ(seen.size(), 5u);
-    // Strictly increasing by segment_index
-    for (size_t i = 1; i < seen.size(); ++i) {
-        EXPECT_LT(seen[i - 1].first, seen[i].first)
-            << "for_each yielded records out of order at index " << i;
-    }
-    EXPECT_EQ(seen[0].first, 10u);
-    EXPECT_FLOAT_EQ(seen[0].second, 1.0f);
-    EXPECT_EQ(seen[4].first, 50u);
-    EXPECT_FLOAT_EQ(seen[4].second, 5.0f);
+    quant_sidecar::Reader r(out);
+    EXPECT_EQ(r.version(), quant_sidecar::QTX_VERSION);
+    EXPECT_EQ(r.segment_block_count(), 3u);
+    ASSERT_EQ(r.samples().size(), 1u);
+    EXPECT_EQ(r.samples()[0].sample_id, 7u);
+    EXPECT_EQ(r.samples()[0].name, "sample_7");
+
+    // Each segment has exactly one (sample_id=7, value) record
+    auto r1 = r.lookup(1);
+    ASSERT_EQ(r1.size(), 1u);
+    EXPECT_EQ(r1[0].sample_id, 7u);
+    EXPECT_FLOAT_EQ(r1[0].value, 10.0f);
+
+    auto r3 = r.lookup(3);
+    ASSERT_EQ(r3.size(), 1u);
+    EXPECT_FLOAT_EQ(r3[0].value, 30.0f);
+
+    auto r5 = r.lookup(5);
+    ASSERT_EQ(r5.size(), 1u);
+    EXPECT_FLOAT_EQ(r5[0].value, 50.0f);
+
+    // Missing segment returns empty
+    EXPECT_TRUE(r.lookup(2).empty());
+    EXPECT_TRUE(r.lookup(99).empty());
 }
 
-// ── Atomicity: no lingering .tmp file after successful finalize ────
+TEST_F(QuantSidecarTest, Merge_MultipleSamplesSegmentMajor) {
+    // Three samples overlapping on segments 10 and 20
+    fs::path out = merge_samples({
+        {1, {{10, 1.0f}, {20, 2.0f}, {30, 3.0f}}},
+        {2, {{10, 11.0f}, {20, 22.0f}}},
+        {3, {{20, 222.0f}, {40, 444.0f}}},
+    });
 
-TEST_F(QuantSidecarTest, NoLeftoverTmpAfterFinalize) {
-    fs::path path = tmp_dir / "atomic.qtx";
+    quant_sidecar::Reader r(out);
+    ASSERT_EQ(r.samples().size(), 3u);
+    EXPECT_EQ(r.segment_block_count(), 4u);  // segments 10, 20, 30, 40
 
-    {
-        quant_sidecar::Writer w(path, 0, 0);
-        w.append(1, 1.0f);
-        w.finalize();
-    }
+    // Segment 10: samples 1 and 2
+    auto b10 = r.lookup(10);
+    ASSERT_EQ(b10.size(), 2u);
+    // Records within a block are sorted by sample_id
+    EXPECT_EQ(b10[0].sample_id, 1u);
+    EXPECT_FLOAT_EQ(b10[0].value, 1.0f);
+    EXPECT_EQ(b10[1].sample_id, 2u);
+    EXPECT_FLOAT_EQ(b10[1].value, 11.0f);
 
-    EXPECT_TRUE(fs::exists(path));
-    fs::path tmp_path = path;
-    tmp_path += ".tmp";
-    EXPECT_FALSE(fs::exists(tmp_path))
-        << "Writer left behind .tmp after atomic rename";
+    // Segment 20: all three samples
+    auto b20 = r.lookup(20);
+    ASSERT_EQ(b20.size(), 3u);
+    EXPECT_EQ(b20[0].sample_id, 1u);
+    EXPECT_FLOAT_EQ(b20[0].value, 2.0f);
+    EXPECT_EQ(b20[1].sample_id, 2u);
+    EXPECT_FLOAT_EQ(b20[1].value, 22.0f);
+    EXPECT_EQ(b20[2].sample_id, 3u);
+    EXPECT_FLOAT_EQ(b20[2].value, 222.0f);
+
+    // Segment 30: sample 1 only
+    auto b30 = r.lookup(30);
+    ASSERT_EQ(b30.size(), 1u);
+    EXPECT_EQ(b30[0].sample_id, 1u);
+    EXPECT_FLOAT_EQ(b30[0].value, 3.0f);
+
+    // Segment 40: sample 3 only
+    auto b40 = r.lookup(40);
+    ASSERT_EQ(b40.size(), 1u);
+    EXPECT_EQ(b40[0].sample_id, 3u);
+    EXPECT_FLOAT_EQ(b40[0].value, 444.0f);
 }
 
-// ── Destructor flushes when finalize not called explicitly ─────────
+TEST_F(QuantSidecarTest, LookupFiltered_IntersectsWithWantedSet) {
+    fs::path out = merge_samples({
+        {1, {{100, 1.0f}}},
+        {2, {{100, 2.0f}}},
+        {3, {{100, 3.0f}}},
+        {4, {{100, 4.0f}}},
+        {5, {{100, 5.0f}}},
+    });
 
-TEST_F(QuantSidecarTest, DestructorFinalizesIfForgotten) {
-    fs::path path = tmp_dir / "dtor.qtx";
+    quant_sidecar::Reader r(out);
 
-    {
-        quant_sidecar::Writer w(path, 0, 0);
-        w.append(1, 10.0f);
-        w.append(2, 20.0f);
-        // No explicit finalize() — destructor should handle it.
-    }
+    // Ask for samples {2, 4, 99}: only 2 and 4 hit; 99 isn't in the block
+    auto filtered = r.lookup_filtered(100, {2u, 4u, 99u});
+    ASSERT_EQ(filtered.size(), 2u);
+    EXPECT_FLOAT_EQ(filtered.at(2), 2.0f);
+    EXPECT_FLOAT_EQ(filtered.at(4), 4.0f);
+    EXPECT_EQ(filtered.count(99), 0u);
 
-    ASSERT_TRUE(fs::exists(path));
-    quant_sidecar::Reader r(path);
-    EXPECT_EQ(r.size(), 2u);
-    auto v1 = r.lookup(1);
-    auto v2 = r.lookup(2);
-    ASSERT_TRUE(v1.has_value());
-    ASSERT_TRUE(v2.has_value());
-    EXPECT_FLOAT_EQ(*v1, 10.0f);
-    EXPECT_FLOAT_EQ(*v2, 20.0f);
+    // Missing segment: empty map regardless of wanted list
+    auto none = r.lookup_filtered(999, {1u, 2u});
+    EXPECT_TRUE(none.empty());
 }
 
-// ── Idempotent finalize() ───────────────────────────────────────────
+TEST_F(QuantSidecarTest, ForEachSegment_IteratesInOrder) {
+    fs::path out = merge_samples({
+        {1, {{5, 5.0f}, {1, 1.0f}, {3, 3.0f}}},
+        {2, {{3, 33.0f}, {5, 55.0f}}},
+    });
 
-TEST_F(QuantSidecarTest, RepeatFinalizeIsNoOp) {
-    fs::path path = tmp_dir / "idempotent.qtx";
+    quant_sidecar::Reader r(out);
 
-    quant_sidecar::Writer w(path, 0, 0);
-    w.append(5, 5.5f);
-    w.finalize();
-    w.finalize();  // must not throw or corrupt
-    w.finalize();
+    std::vector<uint64_t> seen_segs;
+    r.for_each_segment([&](uint64_t seg, const auto& recs) {
+        seen_segs.push_back(seg);
+        // Records within block must be sorted by sample_id
+        for (size_t i = 1; i < recs.size(); ++i) {
+            EXPECT_LT(recs[i - 1].sample_id, recs[i].sample_id)
+                << "Block records not sorted by sample_id at segment " << seg;
+        }
+    });
 
-    quant_sidecar::Reader r(path);
-    EXPECT_EQ(r.size(), 1u);
+    ASSERT_EQ(seen_segs.size(), 3u);
+    EXPECT_EQ(seen_segs[0], 1u);
+    EXPECT_EQ(seen_segs[1], 3u);
+    EXPECT_EQ(seen_segs[2], 5u);
+}
+
+TEST_F(QuantSidecarTest, Merge_SampleMetadataRoundTrips) {
+    // Explicit metadata: mix of expr_type values and names
+    std::vector<fs::path> streams;
+    std::vector<quant_sidecar::SampleMetadata> metas;
+
+    streams.push_back(write_stream(100, {{1, 10.0f}}));
+    metas.push_back({100, /*expr_type=*/2, "TCGA-A01"});
+
+    streams.push_back(write_stream(200, {{1, 20.0f}}));
+    metas.push_back({200, /*expr_type=*/4, "ENCSR_042"});
+
+    fs::path out = tmp_dir / "meta.qtx";
+    quant_sidecar::merge_to_qtx(out, streams, metas);
+
+    quant_sidecar::Reader r(out);
+    ASSERT_EQ(r.samples().size(), 2u);
+
+    // Order in sample metadata should match the merge input order
+    EXPECT_EQ(r.samples()[0].sample_id, 100u);
+    EXPECT_EQ(r.samples()[0].expr_type, 2u);
+    EXPECT_EQ(r.samples()[0].name, "TCGA-A01");
+
+    EXPECT_EQ(r.samples()[1].sample_id, 200u);
+    EXPECT_EQ(r.samples()[1].expr_type, 4u);
+    EXPECT_EQ(r.samples()[1].name, "ENCSR_042");
+}
+
+TEST_F(QuantSidecarTest, Merge_EmptyStreamsProducesEmptyQtx) {
+    // All samples have zero records — valid edge case
+    fs::path s1 = write_stream(1, {});
+    fs::path s2 = write_stream(2, {});
+
+    std::vector<fs::path> streams{s1, s2};
+    std::vector<quant_sidecar::SampleMetadata> metas = {
+        {1, 0, "a"}, {2, 0, "b"}
+    };
+
+    fs::path out = tmp_dir / "empty.qtx";
+    quant_sidecar::merge_to_qtx(out, streams, metas);
+
+    quant_sidecar::Reader r(out);
+    EXPECT_EQ(r.segment_block_count(), 0u);
+    EXPECT_EQ(r.samples().size(), 2u);
+    EXPECT_TRUE(r.lookup(1).empty());
+}
+
+TEST_F(QuantSidecarTest, Merge_NoLeftoverTmpFile) {
+    fs::path out = merge_samples({{1, {{1, 1.0f}}}});
+    fs::path tmp_out = fs::path(out.string() + ".tmp");
+    EXPECT_TRUE(fs::exists(out));
+    EXPECT_FALSE(fs::exists(tmp_out))
+        << "merge_to_qtx left behind a .tmp file";
 }
 
 // ── Reader error handling ───────────────────────────────────────────
 
-// Note on the brace-init pattern below (`Reader{path}` instead of
-// `Reader(path)`): when `path` is a local identifier in scope, C++'s
-// most-vexing-parse rule interprets `quant_sidecar::Reader(path)` as
-// declaring a default-constructed Reader named `path`, which is a
-// compile error because Reader has no default constructor. Brace
-// initialization is unambiguous — it creates a temporary.
-TEST_F(QuantSidecarTest, ReaderRejectsMissingFile) {
+TEST_F(QuantSidecarTest, Reader_RejectsMissingFile) {
     EXPECT_THROW(
         quant_sidecar::Reader{tmp_dir / "does_not_exist.qtx"},
         std::runtime_error);
 }
 
-TEST_F(QuantSidecarTest, ReaderRejectsBadMagic) {
+TEST_F(QuantSidecarTest, Reader_RejectsBadMagic) {
     fs::path path = tmp_dir / "bad_magic.qtx";
-
-    // Write a 32-byte header with wrong magic.
     {
         std::ofstream out(path, std::ios::binary);
         quant_sidecar::Header hdr{};
         const char junk[4] = {'N', 'O', 'P', 'E'};
         std::memcpy(hdr.magic, junk, 4);
         hdr.version = quant_sidecar::QTX_VERSION;
-        hdr.count = 0;
         out.write(reinterpret_cast<const char*>(&hdr), sizeof(hdr));
     }
-
     EXPECT_THROW(quant_sidecar::Reader{path}, std::runtime_error);
 }
 
-TEST_F(QuantSidecarTest, ReaderRejectsFutureVersion) {
+TEST_F(QuantSidecarTest, Reader_RejectsFutureVersion) {
     fs::path path = tmp_dir / "bad_version.qtx";
-
     {
         std::ofstream out(path, std::ios::binary);
         quant_sidecar::Header hdr{};
         std::memcpy(hdr.magic, quant_sidecar::MAGIC, sizeof(quant_sidecar::MAGIC));
-        hdr.version = quant_sidecar::QTX_VERSION + 99;  // far future
-        hdr.count = 0;
+        hdr.version = quant_sidecar::QTX_VERSION + 99;
         out.write(reinterpret_cast<const char*>(&hdr), sizeof(hdr));
     }
-
     EXPECT_THROW(quant_sidecar::Reader{path}, std::runtime_error);
-}
-
-TEST_F(QuantSidecarTest, ReaderRejectsTruncatedRecords) {
-    fs::path path = tmp_dir / "truncated.qtx";
-
-    // Header claims 5 records, but only write 2 records' worth of bytes.
-    {
-        std::ofstream out(path, std::ios::binary);
-        quant_sidecar::Header hdr{};
-        std::memcpy(hdr.magic, quant_sidecar::MAGIC, sizeof(quant_sidecar::MAGIC));
-        hdr.version = quant_sidecar::QTX_VERSION;
-        hdr.count = 5;
-        out.write(reinterpret_cast<const char*>(&hdr), sizeof(hdr));
-
-        quant_sidecar::Record recs[2] = {
-            {1, 1.0f},
-            {2, 2.0f},
-        };
-        out.write(reinterpret_cast<const char*>(recs), sizeof(recs));
-    }
-
-    EXPECT_THROW(quant_sidecar::Reader{path}, std::runtime_error);
-}
-
-// ── Stable sort: insertion order preserved on duplicate keys ────────
-//
-// Not an invariant the build path relies on (duplicates shouldn't
-// reach the Writer), but since we explicitly use stable_sort, we want
-// a regression test to catch any accidental switch back to std::sort.
-
-TEST_F(QuantSidecarTest, StableSortPreservesInsertionOrderOnDupKeys) {
-    fs::path path = tmp_dir / "stable.qtx";
-
-    {
-        quant_sidecar::Writer w(path, 0, 0);
-        w.append(5, 1.0f);   // first-inserted for key 5
-        w.append(3, 10.0f);
-        w.append(5, 2.0f);   // second-inserted for key 5
-        w.append(1, 100.0f);
-        w.append(5, 3.0f);   // third-inserted for key 5
-        w.finalize();
-    }
-
-    quant_sidecar::Reader r(path);
-    ASSERT_EQ(r.size(), 5u);
-    auto& recs = r.records();
-
-    // Sorted by key, ties resolved by insertion order.
-    EXPECT_EQ(recs[0].segment_index, 1u);
-    EXPECT_EQ(recs[1].segment_index, 3u);
-    EXPECT_EQ(recs[2].segment_index, 5u);
-    EXPECT_FLOAT_EQ(recs[2].value, 1.0f);
-    EXPECT_EQ(recs[3].segment_index, 5u);
-    EXPECT_FLOAT_EQ(recs[3].value, 2.0f);
-    EXPECT_EQ(recs[4].segment_index, 5u);
-    EXPECT_FLOAT_EQ(recs[4].value, 3.0f);
 }

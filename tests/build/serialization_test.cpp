@@ -149,7 +149,6 @@ protected:
         size_t total_edges = 0;
         std::set<std::string> gene_ids;
         std::set<uint32_t> transcript_ids;
-        std::map<std::string, float> segment_expressions;  // coordinate -> expression
     };
 
     feature_snapshot capture_grove(grove_type& grove) {
@@ -177,12 +176,6 @@ protected:
                         snap.gene_ids.insert(id);
                         for (auto tx : seg.transcript_ids) {
                             snap.transcript_ids.insert(tx);
-                        }
-                        // Capture expression for sample_id=1
-                        float expr = seg.get_expression(1);
-                        if (expr >= 0) {
-                            auto coord = format_coordinate(seqid, key->get_value());
-                            snap.segment_expressions[coord] = expr;
                         }
                     }
                 }
@@ -273,36 +266,6 @@ TEST_F(SerializationTest, GroveRoundtrip) {
     EXPECT_EQ(before.total_edges, after.total_edges);
     EXPECT_EQ(before.gene_ids, after.gene_ids);
     EXPECT_EQ(before.transcript_ids, after.transcript_ids);
-}
-
-// ─── Expression preservation ───────────────────────────────────────
-
-TEST_F(SerializationTest, ExpressionRoundtrip) {
-    build_grove();
-    auto before = capture_grove(*grove_);
-
-    // sample.gtf has counts on TX_S1 (150) and TX_S2 (75)
-    ASSERT_GT(before.segment_expressions.size(), 0)
-        << "Expected expression data from sample.gtf";
-
-    save_grove(temp_path_);
-
-    transcript_registry::reset();
-    gene_registry::reset();
-    source_registry::reset();
-    sample_registry::reset();
-
-    auto loaded = load_grove(temp_path_);
-    auto after = capture_grove(*loaded);
-
-    ASSERT_EQ(before.segment_expressions.size(), after.segment_expressions.size());
-    for (auto& [coord, expr] : before.segment_expressions) {
-        auto it = after.segment_expressions.find(coord);
-        ASSERT_NE(it, after.segment_expressions.end())
-            << "Missing expression for " << coord;
-        EXPECT_FLOAT_EQ(expr, it->second)
-            << "Expression mismatch at " << coord;
-    }
 }
 
 // ─── Spatial query works after roundtrip ───────────────────────────

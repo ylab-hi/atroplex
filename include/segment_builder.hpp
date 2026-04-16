@@ -20,6 +20,7 @@
 
 #include "build_summary.hpp"
 #include "genomic_feature.hpp"
+#include "quant_sidecar.hpp"
 #include "sample_info.hpp"
 
 /// Classification of how a subsequence aligns within a parent exon chain.
@@ -82,7 +83,8 @@ public:
         const std::string& transcript_biotype,
         bool absorb,
         size_t fuzzy_tolerance,
-        build_counters& counters
+        build_counters& counters,
+        quant_sidecar::SampleStreamWriter* sidecar_writer = nullptr
     );
 
     /**

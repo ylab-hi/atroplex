@@ -41,8 +41,6 @@ struct gtf_transcript {
     std::string transcript_id;
     std::string transcript_biotype;
     int exon_count;
-    float expression_value = -1.0f;
-    std::string expression_label;  // "counts", "TPM", etc.
 };
 
 struct gtf_exon {
