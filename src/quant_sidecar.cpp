@@ -129,9 +129,9 @@ private:
  * (segment_index, sample_id) order. The header is patched at close()
  * with the final record count.
  */
-class StreamWriterOut {
+class BatchWriter {
 public:
-    StreamWriterOut(std::filesystem::path path, uint32_t header_sample_id)
+    BatchWriter(std::filesystem::path path, uint32_t header_sample_id)
         : path_(std::move(path)), header_sample_id_(header_sample_id) {
         out_.open(path_, std::ios::binary | std::ios::trunc);
         if (!out_) {
@@ -186,7 +186,7 @@ public:
 
     const std::filesystem::path& path() const { return path_; }
 
-    ~StreamWriterOut() {
+    ~BatchWriter() {
         try {
             close();
         } catch (...) {
@@ -257,7 +257,7 @@ void merge_batch_to_stream(const std::vector<std::filesystem::path>& inputs,
     }
 
     // header_sample_id = 0 for intermediates (mixed sample_ids).
-    StreamWriterOut out(output_path, /*header_sample_id=*/0);
+    BatchWriter out(output_path, /*header_sample_id=*/0);
     while (!heap.empty()) {
         HeapNode node = heap.top();
         heap.pop();
@@ -315,7 +315,8 @@ uint64_t write_sample_metadata(std::ofstream& out,
 std::vector<TOCEntry> run_final_merge(
     std::ofstream& out,
     const std::filesystem::path& path,
-    std::vector<std::unique_ptr<StreamReader>>& readers) {
+    std::vector<std::unique_ptr<StreamReader>>& readers,
+    const std::unordered_set<uint64_t>& excluded_segments) {
     std::priority_queue<HeapNode, std::vector<HeapNode>,
                         std::greater<HeapNode>> heap;
     for (size_t i = 0; i < readers.size(); ++i) {
@@ -361,6 +362,19 @@ std::vector<TOCEntry> run_final_merge(
         HeapNode node = heap.top();
         heap.pop();
 
+        // Advance the stream this node came from immediately so the
+        // heap always has the next record queued — this lets the skip
+        // branch below `continue` without stalling the merge.
+        push_from_reader(heap, *readers[node.stream_index], node.stream_index);
+
+        // Skip records for excluded segments (e.g., tombstoned by
+        // reverse absorption). We still advanced the reader above so
+        // the merge progresses normally.
+        if (!excluded_segments.empty() &&
+            excluded_segments.count(node.segment_index) > 0) {
+            continue;
+        }
+
         if (!have_current) {
             current_seg  = node.segment_index;
             have_current = true;
@@ -369,8 +383,6 @@ std::vector<TOCEntry> run_final_merge(
             current_seg = node.segment_index;
         }
         block_records.emplace_back(node.sample_id, node.value);
-
-        push_from_reader(heap, *readers[node.stream_index], node.stream_index);
     }
     if (have_current) {
         flush_block(current_seg);
@@ -467,7 +479,8 @@ void merge_to_qtx(
     const std::filesystem::path& output_path,
     const std::vector<std::filesystem::path>& streams,
     const std::vector<SampleMetadata>& samples,
-    size_t max_fds_per_pass) {
+    size_t max_fds_per_pass,
+    const std::unordered_set<uint64_t>& excluded_segments) {
     if (streams.size() != samples.size()) {
         throw std::runtime_error(
             "quant_sidecar::merge_to_qtx: streams.size() (" +
@@ -561,7 +574,7 @@ void merge_to_qtx(
     //    file and concatenating at the end.
 
     const std::vector<TOCEntry> toc =
-        run_final_merge(out, tmp_path, readers);
+        run_final_merge(out, tmp_path, readers, excluded_segments);
 
     // ── Step 6: write the TOC at the current offset.
 

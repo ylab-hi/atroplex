@@ -13,6 +13,7 @@
 
 // standard
 #include <string>
+#include <unordered_set>
 #include <vector>
 #include <cstdint>
 
@@ -107,11 +108,17 @@ private:
     /// is O(E) per call), which can block for minutes to hours on
     /// realistic indices. Default `false` — tombstones stay in the tree
     /// and every consumer already filters them defensively.
+    ///
+    /// When `out_tombstoned_segment_indices` is non-null, the set of
+    /// segment_index values for tombstoned segments is written there
+    /// (used by the sidecar merge to exclude their records from the
+    /// final .qtx).
     static size_t remove_tombstones(
         grove_type& grove,
         chromosome_segment_caches& segment_caches,
         chromosome_gene_segment_indices& gene_indices,
-        bool physical
+        bool physical,
+        std::unordered_set<uint64_t>* out_tombstoned_segment_indices = nullptr
     );
 };
 

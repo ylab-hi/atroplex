@@ -18,6 +18,7 @@
 #include <filesystem>
 #include <fstream>
 #include <string>
+#include <unordered_set>
 #include <vector>
 
 #include "quant_sidecar.hpp"
@@ -279,6 +280,62 @@ TEST_F(QuantSidecarTest, Merge_EmptyStreamsProducesEmptyQtx) {
     EXPECT_EQ(r.segment_block_count(), 0u);
     EXPECT_EQ(r.samples().size(), 2u);
     EXPECT_TRUE(r.lookup(1).empty());
+}
+
+TEST_F(QuantSidecarTest, Merge_ExcludesTombstonedSegments) {
+    // Two samples carry records at segments 1, 2, 3, 4, 5. Passing
+    // {2, 4} as the exclusion set (simulating tombstoned segments from
+    // reverse absorption) must keep only 1, 3, 5 in the final .qtx.
+    fs::path s1 = write_stream(1, {
+        {1, 10.0f}, {2, 20.0f}, {3, 30.0f}, {4, 40.0f}, {5, 50.0f}});
+    fs::path s2 = write_stream(2, {
+        {1, 11.0f}, {2, 22.0f}, {3, 33.0f}, {4, 44.0f}, {5, 55.0f}});
+
+    std::vector<fs::path> streams{s1, s2};
+    std::vector<quant_sidecar::SampleMetadata> metas = {
+        {1, 0, "sample_1"}, {2, 0, "sample_2"}
+    };
+
+    fs::path out = tmp_dir / "excluded.qtx";
+    std::unordered_set<uint64_t> excluded = {2u, 4u};
+    quant_sidecar::merge_to_qtx(out, streams, metas,
+                                /*max_fds_per_pass=*/256, excluded);
+
+    quant_sidecar::Reader r(out);
+    // Three surviving segments: 1, 3, 5.
+    EXPECT_EQ(r.segment_block_count(), 3u);
+
+    // Surviving blocks each carry both samples.
+    auto b1 = r.lookup(1);
+    ASSERT_EQ(b1.size(), 2u);
+    EXPECT_EQ(b1[0].sample_id, 1u);
+    EXPECT_FLOAT_EQ(b1[0].value, 10.0f);
+    EXPECT_EQ(b1[1].sample_id, 2u);
+    EXPECT_FLOAT_EQ(b1[1].value, 11.0f);
+
+    auto b3 = r.lookup(3);
+    ASSERT_EQ(b3.size(), 2u);
+    EXPECT_FLOAT_EQ(b3[0].value, 30.0f);
+    EXPECT_FLOAT_EQ(b3[1].value, 33.0f);
+
+    auto b5 = r.lookup(5);
+    ASSERT_EQ(b5.size(), 2u);
+    EXPECT_FLOAT_EQ(b5[0].value, 50.0f);
+    EXPECT_FLOAT_EQ(b5[1].value, 55.0f);
+
+    // Excluded segments are absent — lookups return empty.
+    EXPECT_TRUE(r.lookup(2).empty());
+    EXPECT_TRUE(r.lookup(4).empty());
+
+    // for_each_segment iterates only surviving blocks in order.
+    std::vector<uint64_t> seen;
+    r.for_each_segment([&](uint64_t seg, const auto&) {
+        seen.push_back(seg);
+    });
+    ASSERT_EQ(seen.size(), 3u);
+    EXPECT_EQ(seen[0], 1u);
+    EXPECT_EQ(seen[1], 3u);
+    EXPECT_EQ(seen[2], 5u);
 }
 
 TEST_F(QuantSidecarTest, Merge_NoLeftoverTmpFile) {

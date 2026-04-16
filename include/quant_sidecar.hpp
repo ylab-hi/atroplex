@@ -21,6 +21,7 @@
 #include <optional>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 /**
@@ -238,12 +239,19 @@ private:
  * @param samples           sample metadata matching the streams (same length,
  *                          same order)
  * @param max_fds_per_pass  max simultaneous open streams (default 256)
+ * @param excluded_segments Optional set of segment_index values whose
+ *                          records should be omitted from the output.
+ *                          Used by callers that know about tombstoned
+ *                          segments so they don't end up as dead
+ *                          records in the final file. Empty set means
+ *                          include all records.
  */
 void merge_to_qtx(
     const std::filesystem::path& output_path,
     const std::vector<std::filesystem::path>& streams,
     const std::vector<SampleMetadata>& samples,
-    size_t max_fds_per_pass = 256);
+    size_t max_fds_per_pass = 256,
+    const std::unordered_set<uint64_t>& excluded_segments = {});
 
 // ── Reader ────────────────────────────────────────────────────────────
 

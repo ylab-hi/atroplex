@@ -226,8 +226,12 @@ build_summary builder::build_from_samples(grove_type& grove,
     }
 
     // --- Count (and optionally physically remove) absorbed segments ---
+    // Collect the tombstoned segment_index values so the sidecar merge
+    // below can skip emitting dead records for them in the final .qtx.
+    std::unordered_set<uint64_t> tombstoned_seg_indices;
     counters.absorbed_segments = remove_tombstones(
-        grove, segment_caches, gene_indices, prune_tombstones);
+        grove, segment_caches, gene_indices, prune_tombstones,
+        &tombstoned_seg_indices);
 
     // Live segments = total minus tombstones that were reverse-absorbed.
     size_t live_segments = (segment_count >= counters.absorbed_segments)
@@ -299,7 +303,9 @@ build_summary builder::build_from_samples(grove_type& grove,
             quant_sidecar::merge_to_qtx(
                 qtx_output_path,
                 sidecar_stream_paths,
-                sidecar_sample_meta);
+                sidecar_sample_meta,
+                /*max_fds_per_pass=*/256,
+                tombstoned_seg_indices);
             logging::info("Merged " + std::to_string(sidecar_stream_paths.size()) +
                 " per-sample quantification streams into " +
                 qtx_output_path.string());
@@ -347,6 +353,18 @@ size_t builder::merge_replicates(
     chromosome_segment_caches& segment_caches,
     int min_replicates
 ) {
+    // NOTE on interaction with the quantification sidecar (.qtx):
+    // Replicate merging ORs the per-replicate sample_idx bits into the
+    // group's merged sample_id on each feature. The sidecar, however, was
+    // written out during the per-sample build phase and only contains
+    // records keyed by the ORIGINAL per-replicate sample_ids — the merged
+    // group_id is a "phantom" in the sidecar. At query time, code that
+    // wants quantitative aggregation across a replicate group has to
+    // either (a) expand the group's sample_id back to the constituent
+    // replicate IDs via sample_registry::group lookup and union their
+    // sidecar records, or (b) report per-replicate without collapsing.
+    // The current 3a PR defers this decision to the follow-up PR that
+    // wires quant_sidecar::Reader into query/analyze.
     auto& registry = sample_registry::instance();
 
     // Step 1: Build group -> replicate ID mapping
@@ -453,7 +471,8 @@ size_t builder::remove_tombstones(
     grove_type& grove,
     chromosome_segment_caches& segment_caches,
     chromosome_gene_segment_indices& gene_indices,
-    bool physical
+    bool physical,
+    std::unordered_set<uint64_t>* out_tombstoned_segment_indices
 ) {
     // Phase 1 (always): walk gene_indices, count tombstones, and (when
     // physical == true) issue grove.remove_key calls while we have the
@@ -480,6 +499,10 @@ size_t builder::remove_tombstones(
                 if (!seg.absorbed) continue;
 
                 ++removed;
+                if (out_tombstoned_segment_indices) {
+                    out_tombstoned_segment_indices->insert(
+                        static_cast<uint64_t>(seg.segment_index));
+                }
                 if (physical) {
                     tombstone_ids.insert(seg.segment_index);
                     grove.remove_key(seqid, entry.segment);
