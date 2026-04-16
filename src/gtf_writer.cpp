@@ -10,9 +10,6 @@
 
 #include "gtf_writer.hpp"
 
-#include <iomanip>
-#include <sstream>
-
 namespace gtf_writer {
 
 static void write_attributes(std::ostream& os,
@@ -81,12 +78,6 @@ void write_transcript(std::ostream& os, const gtf_transcript& t) {
     attrs.emplace_back("transcript_id", t.transcript_id);
     if (!t.transcript_biotype.empty())
         attrs.emplace_back("transcript_type", t.transcript_biotype);
-
-    if (t.expression_value >= 0 && !t.expression_label.empty()) {
-        std::ostringstream val;
-        val << std::setprecision(6) << t.expression_value;
-        attrs.emplace_back(t.expression_label, val.str());
-    }
 
     write_attributes(os, attrs);
     os << '\n';

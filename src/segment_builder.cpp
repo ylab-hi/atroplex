@@ -64,7 +64,8 @@ void segment_builder::create_segment(
     const std::string& transcript_biotype,
     bool absorb,
     size_t fuzzy_tolerance,
-    build_counters& counters
+    build_counters& counters,
+    quant_sidecar::SampleStreamWriter* sidecar_writer
 ) {
     std::string structure_key = make_exon_structure_key(seqid, exon_coords);
 
@@ -204,9 +205,6 @@ void segment_builder::create_segment(
 
     if (sample_id.has_value()) {
         new_segment.add_sample(*sample_id);
-        if (expression_value >= 0.0f) {
-            new_segment.set_expression(*sample_id, expression_value);
-        }
     }
     if (!gff_source.empty()) {
         new_segment.add_source(gff_source);
@@ -227,6 +225,12 @@ void segment_builder::create_segment(
         }
     }
     segment_count++;
+
+    // Write expression value to sidecar (if writer armed and value present).
+    // segment_index = segment_count - 1 (just assigned above).
+    if (sidecar_writer && expression_value >= 0.0f) {
+        sidecar_writer->append(segment_count - 1, expression_value);
+    }
 
     segment_cache[structure_key] = seg_key;
 
@@ -331,9 +335,6 @@ void segment_builder::merge_into_segment(
     }
     if (sample_id.has_value()) {
         seg.add_sample(*sample_id);
-        if (expression_value >= 0.0f) {
-            seg.expression.accumulate(*sample_id, expression_value);
-        }
     }
     if (!gff_source.empty()) {
         seg.add_source(gff_source);
@@ -360,7 +361,6 @@ void segment_builder::try_reverse_absorption(
         for (const auto& [tx, bt] : candidate_seg.transcript_biotypes)
             parent_seg.transcript_biotypes[tx] = bt;
         parent_seg.sample_idx.merge(candidate_seg.sample_idx);
-        parent_seg.expression.merge(candidate_seg.expression);
         parent_seg.merge_sources(candidate_seg.sources);
         parent_seg.absorbed_count += candidate_seg.absorbed_count + 1;
         candidate_seg.absorbed = true;

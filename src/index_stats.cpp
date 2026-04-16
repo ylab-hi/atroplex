@@ -26,17 +26,6 @@
 
 namespace {
 
-std::string expr_type_label(sample_info::expression_type t) {
-    switch (t) {
-        case sample_info::expression_type::COUNTS: return "counts";
-        case sample_info::expression_type::TPM:    return "TPM";
-        case sample_info::expression_type::FPKM:   return "FPKM";
-        case sample_info::expression_type::RPKM:   return "RPKM";
-        case sample_info::expression_type::CPM:    return "CPM";
-        default:                                   return "expression";
-    }
-}
-
 double compute_median(std::vector<size_t>& values) {
     if (values.empty()) return 0;
     size_t n = values.size();
@@ -264,8 +253,6 @@ index_stats index_stats::collect(grove_type& grove, const collect_options& opts)
     std::unique_ptr<std::ofstream> branch_stream;
     std::vector<uint32_t> stream_sample_ids;
     std::vector<std::string> stream_labels;
-    std::vector<bool> stream_is_sample;
-    std::vector<std::string> stream_expr_labels;
 
     if (streaming) {
         // Prepare sample ID ordering for streaming output
@@ -275,9 +262,6 @@ index_stats index_stats::collect(grove_type& grove, const collect_options& opts)
         for (uint32_t sid : stream_sample_ids) {
             const auto& info = registry.get(sid);
             stream_labels.push_back((!info.id.empty()) ? info.id : std::to_string(sid));
-            bool is_samp = info.type == "sample";
-            stream_is_sample.push_back(is_samp);
-            stream_expr_labels.push_back(is_samp ? expr_type_label(info.expr_type) : "");
         }
 
         auto hubs_dir = std::filesystem::path(opts.output_dir) / "splicing_hubs";
@@ -287,15 +271,11 @@ index_stats index_stats::collect(grove_type& grove, const collect_options& opts)
 
         if (branch_stream->is_open()) {
             *branch_stream << "# Branch details: one row per (hub exon x downstream target) pair\n"
-                           << "# Per-entry columns: .fraction = target_transcripts / hub_transcripts;"
-                           << " .{expr_type} = expression at target (samples only)\n";
+                           << "# Per-entry columns: .fraction = target_transcripts / hub_transcripts\n";
             *branch_stream << "hub_gene_name\thub_gene_id\thub_exon_id\thub_coordinate"
                            << "\ttarget_exon_id\ttarget_coordinate";
             for (size_t i = 0; i < stream_sample_ids.size(); ++i) {
                 *branch_stream << "\t" << stream_labels[i] << ".fraction";
-                if (stream_is_sample[i]) {
-                    *branch_stream << "\t" << stream_labels[i] << "." << stream_expr_labels[i];
-                }
             }
             *branch_stream << "\n";
             *branch_stream << std::fixed;
@@ -402,13 +382,9 @@ index_stats index_stats::collect(grove_type& grove, const collect_options& opts)
                                         }
                                     }
 
-                                    bt.sample_expression = te.expression.to_map();
                                     info.targets.push_back(std::move(bt));
                                 }
                             }
-
-                            // Hub exon expression
-                            info.sample_expression = exon.expression.to_map();
 
                             // Classify branches as shared/unique per sample
                             for (uint32_t sid : exon.sample_idx) {
@@ -493,7 +469,6 @@ index_stats index_stats::collect(grove_type& grove, const collect_options& opts)
                                         uint32_t sid = stream_sample_ids[si];
                                         if (!target.sample_idx.test(sid)) {
                                             *branch_stream << "\t.";
-                                            if (stream_is_sample[si]) *branch_stream << "\t.";
                                         } else {
                                             auto bt_tx_it = target.sample_transcripts.find(sid);
                                             auto hub_tx_it = info.sample_transcripts.find(sid);
@@ -505,14 +480,6 @@ index_stats index_stats::collect(grove_type& grove, const collect_options& opts)
                                                 *branch_stream << "\t" << std::setprecision(3) << frac;
                                             } else {
                                                 *branch_stream << "\t0";
-                                            }
-                                            if (stream_is_sample[si]) {
-                                                auto expr_it = target.sample_expression.find(sid);
-                                                if (expr_it != target.sample_expression.end()) {
-                                                    *branch_stream << "\t" << std::setprecision(2) << expr_it->second;
-                                                } else {
-                                                    *branch_stream << "\t.";
-                                                }
                                             }
                                         }
                                     }
@@ -679,14 +646,10 @@ index_stats index_stats::collect(grove_type& grove, const collect_options& opts)
             *conserved_stream << "# Conserved exons: exons present in ALL samples\n"
                               << "# n_transcripts = total transcripts using this exon; "
                               << "constitutive = 1 if present in all transcripts of its gene\n"
-                              << "# Per-entry: .transcripts = transcript count; "
-                              << ".{expr_type} = expression (samples only)\n";
+                              << "# Per-entry: .transcripts = transcript count\n";
             *conserved_stream << "exon_id\tgene_name\tgene_id\tchromosome\tcoordinate\tn_transcripts\tconstitutive";
             for (size_t i = 0; i < stream_sample_ids.size(); ++i) {
                 *conserved_stream << "\t" << stream_labels[i] << ".transcripts";
-                if (stream_is_sample[i]) {
-                    *conserved_stream << "\t" << stream_labels[i] << "." << stream_expr_labels[i];
-                }
             }
             *conserved_stream << "\n";
             *conserved_stream << std::fixed;
@@ -784,13 +747,6 @@ index_stats index_stats::collect(grove_type& grove, const collect_options& opts)
                             uint32_t sid = stream_sample_ids[si];
                             auto tx_it = entry_sample_tx.find(sid);
                             *conserved_stream << "\t" << (tx_it != entry_sample_tx.end() ? tx_it->second : size_t{0});
-                            if (stream_is_sample[si]) {
-                                if (exon.has_expression(sid)) {
-                                    *conserved_stream << "\t" << std::setprecision(2) << exon.get_expression(sid);
-                                } else {
-                                    *conserved_stream << "\t.";
-                                }
-                            }
                         }
                         *conserved_stream << "\n";
                     } else {
@@ -804,7 +760,6 @@ index_stats index_stats::collect(grove_type& grove, const collect_options& opts)
                         entry.n_transcripts = tx_count;
                         entry.constitutive = constitutive;
                         entry.sample_transcripts = std::move(entry_sample_tx);
-                        entry.sample_expression = exon.expression.to_map();
                         stats.conserved_exon_details.push_back(std::move(entry));
                     }
                 }
@@ -1068,11 +1023,6 @@ index_stats index_stats::collect(grove_type& grove, const collect_options& opts)
             for (const auto& tx : seg.transcript_ids) {
                 sample_transcript_ids[sid].insert(tx);
             }
-
-            if (seg.has_expression(sid)) {
-                ss.mean_expression += seg.get_expression(sid);
-                ss.expressed_segments++;
-            }
         }
 
         // Per-source segment stats
@@ -1092,9 +1042,6 @@ index_stats index_stats::collect(grove_type& grove, const collect_options& opts)
         if (ss.transcripts > 0) {
             ss.deduplication_ratio =
                 static_cast<double>(ss.segments) / static_cast<double>(ss.transcripts);
-        }
-        if (ss.expressed_segments > 0) {
-            ss.mean_expression /= static_cast<double>(ss.expressed_segments);
         }
         // Per-sample gene biotype counts
         for (const auto& gene_id : sample_gene_ids[sid]) {
@@ -1347,9 +1294,7 @@ void index_stats::write(const std::string& path) const {
             << std::setw(10) << "Tx"
             << std::setw(10) << "Entropy"
             << std::setw(10) << "Eff.Iso"
-            << std::setw(10) << "Dedup"
-            << std::setw(12) << "Expr.Segs"
-            << std::setw(12) << "Mean.Expr" << "\n";
+            << std::setw(10) << "Dedup" << "\n";
 
         for (uint32_t sid : sorted_ids) {
             const auto& ss = per_sample.at(sid);
@@ -1369,12 +1314,6 @@ void index_stats::write(const std::string& path) const {
                 << std::setw(10) << std::setprecision(2) << ss.gene_exon_entropy
                 << std::setw(10) << std::setprecision(2) << ss.effective_isoforms
                 << std::setw(10) << std::setprecision(3) << ss.deduplication_ratio;
-
-            if (ss.expressed_segments > 0) {
-                out << std::setw(12) << std::setprecision(2) << ss.mean_expression;
-            } else {
-                out << std::setw(12) << ".";
-            }
             out << "\n";
         }
     }
@@ -1654,7 +1593,6 @@ void index_stats::write_sample_csv(const std::string& path) const {
     write_stat_row("exclusive_exons", [](const sample_stats& s) { return s.exclusive_exons; });
     write_stat_row("genes", [](const sample_stats& s) { return s.genes; });
     write_stat_row("transcripts", [](const sample_stats& s) { return s.transcripts; });
-    write_stat_row("expressed_segments", [](const sample_stats& s) { return s.expressed_segments; });
 
     // Float metrics (need special handling)
     auto write_float_row = [&](const std::string& label, auto getter, int precision) {
@@ -1678,9 +1616,6 @@ void index_stats::write_sample_csv(const std::string& path) const {
     write_float_row("gene_exon_entropy", [](const sample_stats& s) { return s.gene_exon_entropy; }, 3);
     write_float_row("effective_isoforms", [](const sample_stats& s) { return s.effective_isoforms; }, 3);
     write_float_row("deduplication_ratio", [](const sample_stats& s) { return s.deduplication_ratio; }, 3);
-    write_float_row("mean_expression", [](const sample_stats& s) -> double {
-        return s.expressed_segments > 0 ? s.mean_expression : 0;
-    }, 2);
 
     logging::info("Per-sample CSV statistics written to: " + path);
 }
@@ -1750,16 +1685,11 @@ void index_stats::write_splicing_hubs_tsv(const std::string& path) const {
     }
     std::sort(sample_ids.begin(), sample_ids.end());
 
-    // Determine which entries are samples (for expression columns)
-    std::vector<bool> is_sample_type;
+    // Resolve sample labels
     std::vector<std::string> labels;
-    std::vector<std::string> expr_labels;
     for (uint32_t sid : sample_ids) {
         const auto& info = registry.get(sid);
         labels.push_back((!info.id.empty()) ? info.id : std::to_string(sid));
-        bool is_sample = info.type == "sample";
-        is_sample_type.push_back(is_sample);
-        expr_labels.push_back(is_sample ? expr_type_label(info.expr_type) : "");
     }
 
     // Comment header describing column semantics
@@ -1777,8 +1707,7 @@ void index_stats::write_splicing_hubs_tsv(const std::string& path) const {
         << "#   .unique      — targets found only in this sample (sample-specific splicing)\n"
         << "#   .transcripts — transcripts in this sample that traverse this hub exon\n"
         << "#   .entropy     — Shannon entropy of branch usage: H = -sum(p_i * log2(p_i)), higher = more uniform\n"
-        << "#   .psi         — Percent Spliced In: hub_transcripts / gene_transcripts (hub inclusion ratio)\n"
-        << "#   .{expr_type} — expression value at hub exon (samples only; omitted for annotations)\n";
+        << "#   .psi         — Percent Spliced In: hub_transcripts / gene_transcripts (hub inclusion ratio)\n";
 
     // Header row
     out << "gene_name\tgene_id\texon_id\tcoordinate\tevent_type\texon_number\ttotal_exons\ttotal_branches\ttotal_transcripts";
@@ -1789,9 +1718,6 @@ void index_stats::write_splicing_hubs_tsv(const std::string& path) const {
             << "\t" << labels[i] << ".transcripts"
             << "\t" << labels[i] << ".entropy"
             << "\t" << labels[i] << ".psi";
-        if (is_sample_type[i]) {
-            out << "\t" << labels[i] << "." << expr_labels[i];
-        }
     }
     out << "\n";
 
@@ -1812,7 +1738,6 @@ void index_stats::write_splicing_hubs_tsv(const std::string& path) const {
             uint32_t sid = sample_ids[i];
             if (!hub.sample_idx.test(sid)) {
                 out << "\t.\t.\t.\t.\t.\t.";
-                if (is_sample_type[i]) out << "\t.";
             } else {
                 auto br_it = hub.sample_branches.find(sid);
                 auto sh_it = hub.sample_shared.find(sid);
@@ -1836,14 +1761,6 @@ void index_stats::write_splicing_hubs_tsv(const std::string& path) const {
                     out << std::setprecision(3) << psi_it->second;
                 } else {
                     out << ".";
-                }
-                if (is_sample_type[i]) {
-                    auto expr_it = hub.sample_expression.find(sid);
-                    if (expr_it != hub.sample_expression.end()) {
-                        out << "\t" << std::setprecision(2) << expr_it->second;
-                    } else {
-                        out << "\t.";
-                    }
                 }
             }
         }
@@ -1876,16 +1793,11 @@ void index_stats::write_branch_details_tsv(const std::string& path) const {
     }
     std::sort(sample_ids.begin(), sample_ids.end());
 
-    // Determine which entries are samples (for expression columns)
-    std::vector<bool> is_sample_type;
+    // Resolve sample labels
     std::vector<std::string> labels;
-    std::vector<std::string> expr_labels;
     for (uint32_t sid : sample_ids) {
         const auto& info = registry.get(sid);
         labels.push_back((!info.id.empty()) ? info.id : std::to_string(sid));
-        bool is_sample = info.type == "sample";
-        is_sample_type.push_back(is_sample);
-        expr_labels.push_back(is_sample ? expr_type_label(info.expr_type) : "");
     }
 
     // Comment header describing column semantics
@@ -1895,17 +1807,13 @@ void index_stats::write_branch_details_tsv(const std::string& path) const {
         << "#   hub_exon_id, hub_coordinate — hub exon identity and genomic position\n"
         << "#   target_exon_id, target_coordinate — downstream target exon identity and position\n"
         << "# Per-entry columns ({label}.X):\n"
-        << "#   .fraction    — branch usage: target_transcripts / hub_transcripts (0-1 scale)\n"
-        << "#   .{expr_type} — expression value at target exon (samples only; omitted for annotations)\n";
+        << "#   .fraction    — branch usage: target_transcripts / hub_transcripts (0-1 scale)\n";
 
     // Header row
     out << "hub_gene_name\thub_gene_id\thub_exon_id\thub_coordinate"
         << "\ttarget_exon_id\ttarget_coordinate";
     for (size_t i = 0; i < sample_ids.size(); ++i) {
         out << "\t" << labels[i] << ".fraction";
-        if (is_sample_type[i]) {
-            out << "\t" << labels[i] << "." << expr_labels[i];
-        }
     }
     out << "\n";
 
@@ -1924,7 +1832,6 @@ void index_stats::write_branch_details_tsv(const std::string& path) const {
                 uint32_t sid = sample_ids[i];
                 if (!target.sample_idx.test(sid)) {
                     out << "\t.";
-                    if (is_sample_type[i]) out << "\t.";
                 } else {
                     auto bt_tx_it = target.sample_transcripts.find(sid);
                     auto hub_tx_it = hub.sample_transcripts.find(sid);
@@ -1936,14 +1843,6 @@ void index_stats::write_branch_details_tsv(const std::string& path) const {
                         out << "\t" << std::setprecision(3) << frac;
                     } else {
                         out << "\t0";
-                    }
-                    if (is_sample_type[i]) {
-                        auto expr_it = target.sample_expression.find(sid);
-                        if (expr_it != target.sample_expression.end()) {
-                            out << "\t" << std::setprecision(2) << expr_it->second;
-                        } else {
-                            out << "\t.";
-                        }
                     }
                 }
             }
@@ -2093,25 +1992,17 @@ void index_stats::write_conserved_exons_tsv(const std::string& path) const {
     }
     std::sort(sample_ids.begin(), sample_ids.end());
 
-    // Determine which entries are samples (have expression data possible)
-    std::vector<bool> is_sample_type;
+    // Resolve sample labels
     std::vector<std::string> labels;
-    std::vector<std::string> expr_labels;
     for (uint32_t sid : sample_ids) {
         const auto& info = registry.get(sid);
         labels.push_back((!info.id.empty()) ? info.id : std::to_string(sid));
-        bool is_sample = info.type == "sample";
-        is_sample_type.push_back(is_sample);
-        expr_labels.push_back(is_sample ? expr_type_label(info.expr_type) : "");
     }
 
-    // Header: .transcripts for all, .expression_type for sample-type entries only
+    // Header: .transcripts for all samples
     out << "exon_id\tgene_name\tgene_id\tchromosome\tcoordinate\tn_transcripts\tconstitutive";
     for (size_t i = 0; i < sample_ids.size(); ++i) {
         out << "\t" << labels[i] << ".transcripts";
-        if (is_sample_type[i]) {
-            out << "\t" << labels[i] << "." << expr_labels[i];
-        }
     }
     out << "\n";
 
@@ -2136,15 +2027,6 @@ void index_stats::write_conserved_exons_tsv(const std::string& path) const {
             uint32_t sid = sample_ids[i];
             auto tx_it = entry.sample_transcripts.find(sid);
             out << "\t" << (tx_it != entry.sample_transcripts.end() ? tx_it->second : size_t{0});
-
-            if (is_sample_type[i]) {
-                auto expr_it = entry.sample_expression.find(sid);
-                if (expr_it != entry.sample_expression.end()) {
-                    out << "\t" << std::setprecision(2) << expr_it->second;
-                } else {
-                    out << "\t.";
-                }
-            }
         }
         out << "\n";
     }
@@ -2246,8 +2128,7 @@ void index_stats::write_per_sample_tsv(const std::string& path) const {
     std::sort(sample_ids.begin(), sample_ids.end());
 
     out << "sample\ttype\tgenes\tsegments\texclusive_segments\texons\texclusive_exons"
-        << "\ttranscripts\tgene_exon_entropy\teffective_isoforms\tdeduplication_ratio"
-        << "\texpressed_segments\tmean_expression\n";
+        << "\ttranscripts\tgene_exon_entropy\teffective_isoforms\tdeduplication_ratio\n";
 
     out << std::fixed;
     for (uint32_t sid : sample_ids) {
@@ -2264,13 +2145,6 @@ void index_stats::write_per_sample_tsv(const std::string& path) const {
             << "\t" << std::setprecision(3) << ss.gene_exon_entropy
             << "\t" << std::setprecision(3) << ss.effective_isoforms
             << "\t" << std::setprecision(3) << ss.deduplication_ratio;
-
-        if (ss.expressed_segments > 0) {
-            out << "\t" << ss.expressed_segments
-                << "\t" << std::setprecision(2) << ss.mean_expression;
-        } else {
-            out << "\t.\t.";
-        }
         out << "\n";
     }
 

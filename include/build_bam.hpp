@@ -21,6 +21,7 @@
 
 #include "build_summary.hpp"
 #include "genomic_feature.hpp"
+#include "quant_sidecar.hpp"
 #include "sample_info.hpp"
 #include "read_cluster.hpp"
 
@@ -59,7 +60,8 @@ public:
                       bool absorb,
                       size_t fuzzy_tolerance,
                       bool include_scaffolds,
-                      build_counters& counters);
+                      build_counters& counters,
+                      quant_sidecar::SampleStreamWriter* sidecar_writer = nullptr);
 
     /**
      * Parse BAM header to extract sample metadata.

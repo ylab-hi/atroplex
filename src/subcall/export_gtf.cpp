@@ -25,17 +25,6 @@ namespace fs = std::filesystem;
 
 namespace {
 
-std::string expr_type_label(sample_info::expression_type t) {
-    switch (t) {
-        case sample_info::expression_type::COUNTS: return "counts";
-        case sample_info::expression_type::TPM:    return "TPM";
-        case sample_info::expression_type::FPKM:   return "FPKM";
-        case sample_info::expression_type::RPKM:   return "RPKM";
-        case sample_info::expression_type::CPM:    return "CPM";
-        default:                                   return "expression";
-    }
-}
-
 // Per-transcript data collected during grove walk
 struct transcript_entry {
     std::string transcript_id;
@@ -46,8 +35,6 @@ struct transcript_entry {
     size_t start;
     size_t end;
     int exon_count;
-    float expression_value;
-    std::string expression_label;
     std::vector<std::pair<size_t, size_t>> exons;  // (start, end) from chain walk
 };
 
@@ -316,14 +303,6 @@ void export_gtf::execute(const cxxopts::ParseResult& args) {
                     }
                     gene.update_bounds(coord.get_start(), coord.get_end());
 
-                    // Expression for this sample
-                    float expr_val = seg.get_expression(sid);
-                    std::string expr_label;
-                    if (expr_val >= 0) {
-                        const auto& sinfo = registry.get(sid);
-                        expr_label = expr_type_label(sinfo.expr_type);
-                    }
-
                     // One transcript_entry per transcript_id on this segment
                     for (uint32_t tx_id : seg.transcript_ids) {
                         std::string tx_name = transcript_registry::instance().resolve(tx_id);
@@ -344,8 +323,6 @@ void export_gtf::execute(const cxxopts::ParseResult& args) {
                         entry.start = coord.get_start();
                         entry.end = coord.get_end();
                         entry.exon_count = static_cast<int>(exon_coords.size());
-                        entry.expression_value = expr_val;
-                        entry.expression_label = expr_label;
                         entry.exons = exon_coords;
 
                         gene.transcripts.push_back(std::move(entry));
@@ -421,8 +398,6 @@ void export_gtf::execute(const cxxopts::ParseResult& args) {
                 t.transcript_id = tx.transcript_id;
                 t.transcript_biotype = tx.transcript_biotype;
                 t.exon_count = tx.exon_count;
-                t.expression_value = tx.expression_value;
-                t.expression_label = tx.expression_label;
                 gtf_writer::write_transcript(ofs, t);
 
                 // Write exon lines

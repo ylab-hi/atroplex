@@ -24,21 +24,6 @@
 
 namespace gio = genogrove::io;
 
-namespace {
-
-std::string expr_type_label(sample_info::expression_type t) {
-    switch (t) {
-        case sample_info::expression_type::COUNTS: return "counts";
-        case sample_info::expression_type::TPM:    return "TPM";
-        case sample_info::expression_type::FPKM:   return "FPKM";
-        case sample_info::expression_type::RPKM:   return "RPKM";
-        case sample_info::expression_type::CPM:    return "CPM";
-        default:                                   return "expression";
-    }
-}
-
-} // anonymous namespace
-
 namespace subcall {
 
 // ============================================================================
@@ -90,8 +75,6 @@ cxxopts::Options query::parse_args(int argc, char** argv) {
             cxxopts::value<std::string>()->default_value("condition"))
         ("fdr", "FDR threshold for significance",
             cxxopts::value<double>()->default_value("0.05"))
-        ("min-expression", "Minimum expression to include a transcript in DTU",
-            cxxopts::value<float>()->default_value("0"))
         ;
 
     add_common_options(options);
@@ -121,6 +104,15 @@ void query::validate(const cxxopts::ParseResult& args) {
 // ============================================================================
 
 void query::execute(const cxxopts::ParseResult& args) {
+    if (args.count("contrast")) {
+        throw std::runtime_error(
+            "--contrast temporarily unavailable in this release. "
+            "Quantitative DTU requires reading per-sample values from .qtx "
+            "sidecar files, landing in a follow-up release. Run without "
+            "--contrast for structural classification."
+        );
+    }
+
     std::string input_path = args["input"].as<std::string>();
     logging::info("Classifying transcripts from: " + input_path);
 
@@ -145,34 +137,8 @@ void query::execute(const cxxopts::ParseResult& args) {
     std::string class_path = (out_dir / (basename + ".query.tsv")).string();
     write_classification(class_path, results);
 
-    // Step 3: Optional DTU analysis
+    // Step 3: Summary
     std::vector<std::pair<query_contrast, std::vector<dtu_result>>> all_dtu;
-
-    if (args.count("contrast")) {
-        double fdr_threshold = args["fdr"].as<double>();
-        auto contrast_strs = args["contrast"].as<std::vector<std::string>>();
-
-        for (const auto& spec : contrast_strs) {
-            auto contrast = query_contrast::parse(spec);
-            logging::info("Running DTU: " + contrast.group_a + " vs " + contrast.group_b);
-
-            auto dtu = run_dtu(contrast, results, args);
-            apply_fdr_correction(dtu, fdr_threshold);
-
-            size_t sig = std::count_if(dtu.begin(), dtu.end(),
-                [](const dtu_result& r) { return r.significant; });
-            logging::info("  Significant: " + std::to_string(sig) +
-                          "/" + std::to_string(dtu.size()));
-
-            std::string dtu_path = (out_dir / (basename + "." +
-                contrast.group_a + "_vs_" + contrast.group_b + ".dtu.tsv")).string();
-            write_dtu_results(dtu_path, contrast, dtu);
-
-            all_dtu.emplace_back(contrast, std::move(dtu));
-        }
-    }
-
-    // Step 4: Summary
     std::string summary_path = (out_dir / (basename + ".query.summary.txt")).string();
     write_summary(summary_path, results, all_dtu);
 
@@ -264,9 +230,6 @@ std::vector<query_result> query::classify_transcripts(const std::string& input_p
 
             seg.sample_idx.for_each([&](uint32_t sid) {
                 qr.sample_ids.push_back(sid);
-                if (seg.expression.has(sid)) {
-                    qr.sample_expression[sid] = seg.expression.get(sid);
-                }
             });
         }
 
@@ -274,202 +237,6 @@ std::vector<query_result> query::classify_transcripts(const std::string& input_p
     }
 
     return results;
-}
-
-// ============================================================================
-// DTU analysis
-// ============================================================================
-
-std::vector<dtu_result> query::run_dtu(
-    const query_contrast& contrast,
-    const std::vector<query_result>& results,
-    const cxxopts::ParseResult& args) {
-
-    std::string group_field = args["group-by"].as<std::string>();
-    float min_expr = args.count("min-expression")
-        ? args["min-expression"].as<float>()
-        : 0.0f;
-
-    auto& registry = sample_registry::instance();
-
-    // Map sample IDs to their group values
-    std::set<uint32_t> group_a_samples, group_b_samples;
-    for (size_t i = 0; i < registry.size(); ++i) {
-        auto sid = static_cast<uint32_t>(i);
-        const auto& info = registry.get(sid);
-        if (info.type != "sample") continue;
-
-        std::string group_value;
-        if (group_field == "condition") group_value = info.condition;
-        else if (group_field == "biosample") group_value = info.biosample;
-        else if (group_field == "biosample_type") group_value = info.biosample_type;
-        else if (group_field == "treatment") group_value = info.treatment;
-        else if (group_field == "assay") group_value = info.assay;
-        else group_value = info.get_attribute(group_field);
-
-        if (group_value == contrast.group_a) group_a_samples.insert(sid);
-        else if (group_value == contrast.group_b) group_b_samples.insert(sid);
-    }
-
-    if (group_a_samples.empty() || group_b_samples.empty()) {
-        logging::warning("No samples found for contrast " +
-                         contrast.group_a + " vs " + contrast.group_b +
-                         " (group-by: " + group_field + ")");
-        return {};
-    }
-
-    logging::info("  Group " + contrast.group_a + ": " +
-                  std::to_string(group_a_samples.size()) + " samples");
-    logging::info("  Group " + contrast.group_b + ": " +
-                  std::to_string(group_b_samples.size()) + " samples");
-
-    // Group classified transcripts by gene
-    std::map<std::string, std::vector<const query_result*>> by_gene;
-    for (const auto& r : results) {
-        if (r.gene_id.empty() || r.gene_id == ".") continue;
-        by_gene[r.gene_id].push_back(&r);
-    }
-
-    std::vector<dtu_result> dtu_results;
-
-    // For each gene, compute per-transcript proportions and test
-    for (const auto& [gene_id, gene_transcripts] : by_gene) {
-        if (gene_transcripts.size() < 2) continue;
-
-        // Compute mean expression per transcript per group
-        struct tx_expr {
-            std::string transcript_id;
-            std::string gene_name;
-            double mean_a = 0.0;
-            double mean_b = 0.0;
-            size_t count_a = 0;
-            size_t count_b = 0;
-        };
-
-        std::vector<tx_expr> tx_data;
-        double gene_total_a = 0.0;
-        double gene_total_b = 0.0;
-
-        for (const auto* qr : gene_transcripts) {
-            tx_expr te;
-            te.transcript_id = qr->transcript_id;
-            te.gene_name = qr->gene_name;
-
-            // Sum expression across samples in each group
-            double sum_a = 0.0, sum_b = 0.0;
-            size_t n_a = 0, n_b = 0;
-
-            for (const auto& [sid, expr] : qr->sample_expression) {
-                if (expr < min_expr) continue;
-                if (group_a_samples.count(sid)) {
-                    sum_a += expr;
-                    n_a++;
-                } else if (group_b_samples.count(sid)) {
-                    sum_b += expr;
-                    n_b++;
-                }
-            }
-
-            te.mean_a = (n_a > 0) ? sum_a / n_a : 0.0;
-            te.mean_b = (n_b > 0) ? sum_b / n_b : 0.0;
-            te.count_a = n_a;
-            te.count_b = n_b;
-
-            gene_total_a += te.mean_a;
-            gene_total_b += te.mean_b;
-
-            tx_data.push_back(te);
-        }
-
-        // Skip genes with no expression in either group
-        if (gene_total_a <= 0.0 && gene_total_b <= 0.0) continue;
-
-        // Compute proportions and chi-squared statistic
-        // H0: transcript proportions are the same in both groups
-        // Chi-squared on 2×k contingency table (2 groups × k transcripts)
-        double chi2 = 0.0;
-        int df = 0;
-
-        for (auto& te : tx_data) {
-            double prop_a = (gene_total_a > 0) ? te.mean_a / gene_total_a : 0.0;
-            double prop_b = (gene_total_b > 0) ? te.mean_b / gene_total_b : 0.0;
-
-            double total = te.mean_a + te.mean_b;
-            double row_total = gene_total_a + gene_total_b;
-
-            if (total <= 0.0 || row_total <= 0.0) continue;
-
-            // Expected values under H0
-            double expected_a = total * gene_total_a / row_total;
-            double expected_b = total * gene_total_b / row_total;
-
-            if (expected_a > 0.0) {
-                chi2 += (te.mean_a - expected_a) * (te.mean_a - expected_a) / expected_a;
-            }
-            if (expected_b > 0.0) {
-                chi2 += (te.mean_b - expected_b) * (te.mean_b - expected_b) / expected_b;
-            }
-
-            dtu_result dr;
-            dr.gene_id = gene_id;
-            dr.gene_name = te.gene_name;
-            dr.transcript_id = te.transcript_id;
-            dr.prop_group_a = prop_a;
-            dr.prop_group_b = prop_b;
-            dr.delta_proportion = prop_a - prop_b;
-            dr.p_value = 1.0;  // Computed below from chi2
-            dr.fdr = 1.0;
-            dr.significant = false;
-
-            dtu_results.push_back(dr);
-            df++;
-        }
-
-        // Compute p-value from chi-squared distribution (df = k-1)
-        // Using Wilson-Hilferty approximation for chi-squared CDF
-        if (df > 1 && chi2 > 0.0) {
-            int k = df - 1;
-            // Approximation: P(X > chi2) for chi-squared with k df
-            double z = std::pow(chi2 / k, 1.0 / 3.0) - (1.0 - 2.0 / (9.0 * k));
-            z /= std::sqrt(2.0 / (9.0 * k));
-            // Standard normal CDF approximation
-            double p = 0.5 * std::erfc(z / std::sqrt(2.0));
-            p = std::max(p, 1e-300);  // Floor to avoid exact zeros
-
-            // Apply same p-value to all transcripts in this gene
-            for (size_t i = dtu_results.size() - df; i < dtu_results.size(); ++i) {
-                dtu_results[i].p_value = p;
-            }
-        }
-    }
-
-    return dtu_results;
-}
-
-void query::apply_fdr_correction(std::vector<dtu_result>& results,
-                                  double fdr_threshold) {
-    if (results.empty()) return;
-
-    std::vector<size_t> indices(results.size());
-    std::iota(indices.begin(), indices.end(), 0);
-
-    std::sort(indices.begin(), indices.end(),
-              [&results](size_t a, size_t b) {
-                  return results[a].p_value < results[b].p_value;
-              });
-
-    size_t n = results.size();
-    double prev_fdr = 1.0;
-
-    for (size_t i = n; i > 0; --i) {
-        size_t idx = indices[i - 1];
-        double fdr = results[idx].p_value * static_cast<double>(n) / static_cast<double>(i);
-        fdr = std::min(fdr, prev_fdr);
-        fdr = std::min(fdr, 1.0);
-        results[idx].fdr = fdr;
-        results[idx].significant = (fdr <= fdr_threshold);
-        prev_fdr = fdr;
-    }
 }
 
 // ============================================================================
@@ -508,17 +275,6 @@ void query::write_classification(const std::string& path,
         const auto& info = registry.get(sid);
         out << "\t" << info.id << ".present";
     }
-
-    // Per-sample expression columns
-    for (uint32_t sid : sample_ids) {
-        const auto& info = registry.get(sid);
-        if (info.type == "sample") {
-            std::string expr_label = info.has_expression_type()
-                ? expr_type_label(info.expr_type)
-                : "expression";
-            out << "\t" << info.id << "." << expr_label;
-        }
-    }
     out << "\n";
 
     // Rows
@@ -543,52 +299,10 @@ void query::write_classification(const std::string& path,
         for (uint32_t sid : sample_ids) {
             out << "\t" << (present_set.count(sid) ? "1" : "0");
         }
-
-        // Per-sample expression
-        for (uint32_t sid : sample_ids) {
-            const auto& info = registry.get(sid);
-            if (info.type == "sample") {
-                auto it = r.sample_expression.find(sid);
-                if (it != r.sample_expression.end()) {
-                    out << "\t" << it->second;
-                } else {
-                    out << "\t.";
-                }
-            }
-        }
         out << "\n";
     }
 
     logging::info("Classification written to: " + path);
-}
-
-void query::write_dtu_results(const std::string& path,
-                               const query_contrast& contrast,
-                               const std::vector<dtu_result>& results) {
-    std::ofstream out(path);
-    if (!out.is_open()) {
-        logging::error("Cannot open output file: " + path);
-        return;
-    }
-
-    out << "gene_id\tgene_name\ttranscript_id\t"
-        << "prop_" << contrast.group_a << "\t"
-        << "prop_" << contrast.group_b << "\t"
-        << "delta_proportion\tp_value\tfdr\tsignificant\n";
-
-    for (const auto& r : results) {
-        out << r.gene_id << "\t"
-            << r.gene_name << "\t"
-            << r.transcript_id << "\t"
-            << r.prop_group_a << "\t"
-            << r.prop_group_b << "\t"
-            << r.delta_proportion << "\t"
-            << r.p_value << "\t"
-            << r.fdr << "\t"
-            << (r.significant ? "yes" : "no") << "\n";
-    }
-
-    logging::info("DTU results written to: " + path);
 }
 
 void query::write_summary(const std::string& path,

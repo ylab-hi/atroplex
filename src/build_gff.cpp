@@ -34,7 +34,8 @@ void build_gff::build(grove_type& grove,
     bool absorb,
     size_t fuzzy_tolerance,
     bool include_scaffolds,
-    build_counters& counters) {
+    build_counters& counters,
+    quant_sidecar::SampleStreamWriter* sidecar_writer) {
 
     gio::gff_reader reader(filepath.string());
 
@@ -82,7 +83,8 @@ void build_gff::build(grove_type& grove,
             process_gene(grove, grove_mutex, current_gene_entries,
                 exon_caches[current_chrom], segment_caches[current_chrom],
                 gene_indices[current_chrom],
-                sample_id, segment_count, filters, absorb, fuzzy_tolerance, counters);
+                sample_id, segment_count, filters, absorb, fuzzy_tolerance, counters,
+                sidecar_writer);
             current_gene_entries.clear();
         }
 
@@ -96,7 +98,8 @@ void build_gff::build(grove_type& grove,
         process_gene(grove, grove_mutex, current_gene_entries,
             exon_caches[current_chrom], segment_caches[current_chrom],
             gene_indices[current_chrom],
-            sample_id, segment_count, filters, absorb, fuzzy_tolerance, counters);
+            sample_id, segment_count, filters, absorb, fuzzy_tolerance, counters,
+            sidecar_writer);
     }
 
     logging::progress_done(segment_count, "Processed " + filepath.filename().string());
@@ -114,7 +117,8 @@ void build_gff::process_gene(
     const expression_filters& filters,
     bool absorb,
     size_t fuzzy_tolerance,
-    build_counters& counters
+    build_counters& counters,
+    quant_sidecar::SampleStreamWriter* sidecar_writer
 ) {
     // Group entries by transcript
     std::unordered_map<std::string, std::vector<gio::gff_entry>> transcripts;
@@ -150,7 +154,7 @@ void build_gff::process_gene(
     for (const auto& transcript_id : tx_order) {
         process_transcript(grove, grove_mutex, transcript_id, transcripts[transcript_id],
             exon_cache, segment_cache, gene_index, sample_id, segment_count,
-            filters, absorb, fuzzy_tolerance, counters);
+            filters, absorb, fuzzy_tolerance, counters, sidecar_writer);
     }
 }
 
@@ -167,7 +171,8 @@ void build_gff::process_transcript(
     const expression_filters& filters,
     bool absorb,
     size_t fuzzy_tolerance,
-    build_counters& counters
+    build_counters& counters,
+    quant_sidecar::SampleStreamWriter* sidecar_writer
 ) {
     // Step 1: Extract and sort exons in 5'→3' biological order
     std::vector<gio::gff_entry> sorted_exons = extract_sorted_exons(transcript_entries);
@@ -287,7 +292,7 @@ void build_gff::process_transcript(
         min_it->start, max_it->end, static_cast<int>(sorted_exons.size()),
         exon_coords, exon_chain, segment_cache, gene_index, sample_id,
         gff_source, segment_count, expression_value, transcript_biotype, absorb, fuzzy_tolerance,
-        counters
+        counters, sidecar_writer
     );
 }
 

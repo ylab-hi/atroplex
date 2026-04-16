@@ -128,34 +128,6 @@ sample_bitset sample_bitset::deserialize(std::istream& is) {
 }
 
 // ============================================================================
-// expression_store serialization
-// ============================================================================
-
-void expression_store::serialize(std::ostream& os) const {
-    if (!data_) {
-        write_pod<uint32_t>(os, 0);
-        return;
-    }
-    uint32_t n = static_cast<uint32_t>(data_->size());
-    write_pod(os, n);
-    if (n > 0) {
-        os.write(reinterpret_cast<const char*>(data_->data()),
-                 static_cast<std::streamsize>(n * sizeof(float)));
-    }
-}
-
-expression_store expression_store::deserialize(std::istream& is) {
-    expression_store store;
-    uint32_t n = read_pod<uint32_t>(is);
-    if (n > 0) {
-        store.data_ = std::make_unique<std::vector<float>>(n);
-        is.read(reinterpret_cast<char*>(store.data_->data()),
-                static_cast<std::streamsize>(n * sizeof(float)));
-    }
-    return store;
-}
-
-// ============================================================================
 // sorted_vec serialization
 // ============================================================================
 
@@ -205,7 +177,6 @@ void exon_feature::serialize(std::ostream& os) const {
     transcript_ids.serialize(os);
     write_pod(os, sources);
     sample_idx.serialize(os);
-    expression.serialize(os);
     write_pod(os, exon_number);
 }
 
@@ -216,7 +187,6 @@ exon_feature exon_feature::deserialize(std::istream& is) {
     ef.transcript_ids = sorted_vec::deserialize(is);
     ef.sources = read_pod<uint16_t>(is);
     ef.sample_idx = sample_bitset::deserialize(is);
-    ef.expression = expression_store::deserialize(is);
     ef.exon_number = read_pod<int>(is);
     return ef;
 }
@@ -230,7 +200,6 @@ void segment_feature::serialize(std::ostream& os) const {
     transcript_ids.serialize(os);
     write_pod(os, sources);
     sample_idx.serialize(os);
-    expression.serialize(os);
 
     // transcript_biotypes map
     uint32_t bt_count = static_cast<uint32_t>(transcript_biotypes.size());
@@ -253,7 +222,6 @@ segment_feature segment_feature::deserialize(std::istream& is) {
     sf.transcript_ids = sorted_vec::deserialize(is);
     sf.sources = read_pod<uint16_t>(is);
     sf.sample_idx = sample_bitset::deserialize(is);
-    sf.expression = expression_store::deserialize(is);
 
     uint32_t bt_count = read_pod<uint32_t>(is);
     for (uint32_t i = 0; i < bt_count; ++i) {

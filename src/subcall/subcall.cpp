@@ -205,8 +205,29 @@ void subcall::setup_grove(const cxxopts::ParseResult& args) {
             logging::info("Scaffold filter active: main chromosomes only (chr1..chr22, chrX, chrY, chrM)");
         }
         grove = std::make_unique<grove_type>(order);
+
+        // Derive the final single-file quantification sidecar path. We
+        // reuse the resolved output_dir + prefix so the .qtx lands next
+        // to the .ggx and is self-identifying. Per-sample temp streams
+        // are written under `{qtx_path}.tmp/` by build_from_samples and
+        // K-way merged into this single file at end of build.
+        std::string qtx_path;
+        {
+            std::string fallback_for_outdir;
+            if (args.count("manifest")) {
+                fallback_for_outdir = args["manifest"].as<std::string>();
+            } else if (args.count("build-from")) {
+                fallback_for_outdir = args["build-from"].as<std::vector<std::string>>().front();
+            }
+            auto out_dir = resolve_output_dir(args, fallback_for_outdir);
+            std::string prefix = resolve_prefix(args);
+            if (!out_dir.empty()) {
+                qtx_path = (out_dir / (prefix + ".qtx")).string();
+            }
+        }
+
         auto build_start = std::chrono::steady_clock::now();
-        build_stats = builder::build_from_samples(*grove, all_samples, threads, filters, absorb, min_reps, fuzzy_tol, prune_tombstones, include_scaffolds, &exon_caches_, &gene_indices_);
+        build_stats = builder::build_from_samples(*grove, all_samples, threads, filters, absorb, min_reps, fuzzy_tol, prune_tombstones, include_scaffolds, qtx_path, &exon_caches_, &gene_indices_);
         auto build_elapsed = std::chrono::duration<double>(std::chrono::steady_clock::now() - build_start).count();
         build_stats->build_time_seconds = build_elapsed;
         logging::info("Grove ready with spatial index and graph structure");

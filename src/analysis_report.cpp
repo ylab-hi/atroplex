@@ -24,17 +24,6 @@
 
 namespace {
 
-std::string expr_type_label(sample_info::expression_type t) {
-    switch (t) {
-        case sample_info::expression_type::COUNTS: return "counts";
-        case sample_info::expression_type::TPM:    return "TPM";
-        case sample_info::expression_type::FPKM:   return "FPKM";
-        case sample_info::expression_type::RPKM:   return "RPKM";
-        case sample_info::expression_type::CPM:    return "CPM";
-        default:                                   return "expression";
-    }
-}
-
 double compute_median(std::vector<size_t>& values) {
     if (values.empty()) return 0;
     auto mid = values.begin() + static_cast<long>(values.size()) / 2;
@@ -294,14 +283,13 @@ void analysis_report::collect(grove_type& grove) {
                         << hub_exon.transcript_ids.size();
 
                 // Per-sample columns: .branches, .shared, .unique, .psi,
-                // .entropy, optional .{expr_type}. Gated on "sample is at
-                // the hub" — being at the hub implies being in the gene,
-                // so hub_psi_den[sid] > 0 when hub_exon.sample_idx.test(sid).
+                // .entropy. Gated on "sample is at the hub" — being at
+                // the hub implies being in the gene, so hub_psi_den[sid]
+                // > 0 when hub_exon.sample_idx.test(sid).
                 for (size_t i = 0; i < hub_stream_sample_ids.size(); ++i) {
                     uint32_t sid = hub_stream_sample_ids[i];
                     if (!hub_exon.sample_idx.test(sid)) {
                         hub_out << "\t.\t.\t.\t.\t.";
-                        if (hub_stream_is_sample[i]) hub_out << "\t.";
                     } else {
                         // PSI: hub_psi_den[sid] > 0 is guaranteed here
                         double psi = (hub_psi_den[sid] > 0)
@@ -333,13 +321,6 @@ void analysis_report::collect(grove_type& grove) {
                             hub_out << "\t" << psi << "\t" << entropy;
                             hub_out.precision(prev_prec);
                         }
-                        if (hub_stream_is_sample[i]) {
-                            if (hub_exon.has_expression(sid)) {
-                                hub_out << "\t" << hub_exon.get_expression(sid);
-                            } else {
-                                hub_out << "\t.";
-                            }
-                        }
                     }
                 }
                 hub_out << "\n";
@@ -359,13 +340,6 @@ void analysis_report::collect(grove_type& grove) {
                             uint32_t sid = hub_stream_sample_ids[i];
                             bool present = tgt.sample_idx.test(sid);
                             br_out << "\t" << (present ? "1" : ".");
-                            if (hub_stream_is_sample[i]) {
-                                if (present && tgt.has_expression(sid)) {
-                                    br_out << "\t" << tgt.get_expression(sid);
-                                } else {
-                                    br_out << "\t.";
-                                }
-                            }
                         }
                         br_out << "\n";
                     }
@@ -476,12 +450,6 @@ void analysis_report::collect(grove_type& grove) {
                     else if (seg_conserved) sc.conserved_segments++;
                     else sc.shared_segments++;
                     if (seg.exon_count == 1) sc.single_exon_segments++;
-
-                    // Expression
-                    if (seg.has_expression(sid)) {
-                        sc.expression_sum += seg.get_expression(sid);
-                        sc.expressed_segments++;
-                    }
                 }
 
                 // ── Gene accumulation ───────────────────────────────
@@ -623,15 +591,6 @@ void analysis_report::collect(grove_type& grove) {
                                     << seqid << "\t"
                                     << format_coordinate(seqid, current->get_value()) << "\t"
                                     << exon.transcript_ids.size();
-                                for (size_t i = 0; i < conserved_stream_sample_ids.size(); ++i) {
-                                    if (!conserved_stream_is_sample[i]) continue;
-                                    uint32_t sid = conserved_stream_sample_ids[i];
-                                    if (exon.has_expression(sid)) {
-                                        out << "\t" << exon.get_expression(sid);
-                                    } else {
-                                        out << "\t.";
-                                    }
-                                }
                                 out << "\n";
                             }
                         }
@@ -745,7 +704,6 @@ void analysis_report::write_per_sample(const std::string& path) const {
         << "\tconserved_segments\texons\texclusive_exons\tshared_exons"
         << "\tconserved_exons\tconstitutive_exons\talternative_exons"
         << "\ttranscripts_touched\tsingle_exon_segments"
-        << "\texpressed_segments\tmean_expression"
         << "\tmean_gene_exon_entropy\tmean_effective_isoforms\n";
     out << std::fixed;
 
@@ -756,9 +714,6 @@ void analysis_report::write_per_sample(const std::string& path) const {
         const auto& info = registry.get(static_cast<uint32_t>(sid));
         std::string label = info.id.empty() ? std::to_string(sid) : info.id;
 
-        double mean_expr = (sc.expressed_segments > 0)
-            ? sc.expression_sum / static_cast<double>(sc.expressed_segments)
-            : 0;
         double mean_exon_H = (sc.multi_segment_genes > 0)
             ? sc.gene_exon_entropy_sum / static_cast<double>(sc.multi_segment_genes)
             : 0;
@@ -780,8 +735,6 @@ void analysis_report::write_per_sample(const std::string& path) const {
             << "\t" << sc.alternative_exons
             << "\t" << sc.transcripts
             << "\t" << sc.single_exon_segments
-            << "\t" << sc.expressed_segments
-            << "\t" << std::setprecision(2) << mean_expr
             << "\t" << std::setprecision(3) << mean_exon_H
             << "\t" << std::setprecision(2) << mean_eff_iso
             << "\n";
@@ -922,9 +875,6 @@ void analysis_report::begin_splicing_hub_streams(
                     << "\t" << label << ".unique"
                     << "\t" << label << ".psi"
                     << "\t" << label << ".entropy";
-        if (hub_stream_is_sample[i]) {
-            *hub_stream << "\t" << label << "." << expr_type_label(info.expr_type);
-        }
     }
     *hub_stream << "\n";
 
@@ -937,9 +887,6 @@ void analysis_report::begin_splicing_hub_streams(
             std::string label = info.id.empty()
                 ? std::to_string(hub_stream_sample_ids[i]) : info.id;
             *branch_stream << "\t" << label << ".present";
-            if (hub_stream_is_sample[i]) {
-                *branch_stream << "\t" << label << "." << expr_type_label(info.expr_type);
-            }
         }
         *branch_stream << "\n";
     }
@@ -1008,16 +955,7 @@ void analysis_report::begin_conserved_exon_stream(const std::string& path) {
 
     auto& out = *conserved_exon_stream;
     out << std::fixed;
-    out << "exon_id\tgene_name\tgene_id\tchromosome\tcoordinate\tn_transcripts";
-    for (size_t i = 0; i < conserved_stream_sample_ids.size(); ++i) {
-        if (!conserved_stream_is_sample[i]) continue;
-        const auto& info = registry.get(conserved_stream_sample_ids[i]);
-        std::string label = info.id.empty()
-            ? std::to_string(conserved_stream_sample_ids[i]) : info.id;
-        std::string expr_label = expr_type_label(info.expr_type);
-        out << "\t" << label << "." << expr_label;
-    }
-    out << "\n";
+    out << "exon_id\tgene_name\tgene_id\tchromosome\tcoordinate\tn_transcripts\n";
 
     logging::info("Conserved exons streaming to: " + path);
 }
