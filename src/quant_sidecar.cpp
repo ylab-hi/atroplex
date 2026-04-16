@@ -542,6 +542,19 @@ void merge_to_qtx(
     //    it once we know the final offsets.
 
     const auto tmp_path = tmp_suffixed(output_path);
+
+    // Remove any stale artifact at the tmp path. This might be a leftover
+    // file from a crashed previous merge, or a directory from an earlier
+    // build that used the same path convention. std::ofstream silently
+    // fails to open when the target exists as a directory, so we need to
+    // proactively clear it before trying to write.
+    {
+        std::error_code rm_ec;
+        std::filesystem::remove_all(tmp_path, rm_ec);
+        // Don't treat failure as fatal here — if we genuinely can't clear
+        // the path, the ofstream::open below will surface a clearer error.
+    }
+
     std::ofstream out(tmp_path, std::ios::binary | std::ios::trunc);
     if (!out) {
         throw std::runtime_error(
