@@ -338,6 +338,122 @@ TEST_F(QuantSidecarTest, Merge_ExcludesTombstonedSegments) {
     EXPECT_EQ(seen[2], 5u);
 }
 
+// ── Tombstone remap (issue #34) ─────────────────────────────────────
+//
+// When reverse absorption tombstones a candidate segment that already
+// has records on disk, the records must be remapped to the live parent's
+// segment_index at merge time — not dropped by the tombstone filter.
+// These tests pin the merge-layer behaviour in isolation (no builder or
+// grove involvement).
+
+TEST_F(QuantSidecarTest, Merge_RemapsTombstonedSegmentsToLiveParent) {
+    // Sample 1's record at seg=5 represents the "ISM arrived first, wrote
+    // to disk, then the longer parent arrived and absorbed it" flow.
+    // Sample 2's record at seg=9 represents the parent's direct
+    // contribution. After merge, both samples should share the parent's
+    // block at seg=9 — no block at seg=5.
+    fs::path s1 = write_stream(1, {{5, 5.5f}});
+    fs::path s2 = write_stream(2, {{9, 9.9f}});
+
+    std::vector<fs::path> streams{s1, s2};
+    std::vector<quant_sidecar::SampleMetadata> metas = {
+        {1, 0, "sample_1"}, {2, 0, "sample_2"}
+    };
+
+    fs::path out = tmp_dir / "remap.qtx";
+    std::unordered_set<uint64_t> excluded = {5u};  // tombstoned by absorption
+    std::unordered_map<uint64_t, uint64_t> remap = {{5u, 9u}};
+    quant_sidecar::merge_to_qtx(out, streams, metas,
+                                /*max_fds_per_pass=*/256, excluded, remap);
+
+    quant_sidecar::Reader r(out);
+    EXPECT_EQ(r.segment_block_count(), 1u);
+
+    auto b9 = r.lookup(9);
+    ASSERT_EQ(b9.size(), 2u);
+    EXPECT_EQ(b9[0].sample_id, 1u);
+    EXPECT_FLOAT_EQ(b9[0].value, 5.5f);
+    EXPECT_EQ(b9[1].sample_id, 2u);
+    EXPECT_FLOAT_EQ(b9[1].value, 9.9f);
+
+    EXPECT_TRUE(r.lookup(5).empty());
+}
+
+TEST_F(QuantSidecarTest, Merge_RemapWinsOverDropSet) {
+    // Same index is in both the drop set and the remap map. Remap must
+    // win so absorbed expression is preserved.
+    fs::path s1 = write_stream(1, {{3, 100.0f}});
+    std::vector<fs::path> streams{s1};
+    std::vector<quant_sidecar::SampleMetadata> metas = {{1, 0, "sample_1"}};
+
+    fs::path out = tmp_dir / "remap_wins.qtx";
+    std::unordered_set<uint64_t> excluded = {3u};
+    std::unordered_map<uint64_t, uint64_t> remap = {{3u, 42u}};
+    quant_sidecar::merge_to_qtx(out, streams, metas,
+                                /*max_fds_per_pass=*/256, excluded, remap);
+
+    quant_sidecar::Reader r(out);
+    EXPECT_EQ(r.segment_block_count(), 1u);
+    auto b42 = r.lookup(42);
+    ASSERT_EQ(b42.size(), 1u);
+    EXPECT_FLOAT_EQ(b42[0].value, 100.0f);
+    EXPECT_TRUE(r.lookup(3).empty());
+}
+
+TEST_F(QuantSidecarTest, Merge_RemapMergesIntoExistingParentBlock) {
+    // Parent segment already has records from a different sample's own
+    // direct writes. Remapped records must merge INTO that existing
+    // block (sorted by sample_id), not produce a second block.
+    fs::path s1 = write_stream(1, {{7, 1.0f}});   // absorbed → should land on 20
+    fs::path s2 = write_stream(2, {{20, 2.0f}});  // direct parent write
+    fs::path s3 = write_stream(3, {{20, 3.0f}});  // direct parent write
+
+    std::vector<fs::path> streams{s1, s2, s3};
+    std::vector<quant_sidecar::SampleMetadata> metas = {
+        {1, 0, "sample_1"}, {2, 0, "sample_2"}, {3, 0, "sample_3"}
+    };
+
+    fs::path out = tmp_dir / "remap_merge.qtx";
+    std::unordered_set<uint64_t> excluded = {7u};
+    std::unordered_map<uint64_t, uint64_t> remap = {{7u, 20u}};
+    quant_sidecar::merge_to_qtx(out, streams, metas,
+                                /*max_fds_per_pass=*/256, excluded, remap);
+
+    quant_sidecar::Reader r(out);
+    EXPECT_EQ(r.segment_block_count(), 1u);
+
+    auto b20 = r.lookup(20);
+    ASSERT_EQ(b20.size(), 3u);
+    // Records within the merged block must remain sorted by sample_id
+    EXPECT_EQ(b20[0].sample_id, 1u);
+    EXPECT_FLOAT_EQ(b20[0].value, 1.0f);
+    EXPECT_EQ(b20[1].sample_id, 2u);
+    EXPECT_FLOAT_EQ(b20[1].value, 2.0f);
+    EXPECT_EQ(b20[2].sample_id, 3u);
+    EXPECT_FLOAT_EQ(b20[2].value, 3.0f);
+}
+
+TEST_F(QuantSidecarTest, Merge_EmptyRemapBehavesLikeLegacyCall) {
+    // Regression: calling with an empty remap must be identical to the
+    // pre-#34 behaviour (exclusion set drops, nothing remapped).
+    fs::path s1 = write_stream(1, {{5, 5.0f}, {9, 9.0f}});
+    std::vector<fs::path> streams{s1};
+    std::vector<quant_sidecar::SampleMetadata> metas = {{1, 0, "sample_1"}};
+
+    fs::path out = tmp_dir / "empty_remap.qtx";
+    std::unordered_set<uint64_t> excluded = {5u};
+    std::unordered_map<uint64_t, uint64_t> remap;  // empty
+    quant_sidecar::merge_to_qtx(out, streams, metas,
+                                /*max_fds_per_pass=*/256, excluded, remap);
+
+    quant_sidecar::Reader r(out);
+    EXPECT_EQ(r.segment_block_count(), 1u);
+    EXPECT_TRUE(r.lookup(5).empty());  // dropped as before
+    auto b9 = r.lookup(9);
+    ASSERT_EQ(b9.size(), 1u);
+    EXPECT_FLOAT_EQ(b9[0].value, 9.0f);
+}
+
 TEST_F(QuantSidecarTest, Merge_NoLeftoverTmpFile) {
     fs::path out = merge_samples({{1, {{1, 1.0f}}}});
     fs::path tmp_out = fs::path(out.string() + ".tmp");

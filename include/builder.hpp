@@ -13,6 +13,7 @@
 
 // standard
 #include <string>
+#include <unordered_map>
 #include <unordered_set>
 #include <vector>
 #include <cstdint>
@@ -113,12 +114,23 @@ private:
     /// segment_index values for tombstoned segments is written there
     /// (used by the sidecar merge to exclude their records from the
     /// final .qtx).
+    ///
+    /// When `out_tombstone_remap` is non-null, tombstones that carry an
+    /// `absorbed_into_idx` (set by `absorb_into_parent`) produce an entry
+    /// `{candidate_idx -> parent_idx}` — with transitive chains resolved
+    /// via path compression. `merge_to_qtx` consumes this to rewrite each
+    /// record's segment_index at emission time instead of dropping it, so
+    /// expression from samples whose transcripts were processed before
+    /// the parent existed is preserved on the live parent's `.qtx` block.
+    /// Tombstones without `absorbed_into_idx` (Rule 3/4 `tombstone_candidate`
+    /// drops) are **not** added to the remap — they remain in the drop set.
     static size_t remove_tombstones(
         grove_type& grove,
         chromosome_segment_caches& segment_caches,
         chromosome_gene_segment_indices& gene_indices,
         bool physical,
-        std::unordered_set<uint64_t>* out_tombstoned_segment_indices = nullptr
+        std::unordered_set<uint64_t>* out_tombstoned_segment_indices = nullptr,
+        std::unordered_map<uint64_t, uint64_t>* out_tombstone_remap = nullptr
     );
 };
 

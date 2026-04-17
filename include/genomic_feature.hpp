@@ -16,6 +16,7 @@
 #include <bit>
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <unordered_set>
@@ -538,6 +539,14 @@ struct segment_feature {
     // Absorption tracking (ISM segments absorbed into longer parents)
     bool absorbed = false;           // Tombstone: this segment was absorbed into a longer parent
     size_t absorbed_count = 0;       // Number of ISM segments absorbed into this one
+    // segment_index of the parent segment this one was absorbed into, when
+    // tombstoning happened via `try_reverse_absorption::absorb_into_parent`.
+    // nullopt means the segment was either live (absorbed == false) OR
+    // tombstoned by the Rule 3/4 `tombstone_candidate` path (drop, no merge).
+    // Consumed by `builder::remove_tombstones` to build a `.qtx` remap so
+    // expression records on disk under this segment's index get moved to
+    // the parent at `merge_to_qtx` time instead of being discarded.
+    std::optional<size_t> absorbed_into_idx;
 
     // Constructors
     segment_feature()

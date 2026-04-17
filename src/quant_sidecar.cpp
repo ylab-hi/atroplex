@@ -316,7 +316,8 @@ std::vector<TOCEntry> run_final_merge(
     std::ofstream& out,
     const std::filesystem::path& path,
     std::vector<std::unique_ptr<StreamReader>>& readers,
-    const std::unordered_set<uint64_t>& excluded_segments) {
+    const std::unordered_set<uint64_t>& excluded_segments,
+    const std::unordered_map<uint64_t, uint64_t>& segment_remap) {
     std::priority_queue<HeapNode, std::vector<HeapNode>,
                         std::greater<HeapNode>> heap;
     for (size_t i = 0; i < readers.size(); ++i) {
@@ -367,9 +368,29 @@ std::vector<TOCEntry> run_final_merge(
         // branch below `continue` without stalling the merge.
         push_from_reader(heap, *readers[node.stream_index], node.stream_index);
 
+        // Issue #34: tombstone remap. If this record's segment_index was
+        // absorbed into a parent, rewrite the index and re-insert into
+        // the heap. The remap is already transitively resolved to a live
+        // parent by `builder::remove_tombstones`, and because parents
+        // are always created *after* the segments they absorb (monotonic
+        // `segment_index` assignment in `create_segment`), the new index
+        // is always greater than the original — so the re-pushed node
+        // sorts into the correct future block and never causes out-of-
+        // order emission. Remap wins over `excluded_segments` for the
+        // same key: records with a valid parent are never dropped.
+        if (!segment_remap.empty()) {
+            auto remap_it = segment_remap.find(node.segment_index);
+            if (remap_it != segment_remap.end()) {
+                node.segment_index = remap_it->second;
+                heap.push(node);
+                continue;
+            }
+        }
+
         // Skip records for excluded segments (e.g., tombstoned by
-        // reverse absorption). We still advanced the reader above so
-        // the merge progresses normally.
+        // reverse absorption without a parent, or dropped by Rule 3/4
+        // vs ref). We still advanced the reader above so the merge
+        // progresses normally.
         if (!excluded_segments.empty() &&
             excluded_segments.count(node.segment_index) > 0) {
             continue;
@@ -480,7 +501,8 @@ void merge_to_qtx(
     const std::vector<std::filesystem::path>& streams,
     const std::vector<SampleMetadata>& samples,
     size_t max_fds_per_pass,
-    const std::unordered_set<uint64_t>& excluded_segments) {
+    const std::unordered_set<uint64_t>& excluded_segments,
+    const std::unordered_map<uint64_t, uint64_t>& segment_remap) {
     if (streams.size() != samples.size()) {
         throw std::runtime_error(
             "quant_sidecar::merge_to_qtx: streams.size() (" +
@@ -587,7 +609,7 @@ void merge_to_qtx(
     //    file and concatenating at the end.
 
     const std::vector<TOCEntry> toc =
-        run_final_merge(out, tmp_path, readers, excluded_segments);
+        run_final_merge(out, tmp_path, readers, excluded_segments, segment_remap);
 
     // ── Step 6: write the TOC at the current offset.
 
