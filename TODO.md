@@ -295,7 +295,7 @@ Output:
 - `analysis/overview/{basename}.per_sample.tsv` — rows per sample with gene/segment/
   exon counts, exclusive/shared/conserved, expression
 
-Wired into the `atroplex analyze` subcommand (`src/subcall/analyze.cpp`). The legacy
+Wired into the `atroplex inspect` subcommand (`src/subcall/inspect.cpp`). The legacy
 `index_stats::collect` call is commented out behind a `TODO(Phase 8)` block in that
 file.
 
@@ -361,7 +361,7 @@ Output:
 - `analysis/sharing/{basename}.exon_sharing.tsv`
 - `analysis/sharing/{basename}.segment_sharing.tsv`
 
-Wired via `subcall::analyze` after `collect()` returns.
+Wired via `subcall::inspect` after `collect()` returns.
 
 ### 8.3 Splicing hub detection inline ✅
 Branching exons with `> MIN_HUB_BRANCHES` (10) unique downstream targets are
@@ -420,7 +420,7 @@ needed, but for now the R viz scripts can derive fractions by grouping
   entries.
 
 Wired via `analysis_report::begin_splicing_hub_streams(hubs_path, branches_path)`
-called from `src/subcall/analyze.cpp` before `collect()`.
+called from `src/subcall/inspect.cpp` before `collect()`.
 
 ### 8.4 Per-gene diversity metrics + constitutive/alternative ✅
 Runs inside the same single traversal as 8.1. Per-gene accumulator extended with:
@@ -513,8 +513,8 @@ build-path usage, and analyze no longer references it. Relates to issue
 Cleanup checklist at that point:
 - Delete `src/index_stats.cpp` entirely
 - Delete `include/index_stats.hpp`
-- Remove commented-out legacy block in `src/subcall/analyze.cpp`
-- Remove `#include "index_stats.hpp"` from `src/subcall/analyze.cpp`
+- Remove commented-out legacy block in `src/subcall/inspect.cpp`
+- Remove `#include "index_stats.hpp"` from `src/subcall/inspect.cpp`
 - Remove any lingering `index_stats::` references (grep first)
 - Close issue #24
 

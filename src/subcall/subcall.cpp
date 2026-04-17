@@ -99,6 +99,36 @@ void subcall::run(const cxxopts::ParseResult& args) {
     execute(args);
 }
 
+/// Try to open the quantification sidecar at the path implied by the
+/// supplied grove path: replace the `.ggx` extension with `.qtx`. Sets
+/// the subcall's `qtx_reader` member when successful; leaves it empty
+/// (with an INFO log) when the file is absent or unreadable. Never
+/// throws — sidecar absence is a legitimate state, not an error.
+static void try_open_qtx_for(const std::filesystem::path& grove_path,
+                             std::optional<quant_sidecar::Reader>& reader_out) {
+    std::filesystem::path qtx_path = grove_path;
+    qtx_path.replace_extension(".qtx");
+    if (!std::filesystem::exists(qtx_path)) {
+        logging::info("No .qtx sidecar found alongside grove (looked for "
+                      + qtx_path.string()
+                      + "); expression columns will be omitted");
+        return;
+    }
+    try {
+        reader_out.emplace(qtx_path);
+        logging::info("Loaded quantification sidecar: " + qtx_path.string()
+                      + " (" + std::to_string(reader_out->samples().size())
+                      + " samples, "
+                      + std::to_string(reader_out->segment_block_count())
+                      + " segment blocks)");
+    } catch (const std::exception& e) {
+        logging::warning(std::string("Failed to open .qtx sidecar at ")
+                         + qtx_path.string() + ": " + e.what()
+                         + " — expression columns will be omitted");
+        reader_out.reset();
+    }
+}
+
 void subcall::setup_grove(const cxxopts::ParseResult& args) {
     // Capture the scaffold-inclusion preference early so it's visible to
     // anything the subclass does during execute(), not just the build path.
@@ -108,6 +138,7 @@ void subcall::setup_grove(const cxxopts::ParseResult& args) {
         std::string gg_path = args["genogrove"].as<std::string>();
         logging::info("Loading grove from: " + gg_path);
         load_grove(gg_path);
+        try_open_qtx_for(gg_path, qtx_reader);
         return;  // Grove loaded from file, skip building
     }
 
@@ -231,6 +262,12 @@ void subcall::setup_grove(const cxxopts::ParseResult& args) {
         auto build_elapsed = std::chrono::duration<double>(std::chrono::steady_clock::now() - build_start).count();
         build_stats->build_time_seconds = build_elapsed;
         logging::info("Grove ready with spatial index and graph structure");
+
+        // Open the qtx reader we just produced so the subclass execute()
+        // can use it directly without reloading from disk.
+        if (!qtx_path.empty()) {
+            try_open_qtx_for(qtx_path, qtx_reader);
+        }
     }
 }
 

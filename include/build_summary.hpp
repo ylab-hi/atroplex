@@ -62,7 +62,7 @@ struct build_counters {
  * itself. No tree traversal is required: the builder populates this directly
  * from the caches it already holds in memory.
  *
- * For per-sample / sharing / splicing-hub analysis run `atroplex analyze`,
+ * For per-sample / sharing / splicing-hub analysis run `atroplex inspect`,
  * which uses `analysis_report` instead.
  */
 struct build_summary {

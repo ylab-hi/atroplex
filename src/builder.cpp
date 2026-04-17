@@ -370,7 +370,7 @@ size_t builder::merge_replicates(
     // replicate IDs via sample_registry::group lookup and union their
     // sidecar records, or (b) report per-replicate without collapsing.
     // The current 3a PR defers this decision to the follow-up PR that
-    // wires quant_sidecar::Reader into query/analyze.
+    // wires quant_sidecar::Reader into query/inspect.
     auto& registry = sample_registry::instance();
 
     // Step 1: Build group -> replicate ID mapping

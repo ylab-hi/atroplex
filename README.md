@@ -42,8 +42,8 @@ atroplex build -m manifest.tsv
 # to read on each sample — here: `counts` for TALON samples)
 atroplex build -m manifest.tsv --min-replicates 2 --min-counts 3
 
-# Run full per-sample analysis (sharing, splicing hubs, diversity)
-atroplex analyze -m manifest.tsv -o results/
+# Run full per-sample inspection (sharing, splicing hubs, diversity)
+atroplex inspect -m manifest.tsv -o results/
 
 # Classify transcripts against the index
 atroplex query -i transcripts.gtf -m manifest.tsv -o results/
@@ -92,16 +92,19 @@ atroplex build -m manifest.tsv --prune-tombstones
 
 Build always produces a serialized index (`.ggx`) and a build summary (`.ggx.summary`).
 
-### `atroplex analyze` — Full pan-transcriptome analysis
+### `atroplex inspect` — Full pan-transcriptome inspection
 
-Performs detailed per-sample analysis including Jaccard isoform diversity, exon/segment sharing statistics, and splicing hub detection.
+Performs detailed per-sample inspection: overview / per-source / biotype
+breakdowns, exon & segment sharing, conserved-exon detail, splicing hubs
+(per-sample PSI + entropy + branch fan-out), and splicing events
+(cassette / alt-5′ / alt-3′ / IR / alt-terminal / mutually-exclusive).
 
 ```bash
-# Full analysis from manifest
-atroplex analyze -m ENCODE/manifest.tsv -o results/
+# Full inspection from manifest
+atroplex inspect -m ENCODE/manifest.tsv -o results/
 
-# Full analysis from annotation files
-atroplex analyze -b gencode.gtf -b sample1.gtf -o results/
+# Full inspection from annotation files
+atroplex inspect -b gencode.gtf -b sample1.gtf -o results/
 ```
 
 ### `atroplex query` — Classify transcripts against the index
@@ -112,11 +115,11 @@ Classifies input transcripts (GTF/GFF) against the pan-transcriptome index using
 # Classify transcripts
 atroplex query -i transcripts.gtf -m manifest.tsv -o results/
 
-# With differential transcript usage between conditions
+# With differential transcript usage between groups (chi-squared + BH-FDR)
+# group_a and group_b must be values of the manifest's `group` column
+# (or auto-inferred from the `_repNN` suffix on sample IDs). DTU requires
+# a .qtx sidecar to have been written during build.
 atroplex query -i transcripts.gtf -m manifest.tsv --contrast treated:control --fdr 0.05
-
-# Group by a different manifest field
-atroplex query -i transcripts.gtf -m manifest.tsv --contrast HeLa:K562 --group-by biosample
 ```
 
 ### `atroplex discover` — Discover novel transcripts
@@ -292,22 +295,28 @@ When `--min-replicates N` is provided, biological replicates within the same exp
 | `{prefix}.ggx` | Serialized grove index |
 | `{prefix}.ggx.summary` | Build summary (genes, transcripts, segments, exons, biotypes, per-chromosome) |
 
-### `atroplex analyze` output
+### `atroplex inspect` output
 
-All output goes to `{output-dir}/analysis/` with organized subfolders:
+Outputs land directly under `{output-dir}/`, grouped by category
+subfolders (no wrapper folder — matches the convention of the other
+subcommands):
 
 ```
-analysis/
-  {basename}.analysis.txt            Full text report
-  {basename}.sample_stats.csv        Per-sample metrics (samples as columns, metrics as rows)
-  {basename}.source_stats.csv        Per-source metrics (sources as columns, metrics as rows)
+{output-dir}/
+  overview/
+    {basename}.overview.tsv          Global counts (genes, transcripts, segments, exons)
+    {basename}.per_sample.tsv        Per-sample metrics (one row per sample)
+    {basename}.per_source.tsv        Per-GFF-source metrics (HAVANA / ENSEMBL / TALON / ...)
+    {basename}.biotype.tsv           Gene + transcript biotype breakdown (long-form)
   sharing/
-    {basename}.exon_sharing.tsv      Exon sharing summary
-    {basename}.segment_sharing.tsv   Segment sharing summary
-    {basename}.conserved_exons.tsv   Conserved exon detail
+    {basename}.exon_sharing.tsv      Exon sharing summary (metrics × samples)
+    {basename}.segment_sharing.tsv   Segment sharing summary (metrics × samples)
+    {basename}.conserved_exons.tsv   Per-exon detail for exons conserved in all samples
   splicing_hubs/
-    {basename}.splicing_hubs.tsv     Splicing hub exons
-    {basename}.branch_details.tsv    Per-branch detail
+    {basename}.splicing_hubs.tsv     Hub exons (>10 downstream branches) with per-sample PSI + entropy
+    {basename}.branch_details.tsv    Per-(hub × target) branch fraction + expression
+  splicing_events/
+    {basename}.splicing_events.tsv   Classified events: cassette / alt-5′ / alt-3′ / IR / alt-terminal / mutex
 ```
 
 #### Exon Sharing Summary (`.exon_sharing.tsv`)

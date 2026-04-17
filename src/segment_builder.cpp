@@ -73,7 +73,8 @@ void segment_builder::create_segment(
     auto cached = segment_cache.find(structure_key);
     if (cached != segment_cache.end()) {
         merge_into_segment(cached->second, transcript_id, sample_id,
-                          gff_source, expression_value, transcript_biotype);
+                          gff_source, expression_value, transcript_biotype,
+                          sidecar_writer);
         counters.merged_transcripts++;
         return;
     }
@@ -94,7 +95,8 @@ void segment_builder::create_segment(
             if (has_same_intron_chain(exon_chain, entry.exon_chain) &&
                 terminal_boundaries_within_tolerance(exon_chain, entry.exon_chain, TERMINAL_TOLERANCE_BP)) {
                     merge_into_segment(entry.segment, transcript_id, sample_id,
-                                      gff_source, expression_value, transcript_biotype);
+                                      gff_source, expression_value, transcript_biotype,
+                                      sidecar_writer);
                     get_segment(entry.segment->get_data()).absorbed_count++;
                     counters.merged_transcripts++;
                     return;
@@ -155,7 +157,8 @@ void segment_builder::create_segment(
                 // Fuzzy-FSM takes priority over any ISM/fragment match — absorb immediately.
                 if (match == subsequence_type::FSM) {
                     merge_into_segment(entry.segment, transcript_id, sample_id,
-                                      gff_source, expression_value, transcript_biotype);
+                                      gff_source, expression_value, transcript_biotype,
+                                      sidecar_writer);
                     get_segment(entry.segment->get_data()).absorbed_count++;
                     counters.merged_transcripts++;
                     return;
@@ -172,7 +175,8 @@ void segment_builder::create_segment(
                 if (best_match == subsequence_type::ISM_3PRIME) {
                     // Rule 2: always absorb
                     merge_into_segment(best_parent, transcript_id, sample_id,
-                                      gff_source, expression_value, transcript_biotype);
+                                      gff_source, expression_value, transcript_biotype,
+                                      sidecar_writer);
                     get_segment(best_parent->get_data()).absorbed_count++;
                     counters.merged_transcripts++;
                     return;
@@ -325,7 +329,8 @@ void segment_builder::merge_into_segment(
     std::optional<uint32_t> sample_id,
     const std::string& gff_source,
     float expression_value,
-    const std::string& transcript_biotype
+    const std::string& transcript_biotype,
+    quant_sidecar::SampleStreamWriter* sidecar_writer
 ) {
     auto& seg = get_segment(target_seg->get_data());
     uint32_t tx_id = transcript_registry::instance().intern(transcript_id);
@@ -338,6 +343,16 @@ void segment_builder::merge_into_segment(
     }
     if (!gff_source.empty()) {
         seg.add_source(gff_source);
+    }
+    // Sidecar write on merge: the original 3a wiring only wrote inside
+    // create_segment's "Step 5: Create new segment" branch, so any
+    // transcript that merged into an existing segment (Rule 0 exact,
+    // Rule 5 terminal variant, fuzzy-FSM, Rule 2 ISM_3PRIME, or
+    // try_reverse_absorption) dropped its counts. With annotations
+    // processed first, every segment is created without expression and
+    // every sample transcript then merges — leaving the .qtx empty.
+    if (sidecar_writer && expression_value >= 0.0f) {
+        sidecar_writer->append(seg.segment_index, expression_value);
     }
 }
 

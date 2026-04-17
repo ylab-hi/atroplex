@@ -108,6 +108,12 @@ public:
 
     /**
      * Merge transcript metadata into an existing segment (shared by dedup + absorption).
+     *
+     * When `sidecar_writer` is non-null and `expression_value >= 0`, appends
+     * a record for the target segment's index to the sample's stream — so
+     * expression survives the common path where a sample's transcript matches
+     * a previously created segment (e.g. annotations processed first, then
+     * samples merging in).
      */
     static void merge_into_segment(
         key_ptr target_seg,
@@ -115,7 +121,8 @@ public:
         std::optional<uint32_t> sample_id,
         const std::string& gff_source,
         float expression_value,
-        const std::string& transcript_biotype
+        const std::string& transcript_biotype,
+        quant_sidecar::SampleStreamWriter* sidecar_writer = nullptr
     );
 
     /**

@@ -45,6 +45,16 @@ struct query_result {
     // Per-sample presence (sample_id -> present)
     std::vector<uint32_t> sample_ids;
 
+    // Per-sample expression (from .qtx sidecar, populated at query time
+    // when a sidecar is loaded). Empty when no sidecar is available or
+    // the matched segment has no records in the sidecar.
+    std::map<uint32_t, float> sample_expression;
+
+    // segment_index of the best-matching catalog segment (only set when
+    // the query has a match). Used by the DTU path to look up per-sample
+    // values from the .qtx sidecar without repeating the grove query.
+    std::optional<uint64_t> matched_segment_index;
+
     // Match quality
     double junction_match_score = 0.0;
     int matching_junctions = 0;
@@ -106,9 +116,35 @@ private:
      */
     std::vector<query_result> classify_transcripts(const std::string& input_path);
 
+    /**
+     * Run differential transcript usage for a single contrast.
+     *
+     * Groups samples by `sample_info::group`, computes per-transcript
+     * proportions within each group, and applies a chi-squared test on
+     * the 2×k contingency table (k transcripts per gene). Requires a
+     * `.qtx` sidecar — per-sample expression comes from `qr.sample_expression`
+     * populated in `classify_transcripts` via `qtx_reader_ptr()->lookup()`.
+     *
+     * Samples whose `group` field is empty or `.` are skipped.
+     */
+    std::vector<dtu_result> run_dtu(
+        const query_contrast& contrast,
+        const std::vector<query_result>& results,
+        const cxxopts::ParseResult& args);
+
+    /**
+     * Benjamini–Hochberg FDR correction. Mutates `results.fdr` and
+     * `results.significant` in place using `fdr_threshold`.
+     */
+    void apply_fdr_correction(std::vector<dtu_result>& results,
+                              double fdr_threshold);
+
     // Output
     void write_classification(const std::string& path,
                               const std::vector<query_result>& results);
+    void write_dtu_results(const std::string& path,
+                           const query_contrast& contrast,
+                           const std::vector<dtu_result>& results);
     void write_summary(const std::string& path,
                        const std::vector<query_result>& classification,
                        const std::vector<std::pair<query_contrast,

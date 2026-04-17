@@ -1524,7 +1524,7 @@ void index_stats::write_summary(const std::string& path) const {
         out << "\n";
     }
 
-    out << "For detailed per-sample analysis, run: atroplex analyze\n";
+    out << "For detailed per-sample analysis, run: atroplex inspect\n";
 
     logging::info("Index summary written to: " + path);
 }
