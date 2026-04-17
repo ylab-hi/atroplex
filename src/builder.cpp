@@ -234,10 +234,15 @@ build_summary builder::build_from_samples(grove_type& grove,
     // --- Count (and optionally physically remove) absorbed segments ---
     // Collect the tombstoned segment_index values so the sidecar merge
     // below can skip emitting dead records for them in the final .qtx.
+    // Tombstones that were absorbed into a parent (via
+    // `absorb_into_parent`) populate `tombstone_remap` so merge_to_qtx
+    // rewrites those records to the parent's segment_index instead of
+    // dropping them. Issue #34.
     std::unordered_set<uint64_t> tombstoned_seg_indices;
+    std::unordered_map<uint64_t, uint64_t> tombstone_remap;
     counters.absorbed_segments = remove_tombstones(
         grove, segment_caches, gene_indices, prune_tombstones,
-        &tombstoned_seg_indices);
+        &tombstoned_seg_indices, &tombstone_remap);
 
     // Live segments = total minus tombstones that were reverse-absorbed.
     size_t live_segments = (segment_count >= counters.absorbed_segments)
@@ -311,7 +316,8 @@ build_summary builder::build_from_samples(grove_type& grove,
                 sidecar_stream_paths,
                 sidecar_sample_meta,
                 /*max_fds_per_pass=*/256,
-                tombstoned_seg_indices);
+                tombstoned_seg_indices,
+                tombstone_remap);
             logging::info("Merged " + std::to_string(sidecar_stream_paths.size()) +
                 " per-sample quantification streams into " +
                 qtx_output_path.string());
@@ -478,7 +484,8 @@ size_t builder::remove_tombstones(
     chromosome_segment_caches& segment_caches,
     chromosome_gene_segment_indices& gene_indices,
     bool physical,
-    std::unordered_set<uint64_t>* out_tombstoned_segment_indices
+    std::unordered_set<uint64_t>* out_tombstoned_segment_indices,
+    std::unordered_map<uint64_t, uint64_t>* out_tombstone_remap
 ) {
     // Phase 1 (always): walk gene_indices, count tombstones, and (when
     // physical == true) issue grove.remove_key calls while we have the
@@ -508,6 +515,14 @@ size_t builder::remove_tombstones(
                 if (out_tombstoned_segment_indices) {
                     out_tombstoned_segment_indices->insert(
                         static_cast<uint64_t>(seg.segment_index));
+                }
+                // Issue #34: when the segment was tombstoned by
+                // `absorb_into_parent` (rather than the Rule 3/4 drop
+                // path), record the parent link so merge_to_qtx can
+                // rewrite on-disk records instead of dropping them.
+                if (out_tombstone_remap && seg.absorbed_into_idx.has_value()) {
+                    (*out_tombstone_remap)[static_cast<uint64_t>(seg.segment_index)] =
+                        static_cast<uint64_t>(*seg.absorbed_into_idx);
                 }
                 if (physical) {
                     tombstone_ids.insert(seg.segment_index);
@@ -547,6 +562,24 @@ size_t builder::remove_tombstones(
                 it = seg_cache.erase(it);
             } else {
                 ++it;
+            }
+        }
+    }
+
+    // Issue #34: collapse absorption chains so every entry in the remap
+    // points at a *live* parent. Happens when a candidate was absorbed
+    // into a parent that was itself later absorbed by an even longer
+    // variant — without this pass, merge_to_qtx would re-inject a record
+    // under a tombstoned segment_index and it would get dropped on the
+    // next heap pop.
+    if (out_tombstone_remap) {
+        for (auto& [old_idx, new_idx] : *out_tombstone_remap) {
+            std::unordered_set<uint64_t> visited{old_idx};
+            auto it = out_tombstone_remap->find(new_idx);
+            while (it != out_tombstone_remap->end() &&
+                   visited.insert(new_idx).second) {
+                new_idx = it->second;
+                it = out_tombstone_remap->find(new_idx);
             }
         }
     }

@@ -245,13 +245,25 @@ private:
  *                          segments so they don't end up as dead
  *                          records in the final file. Empty set means
  *                          include all records.
+ * @param segment_remap     Optional map {tombstoned_idx → live_parent_idx}.
+ *                          When a record's segment_index is in this map,
+ *                          its index is rewritten to the parent and the
+ *                          record is re-inserted into the merge heap so
+ *                          it sorts into the parent's block. Entries
+ *                          override `excluded_segments` — a record in
+ *                          the remap is never dropped, even if its
+ *                          source index also appears in the drop set.
+ *                          The caller must have resolved transitive
+ *                          chains (path compression) so every value is
+ *                          a live segment_index. Issue #34.
  */
 void merge_to_qtx(
     const std::filesystem::path& output_path,
     const std::vector<std::filesystem::path>& streams,
     const std::vector<SampleMetadata>& samples,
     size_t max_fds_per_pass = 256,
-    const std::unordered_set<uint64_t>& excluded_segments = {});
+    const std::unordered_set<uint64_t>& excluded_segments = {},
+    const std::unordered_map<uint64_t, uint64_t>& segment_remap = {});
 
 // ── Reader ────────────────────────────────────────────────────────────
 

@@ -214,6 +214,13 @@ void segment_feature::serialize(std::ostream& os) const {
     write_pod(os, read_coverage);
     write_pod(os, absorbed);
     write_pod(os, absorbed_count);
+    // Serialize the optional as (bool has_value, size_t value). Value is
+    // ignored on read when has_value is false — no schema-version branch,
+    // callers rebuild if they touched a pre-field .ggx.
+    bool   has_parent   = absorbed_into_idx.has_value();
+    size_t parent_value = has_parent ? *absorbed_into_idx : size_t{0};
+    write_pod(os, has_parent);
+    write_pod(os, parent_value);
 }
 
 segment_feature segment_feature::deserialize(std::istream& is) {
@@ -235,6 +242,11 @@ segment_feature segment_feature::deserialize(std::istream& is) {
     sf.read_coverage = read_pod<size_t>(is);
     sf.absorbed = read_pod<bool>(is);
     sf.absorbed_count = read_pod<size_t>(is);
+    bool   has_parent   = read_pod<bool>(is);
+    size_t parent_value = read_pod<size_t>(is);
+    if (has_parent) {
+        sf.absorbed_into_idx = parent_value;
+    }
     return sf;
 }
 

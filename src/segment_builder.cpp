@@ -379,6 +379,11 @@ void segment_builder::try_reverse_absorption(
         parent_seg.merge_sources(candidate_seg.sources);
         parent_seg.absorbed_count += candidate_seg.absorbed_count + 1;
         candidate_seg.absorbed = true;
+        // Record the parent link so any .qtx records already written to
+        // disk under the candidate's segment_index get remapped to the
+        // parent at merge_to_qtx time instead of being dropped by the
+        // tombstone filter. Issue #34.
+        candidate_seg.absorbed_into_idx = parent_seg.segment_index;
         segment_cache.erase(entry.structure_key);
     };
 
