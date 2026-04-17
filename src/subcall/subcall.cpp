@@ -33,7 +33,7 @@ void subcall::add_common_options(cxxopts::Options& options) {
         ;
 
     options.add_options("Grove")
-        ("g,genogrove", "Pre-built genogrove index (.ggx)",
+        ("g,genogrove", "Directory containing a pre-built genogrove index (.ggx + .qtx)",
             cxxopts::value<std::string>())
         ("m,manifest", "Sample manifest file (TSV with metadata)",
             cxxopts::value<std::string>())
@@ -135,9 +135,32 @@ void subcall::setup_grove(const cxxopts::ParseResult& args) {
     include_scaffolds = args.count("include-scaffolds") > 0;
 
     if (args.count("genogrove")) {
-        std::string gg_path = args["genogrove"].as<std::string>();
-        logging::info("Loading grove from: " + gg_path);
-        load_grove(gg_path);
+        std::filesystem::path grove_dir = args["genogrove"].as<std::string>();
+
+        if (!std::filesystem::is_directory(grove_dir)) {
+            throw std::runtime_error(
+                "-g/--genogrove expects a directory, not a file: " +
+                grove_dir.string());
+        }
+
+        // Scan for exactly one .ggx in the directory.
+        std::filesystem::path gg_path;
+        for (const auto& entry : std::filesystem::directory_iterator(grove_dir)) {
+            if (entry.path().extension() == ".ggx") {
+                if (!gg_path.empty()) {
+                    throw std::runtime_error(
+                        "Multiple .ggx files in directory: " + grove_dir.string());
+                }
+                gg_path = entry.path();
+            }
+        }
+        if (gg_path.empty()) {
+            throw std::runtime_error(
+                "No .ggx file found in directory: " + grove_dir.string());
+        }
+
+        logging::info("Loading grove from: " + gg_path.string());
+        load_grove(gg_path.string());
         try_open_qtx_for(gg_path, qtx_reader);
         return;  // Grove loaded from file, skip building
     }
@@ -287,9 +310,16 @@ std::string subcall::resolve_prefix(const cxxopts::ParseResult& args) const {
             args["build-from"].as<std::vector<std::string>>().front()).stem().string();
     }
 
-    // Derive from genogrove index (strip .ggx extension)
+    // Derive from genogrove index directory (find the .ggx, use its stem).
     if (args.count("genogrove")) {
-        return std::filesystem::path(args["genogrove"].as<std::string>()).stem().string();
+        std::filesystem::path grove_dir = args["genogrove"].as<std::string>();
+        if (std::filesystem::is_directory(grove_dir)) {
+            for (const auto& entry : std::filesystem::directory_iterator(grove_dir)) {
+                if (entry.path().extension() == ".ggx")
+                    return entry.path().stem().string();
+            }
+        }
+        return grove_dir.stem().string();
     }
 
     return "atroplex";
