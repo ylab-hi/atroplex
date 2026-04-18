@@ -142,12 +142,11 @@ TEST_F(HubPsiEntropyTest, PsiAndEntropyCorrectForKnownHub) {
     grove_type grove(3);
     chromosome_exon_caches exon_caches;
     chromosome_segment_caches segment_caches;
-    chromosome_gene_segment_indices gene_indices;
     size_t segment_count = 0;
     build_counters counters;
 
     build_gff::build(grove, gtf_path, sample_id, exon_caches, segment_caches,
-                     gene_indices, segment_count, 0, expression_filters{}, false, 5,
+                     segment_count, 0, expression_filters{}, false, 5,
                      /*include_scaffolds=*/true, counters);
 
     // Verify we got the expected number of segments: 12 hub-using + 1 non-hub = 13

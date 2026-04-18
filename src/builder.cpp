@@ -58,8 +58,7 @@ build_summary builder::build_from_samples(grove_type& grove,
                                   bool prune_tombstones,
                                   bool include_scaffolds,
                                   const std::string& qtx_path,
-                                  chromosome_exon_caches* out_exon_caches,
-                                  chromosome_gene_segment_indices* out_gene_indices) {
+                                  chromosome_exon_caches* out_exon_caches) {
     if (samples.empty()) {
         logging::warning("No samples provided to build genogrove");
         return {};
@@ -130,7 +129,6 @@ build_summary builder::build_from_samples(grove_type& grove,
     // Chromosome-level caches for deduplication across files
     chromosome_exon_caches exon_caches;
     chromosome_segment_caches segment_caches;
-    chromosome_gene_segment_indices gene_indices;
     size_t segment_count = 0;
 
     // Process each sample sequentially (annotations first)
@@ -191,7 +189,7 @@ build_summary builder::build_from_samples(grove_type& grove,
             open_sidecar(registry_id);
 
             // Build with persistent caches for cross-file deduplication
-            build_gff::build(grove, filepath, registry_id, exon_caches, segment_caches, gene_indices, segment_count, threads, filters, absorb, fuzzy_tolerance, include_scaffolds, counters, sidecar.get());
+            build_gff::build(grove, filepath, registry_id, exon_caches, segment_caches, segment_count, threads, filters, absorb, fuzzy_tolerance, include_scaffolds, counters, sidecar.get());
         } else if (ftype == gio::filetype::BAM || ftype == gio::filetype::SAM) {
             logging::info("[" + std::to_string(current) + "/" + std::to_string(total) + "] Processing BAM: " + filepath.filename().string() +
                          (info.id.empty() ? "" : " (id: " + info.id + ")"));
@@ -200,7 +198,7 @@ build_summary builder::build_from_samples(grove_type& grove,
             open_sidecar(registry_id);
 
             build_bam::build(grove, filepath, registry_id, exon_caches, segment_caches,
-                            gene_indices, segment_count, filters, absorb, fuzzy_tolerance, include_scaffolds, counters, sidecar.get());
+                            segment_count, filters, absorb, fuzzy_tolerance, include_scaffolds, counters, sidecar.get());
         } else {
             logging::warning("Unsupported file type for: " + filepath.string());
         }
@@ -241,7 +239,7 @@ build_summary builder::build_from_samples(grove_type& grove,
     std::unordered_set<uint64_t> tombstoned_seg_indices;
     std::unordered_map<uint64_t, uint64_t> tombstone_remap;
     counters.absorbed_segments = remove_tombstones(
-        grove, segment_caches, gene_indices, prune_tombstones,
+        grove, segment_caches, prune_tombstones,
         &tombstoned_seg_indices, &tombstone_remap);
 
     // Live segments = total minus tombstones that were reverse-absorbed.
@@ -282,17 +280,8 @@ build_summary builder::build_from_samples(grove_type& grove,
                     + exon.sample_idx.word_count() * 8;
             }
         }
-        for (const auto& [sid, gidx] : gene_indices) {
-            for (const auto& [gene_id, entries] : gidx) {
-                for (const auto& e : entries) {
-                    mem_gene_idx += sizeof(segment_chain_entry)
-                        + e.exon_chain.capacity() * sizeof(key_ptr)
-                        + e.structure_key.capacity();
-                }
-            }
-        }
         size_t mem_edges = grove.edge_count() * (sizeof(edge_metadata) + 32);
-        size_t mem_total = mem_segments + mem_exons + mem_edges + mem_gene_idx;
+        size_t mem_total = mem_segments + mem_exons + mem_edges;
 
         auto fmt_mb = [](size_t bytes) {
             return std::to_string(bytes / (1024 * 1024)) + " MB";
@@ -300,8 +289,7 @@ build_summary builder::build_from_samples(grove_type& grove,
         logging::info("Memory estimate: " + fmt_mb(mem_total) +
             " (segments: " + fmt_mb(mem_segments) +
             ", exons: " + fmt_mb(mem_exons) +
-            ", edges: " + fmt_mb(mem_edges) +
-            ", gene_idx: " + fmt_mb(mem_gene_idx) + ")");
+            ", edges: " + fmt_mb(mem_edges) + ")");
     }
 
     // --- Phase: finalize quantification sidecar (K-way merge) ---
@@ -349,12 +337,8 @@ build_summary builder::build_from_samples(grove_type& grove,
                   ", Transcripts: " + std::to_string(stats.total_transcripts) +
                   ", Samples: " + std::to_string(sample_registry::instance().size()));
 
-    // Move caches to caller if requested
     if (out_exon_caches) {
         *out_exon_caches = std::move(exon_caches);
-    }
-    if (out_gene_indices) {
-        *out_gene_indices = std::move(gene_indices);
     }
 
     return stats;
@@ -482,31 +466,28 @@ size_t builder::merge_replicates(
 size_t builder::remove_tombstones(
     grove_type& grove,
     chromosome_segment_caches& segment_caches,
-    chromosome_gene_segment_indices& gene_indices,
     bool physical,
     std::unordered_set<uint64_t>* out_tombstoned_segment_indices,
     std::unordered_map<uint64_t, uint64_t>* out_tombstone_remap
 ) {
-    // Phase 1 (always): walk gene_indices, count tombstones, and (when
-    // physical == true) issue grove.remove_key calls while we have the
-    // seqid + key pointer handy. We also collect the tombstone
-    // segment_indices so the orphan-edge sweep below can drop EXON_TO_EXON
-    // chain edges that carry a dead id.
-    //
-    // Note on the physical path cost: each grove.remove_key() call fans
-    // out into genogrove's graph_overlay::remove_edges_to, which is O(E)
-    // (full adjacency scan). Segments are never edge targets, so the
-    // scan always finds zero matches but still pays the full cost — that
-    // makes the total sweep O(N × E) and can block builds for minutes
-    // to hours on realistic indices. Gated behind --prune-tombstones so
-    // callers opt in when they want a clean distributable .ggx.
+    // Phase 1: walk the grove's B+ tree to find tombstoned segments.
+    // This replaces the former gene_indices walk — the grove IS the
+    // authoritative source of all segments (issue #40).
     std::unordered_set<size_t> tombstone_ids;
     size_t removed = 0;
 
-    for (auto& [seqid, gene_idx] : gene_indices) {
-        for (auto& [gene_id, entries] : gene_idx) {
-            for (auto& entry : entries) {
-                auto& feature = entry.segment->get_data();
+    auto roots = grove.get_root_nodes();
+    for (auto& [seqid, root] : roots) {
+        if (!root) continue;
+        auto* node = root;
+        while (!node->get_is_leaf()) {
+            auto& children = node->get_children();
+            if (children.empty()) break;
+            node = children[0];
+        }
+        while (node) {
+            for (auto* key : node->get_keys()) {
+                auto& feature = key->get_data();
                 if (!is_segment(feature)) continue;
                 auto& seg = get_segment(feature);
                 if (!seg.absorbed) continue;
@@ -516,45 +497,27 @@ size_t builder::remove_tombstones(
                     out_tombstoned_segment_indices->insert(
                         static_cast<uint64_t>(seg.segment_index));
                 }
-                // Issue #34: when the segment was tombstoned by
-                // `absorb_into_parent` (rather than the Rule 3/4 drop
-                // path), record the parent link so merge_to_qtx can
-                // rewrite on-disk records instead of dropping them.
                 if (out_tombstone_remap && seg.absorbed_into_idx.has_value()) {
                     (*out_tombstone_remap)[static_cast<uint64_t>(seg.segment_index)] =
                         static_cast<uint64_t>(*seg.absorbed_into_idx);
                 }
                 if (physical) {
                     tombstone_ids.insert(seg.segment_index);
-                    grove.remove_key(seqid, entry.segment);
+                    grove.remove_key(seqid, key);
                 }
             }
+            node = node->get_next();
         }
     }
 
-    // Phase 2 (physical only): one pass to drop orphan EXON_TO_EXON
-    // edges carrying a tombstone's segment_index. remove_key only
-    // handles edges where the segment key itself is source or target;
-    // chain edges between exon keys are not touched automatically.
+    // Phase 2 (physical only): drop orphan EXON_TO_EXON chain edges.
     if (physical && !tombstone_ids.empty()) {
         grove.remove_edges_if([&tombstone_ids](const auto& e) {
             return tombstone_ids.count(e.metadata.id) > 0;
         });
     }
 
-    // Phase 3 (always): prune absorbed entries from gene_indices so that
-    // downstream stats collection never sees a tombstone.
-    for (auto& [seqid, gene_idx] : gene_indices) {
-        for (auto& [gene_id, entries] : gene_idx) {
-            std::erase_if(entries, [](const segment_chain_entry& e) {
-                return get_segment(e.segment->get_data()).absorbed;
-            });
-        }
-    }
-
-    // Phase 4 (always): safety net on segment_caches. try_reverse_absorption
-    // already erases from segment_cache at the moment it tombstones, but
-    // drop any stragglers defensively.
+    // Phase 3: safety net on segment_caches.
     for (auto& [seqid, seg_cache] : segment_caches) {
         for (auto it = seg_cache.begin(); it != seg_cache.end(); ) {
             auto& feature = it->second->get_data();
@@ -566,12 +529,7 @@ size_t builder::remove_tombstones(
         }
     }
 
-    // Issue #34: collapse absorption chains so every entry in the remap
-    // points at a *live* parent. Happens when a candidate was absorbed
-    // into a parent that was itself later absorbed by an even longer
-    // variant — without this pass, merge_to_qtx would re-inject a record
-    // under a tombstoned segment_index and it would get dropped on the
-    // next heap pop.
+    // Phase 4: collapse absorption chains (issue #34).
     if (out_tombstone_remap) {
         for (auto& [old_idx, new_idx] : *out_tombstone_remap) {
             std::unordered_set<uint64_t> visited{old_idx};

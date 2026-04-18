@@ -53,7 +53,7 @@ protected:
         // absorb=false to keep all segments as separate candidates
         build_counters counters;
         build_gff::build(*grove, fixture, sample_id, exon_caches, segment_caches,
-                         gene_indices, segment_count, 0, expression_filters{}, false, 5,
+                         segment_count, 0, expression_filters{}, false, 5,
                          /*include_scaffolds=*/true, counters);
 
         ASSERT_GT(segment_count, 0) << "No segments built from fixture";
@@ -87,7 +87,6 @@ protected:
     std::unique_ptr<grove_type> grove;
     chromosome_exon_caches exon_caches;
     chromosome_segment_caches segment_caches;
-    chromosome_gene_segment_indices gene_indices;
     size_t segment_count = 0;
 };
 
@@ -384,14 +383,13 @@ protected:
 
         build_counters counters;
         build_gff::build(*grove, gtf, sample_id, exon_caches, segment_caches,
-                         gene_indices, segment_count, 0, expression_filters{}, false, 5,
+                         segment_count, 0, expression_filters{}, false, 5,
                          /*include_scaffolds=*/true, counters);
     }
 
     std::unique_ptr<grove_type> grove;
     chromosome_exon_caches exon_caches;
     chromosome_segment_caches segment_caches;
-    chromosome_gene_segment_indices gene_indices;
     size_t segment_count = 0;
     fs::path sam_path;
 };

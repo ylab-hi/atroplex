@@ -300,9 +300,10 @@ void analysis_report::collect(grove_type& grove,
                     }
                 }
 
-                // Global row prefix
-                hub_out << hub_exon.gene_name() << "\t"
-                        << hub_exon.gene_id() << "\t"
+                // Global row prefix — gene info from gene_acc, not exon
+                auto& gene_info = gene_registry::instance().resolve(acc.gene_idx);
+                hub_out << gene_info.gene_name << "\t"
+                        << gene_info.gene_id << "\t"
                         << hub_exon.id << "\t"
                         << format_coordinate(seqid_for_hub, hub.exon->get_value()) << "\t"
                         << hub.chain_pos << "\t"
@@ -375,8 +376,8 @@ void analysis_report::collect(grove_type& grove,
                     auto& br_out = *branch_stream;
                     for (key_ptr tgt_key : hub.targets) {
                         auto& tgt = get_exon(tgt_key->get_data());
-                        br_out << hub_exon.gene_name() << "\t"
-                               << hub_exon.gene_id() << "\t"
+                        br_out << gene_info.gene_name << "\t"
+                               << gene_info.gene_id << "\t"
                                << hub_exon.id << "\t"
                                << format_coordinate(seqid_for_hub, hub.exon->get_value()) << "\t"
                                << tgt.id << "\t"
@@ -691,9 +692,10 @@ void analysis_report::collect(grove_type& grove,
                             if (exon_conserved && conserved_exon_stream
                                 && conserved_exon_stream->is_open()) {
                                 auto& out = *conserved_exon_stream;
+                                // Gene info from the parent segment
                                 out << exon.id << "\t"
-                                    << exon.gene_name() << "\t"
-                                    << exon.gene_id() << "\t"
+                                    << seg.gene_name() << "\t"
+                                    << seg.gene_id() << "\t"
                                     << seqid << "\t"
                                     << format_coordinate(seqid, current->get_value()) << "\t"
                                     << exon.transcript_ids.size();

@@ -44,7 +44,9 @@ exon_feature exon_feature::from_gff_entry(
     if (gbiotype.empty()) {
         gbiotype = get_attribute(attributes, "gene_biotype");
     }
-    feature.gene_idx = gene_registry::instance().intern(gid, gname, gbiotype);
+    // Gene identity interned but not stored on the exon — gene_idx lives
+    // only on segments. The intern() call ensures the gene is registered.
+    gene_registry::instance().intern(gid, gname, gbiotype);
 
     // Transcript information
     std::string transcript_id = get_attribute(attributes, "transcript_id");
@@ -173,7 +175,6 @@ edge_metadata edge_metadata::deserialize(std::istream& is) {
 
 void exon_feature::serialize(std::ostream& os) const {
     write_string(os, id);
-    write_pod(os, gene_idx);
     transcript_ids.serialize(os);
     write_pod(os, sources);
     sample_idx.serialize(os);
@@ -183,7 +184,6 @@ void exon_feature::serialize(std::ostream& os) const {
 exon_feature exon_feature::deserialize(std::istream& is) {
     exon_feature ef;
     ef.id = read_string(is);
-    ef.gene_idx = read_pod<uint32_t>(is);
     ef.transcript_ids = sorted_vec::deserialize(is);
     ef.sources = read_pod<uint16_t>(is);
     ef.sample_idx = sample_bitset::deserialize(is);

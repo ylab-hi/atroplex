@@ -281,7 +281,7 @@ void subcall::setup_grove(const cxxopts::ParseResult& args) {
         }
 
         auto build_start = std::chrono::steady_clock::now();
-        build_stats = builder::build_from_samples(*grove, all_samples, threads, filters, absorb, min_reps, fuzzy_tol, prune_tombstones, include_scaffolds, qtx_path, &exon_caches_, &gene_indices_);
+        build_stats = builder::build_from_samples(*grove, all_samples, threads, filters, absorb, min_reps, fuzzy_tol, prune_tombstones, include_scaffolds, qtx_path, &exon_caches_);
         auto build_elapsed = std::chrono::duration<double>(std::chrono::steady_clock::now() - build_start).count();
         build_stats->build_time_seconds = build_elapsed;
         logging::info("Grove ready with spatial index and graph structure");

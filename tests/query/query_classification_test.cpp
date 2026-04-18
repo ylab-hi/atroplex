@@ -65,7 +65,7 @@ protected:
 
         build_counters counters;
         build_gff::build(*grove, anno_path, annotation_id, exon_caches,
-                         segment_caches, gene_indices, segment_count,
+                         segment_caches, segment_count,
                          0, expression_filters{}, false, 5,
                          /*include_scaffolds=*/true, counters);
 
@@ -75,7 +75,7 @@ protected:
         sample_id = sample_registry::instance().register_data(sample_info_obj);
 
         build_gff::build(*grove, sample_path, sample_id, exon_caches,
-                         segment_caches, gene_indices, segment_count,
+                         segment_caches, segment_count,
                          0, expression_filters{}, false, 5,
                          /*include_scaffolds=*/true, counters);
 
@@ -170,7 +170,6 @@ protected:
     std::unique_ptr<grove_type> grove;
     chromosome_exon_caches exon_caches;
     chromosome_segment_caches segment_caches;
-    chromosome_gene_segment_indices gene_indices;
     size_t segment_count = 0;
     uint32_t annotation_id = 0;
     uint32_t sample_id = 0;

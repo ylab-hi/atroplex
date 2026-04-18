@@ -27,7 +27,6 @@ void build_gff::build(grove_type& grove,
     std::optional<uint32_t> sample_id,
     chromosome_exon_caches& exon_caches,
     chromosome_segment_caches& segment_caches,
-    chromosome_gene_segment_indices& gene_indices,
     size_t& segment_count,
     uint32_t /*num_threads*/,
     const expression_filters& filters,
@@ -82,7 +81,6 @@ void build_gff::build(grove_type& grove,
         if (!current_gene_id.empty() && gene_id.value() != current_gene_id) {
             process_gene(grove, grove_mutex, current_gene_entries,
                 exon_caches[current_chrom], segment_caches[current_chrom],
-                gene_indices[current_chrom],
                 sample_id, segment_count, filters, absorb, fuzzy_tolerance, counters,
                 sidecar_writer);
             current_gene_entries.clear();
@@ -93,11 +91,9 @@ void build_gff::build(grove_type& grove,
         current_gene_entries.push_back(entry);
     }
 
-    // Process final gene
     if (!current_gene_entries.empty()) {
         process_gene(grove, grove_mutex, current_gene_entries,
             exon_caches[current_chrom], segment_caches[current_chrom],
-            gene_indices[current_chrom],
             sample_id, segment_count, filters, absorb, fuzzy_tolerance, counters,
             sidecar_writer);
     }
@@ -111,7 +107,6 @@ void build_gff::process_gene(
     const std::vector<gio::gff_entry>& gene_entries,
     exon_cache_type& exon_cache,
     segment_cache_type& segment_cache,
-    gene_segment_index_type& gene_index,
     std::optional<uint32_t> sample_id,
     size_t& segment_count,
     const expression_filters& filters,
@@ -120,7 +115,6 @@ void build_gff::process_gene(
     build_counters& counters,
     quant_sidecar::SampleStreamWriter* sidecar_writer
 ) {
-    // Group entries by transcript
     std::unordered_map<std::string, std::vector<gio::gff_entry>> transcripts;
     for (const auto& entry : gene_entries) {
         std::optional<std::string> transcript_id = entry.get_transcript_id();
@@ -129,10 +123,6 @@ void build_gff::process_gene(
         }
     }
 
-    // Sort transcript keys by exon count (descending) so multi-exon transcripts
-    // are processed first — ensures mono-exon fragments have a parent to check against.
-    // Precompute exon counts once per transcript to avoid O(T·E·log T) rescans
-    // inside the sort comparator.
     std::vector<std::pair<std::string, size_t>> tx_exon_counts;
     tx_exon_counts.reserve(transcripts.size());
     for (const auto& [tx_id, entries] : transcripts) {
@@ -153,7 +143,7 @@ void build_gff::process_gene(
 
     for (const auto& transcript_id : tx_order) {
         process_transcript(grove, grove_mutex, transcript_id, transcripts[transcript_id],
-            exon_cache, segment_cache, gene_index, sample_id, segment_count,
+            exon_cache, segment_cache, sample_id, segment_count,
             filters, absorb, fuzzy_tolerance, counters, sidecar_writer);
     }
 }
@@ -165,7 +155,6 @@ void build_gff::process_transcript(
     const std::vector<gio::gff_entry>& transcript_entries,
     std::map<gdt::genomic_coordinate, key_ptr>& exon_cache,
     std::unordered_map<std::string, key_ptr>& segment_cache,
-    gene_segment_index_type& gene_index,
     std::optional<uint32_t> sample_id,
     size_t& segment_count,
     const expression_filters& filters,
@@ -287,10 +276,28 @@ void build_gff::process_transcript(
             return a.start < b.start;
         });
 
+    // Intern the gene identity for this transcript's segment. Gene_idx
+    // is metadata on the segment — not a structural key (issue #40).
+    auto gene_id_opt = sorted_exons.front().get_gene_id();
+    std::string gid = gene_id_opt.value_or("");
+    std::string gname;
+    std::string gbiotype;
+    for (const auto& entry : transcript_entries) {
+        if (entry.type == "transcript" || entry.type == "gene") {
+            auto it = entry.attributes.find("gene_name");
+            if (it != entry.attributes.end()) gname = it->second;
+            it = entry.attributes.find("gene_type");
+            if (it == entry.attributes.end()) it = entry.attributes.find("gene_biotype");
+            if (it != entry.attributes.end()) gbiotype = it->second;
+            if (!gname.empty()) break;
+        }
+    }
+    uint32_t gene_idx = gene_registry::instance().intern(gid, gname, gbiotype);
+
     segment_builder::create_segment(
         grove, grove_mutex, transcript_id, seqid, strand,
         min_it->start, max_it->end, static_cast<int>(sorted_exons.size()),
-        exon_coords, exon_chain, segment_cache, gene_index, sample_id,
+        exon_coords, exon_chain, segment_cache, gene_idx, sample_id,
         gff_source, segment_count, expression_value, transcript_biotype, absorb, fuzzy_tolerance,
         counters, sidecar_writer
     );
