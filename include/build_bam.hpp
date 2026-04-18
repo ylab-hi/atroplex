@@ -59,7 +59,8 @@ public:
                       size_t fuzzy_tolerance,
                       bool include_scaffolds,
                       build_counters& counters,
-                      quant_sidecar::SampleStreamWriter* sidecar_writer = nullptr);
+                      quant_sidecar::SampleStreamWriter* sidecar_writer = nullptr,
+                      bool annotated_loci_only = false);
 
     /**
      * Parse BAM header to extract sample metadata.

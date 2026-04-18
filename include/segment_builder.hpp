@@ -92,7 +92,8 @@ public:
         bool absorb,
         size_t fuzzy_tolerance,
         build_counters& counters,
-        quant_sidecar::SampleStreamWriter* sidecar_writer = nullptr
+        quant_sidecar::SampleStreamWriter* sidecar_writer = nullptr,
+        bool annotated_loci_only = false
     );
 
     /**

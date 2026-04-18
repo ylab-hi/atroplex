@@ -67,7 +67,8 @@ public:
                       size_t fuzzy_tolerance,
                       bool include_scaffolds,
                       build_counters& counters,
-                      quant_sidecar::SampleStreamWriter* sidecar_writer = nullptr);
+                      quant_sidecar::SampleStreamWriter* sidecar_writer = nullptr,
+                      bool annotated_loci_only = false);
 
     /**
      * Parse GTF/GFF header to extract sample metadata
@@ -122,7 +123,8 @@ public:
         bool absorb,
         size_t fuzzy_tolerance,
         build_counters& counters,
-        quant_sidecar::SampleStreamWriter* sidecar_writer = nullptr
+        quant_sidecar::SampleStreamWriter* sidecar_writer = nullptr,
+        bool annotated_loci_only = false
     );
 
 private:
@@ -139,7 +141,8 @@ private:
         bool absorb,
         size_t fuzzy_tolerance,
         build_counters& counters,
-        quant_sidecar::SampleStreamWriter* sidecar_writer = nullptr
+        quant_sidecar::SampleStreamWriter* sidecar_writer = nullptr,
+        bool annotated_loci_only = false
     );
 
     /**

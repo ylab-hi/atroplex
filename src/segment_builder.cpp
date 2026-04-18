@@ -91,7 +91,8 @@ void segment_builder::create_segment(
     bool absorb,
     size_t fuzzy_tolerance,
     build_counters& counters,
-    quant_sidecar::SampleStreamWriter* sidecar_writer
+    quant_sidecar::SampleStreamWriter* sidecar_writer,
+    bool annotated_loci_only
 ) {
     std::string structure_key = make_exon_structure_key(seqid, exon_coords);
 
@@ -216,6 +217,25 @@ void segment_builder::create_segment(
                 counters.discarded_transcripts++;
                 return;
             }
+        }
+    }
+
+    // Annotated-loci-only filter: if the flag is set and this is a
+    // SAMPLE transcript (not annotation), require at least one spatial
+    // candidate from an annotation source. Annotation transcripts always
+    // pass — they ARE the reference loci. Transcripts that merged into
+    // existing segments via Rules 0-5 already returned above.
+    if (annotated_loci_only && !is_annotation_sample(sample_id)) {
+        bool overlaps_annotation = false;
+        for (const auto& cand : candidates) {
+            if (is_parent_annotation(cand.segment)) {
+                overlaps_annotation = true;
+                break;
+            }
+        }
+        if (!overlaps_annotation) {
+            counters.discarded_transcripts++;
+            return;
         }
     }
 

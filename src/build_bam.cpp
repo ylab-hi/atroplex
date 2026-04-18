@@ -29,7 +29,8 @@ void build_bam::build(grove_type& grove,
     size_t fuzzy_tolerance,
     bool include_scaffolds,
     build_counters& counters,
-    quant_sidecar::SampleStreamWriter* sidecar_writer) {
+    quant_sidecar::SampleStreamWriter* sidecar_writer,
+    bool annotated_loci_only) {
 
     // Step 1: Cluster reads by splice junction signature
     gio::bam_reader reader(filepath.string(), gio::bam_reader_options::primary_only());
@@ -115,7 +116,7 @@ void build_bam::build(grove_type& grove,
             sample_id, "BAM", segment_count,
             read_count, "",
             absorb, fuzzy_tolerance,
-            counters, sidecar_writer
+            counters, sidecar_writer, annotated_loci_only
         );
     }
 
