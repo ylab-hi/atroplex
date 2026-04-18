@@ -23,7 +23,6 @@ void build_bam::build(grove_type& grove,
     std::optional<uint32_t> sample_id,
     chromosome_exon_caches& exon_caches,
     chromosome_segment_caches& segment_caches,
-    chromosome_gene_segment_indices& gene_indices,
     size_t& segment_count,
     const expression_filters& filters,
     bool absorb,
@@ -106,14 +105,15 @@ void build_bam::build(grove_type& grove,
         }
 
         // Create segment via segment_builder (same absorption rules as GTF)
+        uint32_t seg_gene_idx = gene_registry::instance().intern(gene_id, gene_name, gene_biotype);
         segment_builder::create_segment(
             grove, grove_mutex, tx_id, seqid, cluster.strand,
             cluster.start, cluster.end,
             static_cast<int>(exon_intervals.size()),
             exon_coords, exon_chain,
-            segment_caches[seqid], gene_indices[seqid],
+            segment_caches[seqid], seg_gene_idx,
             sample_id, "BAM", segment_count,
-            read_count, "",  // expression = read count, no biotype from BAM
+            read_count, "",
             absorb, fuzzy_tolerance,
             counters, sidecar_writer
         );
@@ -242,9 +242,8 @@ key_ptr build_bam::insert_exon(
         return exon_key;
     }
 
-    // Create new exon
+    // Create new exon (gene_idx lives on segments, not exons)
     exon_feature new_exon;
-    new_exon.gene_idx = gene_registry::instance().intern(gene_id, gene_name, gene_biotype);
     new_exon.transcript_ids.insert(transcript_registry::instance().intern(transcript_id));
     new_exon.exon_number = -1;  // Unknown from BAM
 

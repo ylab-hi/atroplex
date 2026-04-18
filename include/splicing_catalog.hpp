@@ -64,18 +64,8 @@ struct splicing_event {
 class splicing_catalog {
 public:
     /**
-     * Build the catalog from builder caches (available during build).
-     * Uses pre-populated gene_segment_index for efficient per-gene traversal.
-     */
-    static std::vector<splicing_event> collect(
-        const chromosome_gene_segment_indices& gene_indices,
-        grove_type& grove
-    );
-
-    /**
-     * Build the catalog by walking the grove directly (no builder caches needed).
+     * Build the catalog by walking the grove directly.
      * Reconstructs per-gene segment chains from the grove's B+ tree and graph edges.
-     * Use this when loading from a .ggx file where builder caches are unavailable.
      */
     static std::vector<splicing_event> collect_from_grove(grove_type& grove);
 

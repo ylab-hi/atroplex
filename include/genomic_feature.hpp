@@ -420,12 +420,6 @@ inline std::string format_coordinate(const std::string& seqid,
 struct exon_feature {
     // Core identifiers
     std::string id;                  // Exon ID
-    uint32_t gene_idx;               // Index into gene_registry (gene_id, gene_name, gene_biotype)
-
-    // Gene accessors (resolve through gene_registry)
-    const std::string& gene_id() const { return gene_registry::instance().resolve(gene_idx).gene_id; }
-    const std::string& gene_name() const { return gene_registry::instance().resolve(gene_idx).gene_name; }
-    const std::string& gene_biotype() const { return gene_registry::instance().resolve(gene_idx).gene_biotype; }
 
     // Transcript associations (interned via transcript_registry)
     sorted_vec transcript_ids;  // Reference transcripts using this exon
@@ -440,7 +434,7 @@ struct exon_feature {
     int exon_number;                 // Exon number within transcript (-1 for unknown)
 
     // Constructors
-    exon_feature() : gene_idx(0), sources(0), exon_number(-1) {}
+    exon_feature() : sources(0), exon_number(-1) {}
 
     // Create exon from GFF entry
     static exon_feature from_gff_entry(
@@ -671,14 +665,11 @@ using segment_cache_type = std::unordered_map<std::string, key_ptr>;
 using chromosome_exon_caches = std::map<std::string, exon_cache_type>;
 using chromosome_segment_caches = std::map<std::string, segment_cache_type>;
 
-// ISM absorption: per-gene index of segments with their exon chains
+// Retained for splicing_catalog's per-gene chain reconstruction
 struct segment_chain_entry {
     key_ptr segment;
     std::vector<key_ptr> exon_chain;
     std::string structure_key;
 };
-
-using gene_segment_index_type = std::unordered_map<std::string, std::vector<segment_chain_entry>>;
-using chromosome_gene_segment_indices = std::map<std::string, gene_segment_index_type>;
 
 #endif //ATROPLEX_GENOMIC_FEATURE_HPP

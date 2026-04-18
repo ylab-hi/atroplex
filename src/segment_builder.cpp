@@ -20,8 +20,6 @@ static size_t abs_diff(size_t a, size_t b) {
 }
 
 // ========================================================================
-// Absorption rules — see absorption_rules.txt for full documentation.
-//
 // Rule 0: FSM            — identical exon coordinates → Merge
 // Rule 1: 5' ISM         — contiguous subset at 5' end → Keep
 // Rule 2: 3' ISM         — contiguous subset at 3' end, 1-2 missing → Absorb
@@ -44,6 +42,34 @@ static size_t abs_diff(size_t a, size_t b) {
 //   Step 6: Reverse absorption (Steps 1, 2, 4 on existing segments)
 // ========================================================================
 
+// ── Exon chain walking via graph edges ──────────────────────────────
+
+std::vector<key_ptr> segment_builder::walk_exon_chain(
+    grove_type& grove, key_ptr segment_key, size_t segment_index
+) {
+    std::vector<key_ptr> chain;
+    auto first_exons = grove.get_neighbors_if(segment_key,
+        [segment_index](const edge_metadata& e) {
+            return e.type == edge_metadata::edge_type::SEGMENT_TO_EXON
+                && e.id == segment_index;
+        });
+    if (first_exons.empty()) return chain;
+
+    auto* current = first_exons.front();
+    while (current) {
+        chain.push_back(current);
+        auto next = grove.get_neighbors_if(current,
+            [segment_index](const edge_metadata& e) {
+                return e.type == edge_metadata::edge_type::EXON_TO_EXON
+                    && e.id == segment_index;
+            });
+        current = next.empty() ? nullptr : next.front();
+    }
+    return chain;
+}
+
+// ── Segment creation with spatial absorption ────────────────────────
+
 void segment_builder::create_segment(
     grove_type& grove,
     std::mutex& grove_mutex,
@@ -56,7 +82,7 @@ void segment_builder::create_segment(
     const std::vector<gdt::genomic_coordinate>& exon_coords,
     const std::vector<key_ptr>& exon_chain,
     segment_cache_type& segment_cache,
-    gene_segment_index_type& gene_index,
+    uint32_t gene_idx,
     std::optional<uint32_t> sample_id,
     const std::string& gff_source,
     size_t& segment_count,
@@ -79,29 +105,44 @@ void segment_builder::create_segment(
         return;
     }
 
-    const std::string& gene_id = get_exon(exon_chain.front()->get_data()).gene_id();
-    auto gene_it = absorb ? gene_index.find(gene_id) : gene_index.end();
-    bool has_gene_entries = (gene_it != gene_index.end());
+    // Spatial candidate lookup — find all segments overlapping this
+    // transcript's span. Replaces the gene_segment_index lookup so
+    // absorption works across gene_ids (issue #40).
+    struct spatial_candidate {
+        key_ptr segment;
+        std::vector<key_ptr> exon_chain;
+    };
+    std::vector<spatial_candidate> candidates;
 
-    // Step 2: Rule 5 — Terminal variant (same intron chain, TSS/TES <50bp → absorb)
-    if (absorb && exon_chain.size() >= 2 && has_gene_entries) {
-        for (const auto& entry : gene_it->second) {
-            auto& candidate_seg = get_segment(entry.segment->get_data());
-            if (candidate_seg.absorbed) continue;
+    if (absorb && exon_chain.size() >= 2) {
+        gdt::genomic_coordinate query_coord(strand, span_start, span_end);
+        auto result = grove.intersect(query_coord, seqid);
+        for (auto* candidate_key : result.get_keys()) {
+            if (!is_segment(candidate_key->get_data())) continue;
+            auto& seg = get_segment(candidate_key->get_data());
+            if (seg.absorbed) continue;
+            if (seg.exon_count < 2) continue;
+            auto chain = walk_exon_chain(grove, candidate_key, seg.segment_index);
+            if (chain.empty()) continue;
+            candidates.push_back({candidate_key, std::move(chain)});
+        }
+    }
 
-            // Rule 5 requires equal exon counts — skip before calling into the helpers.
-            if (entry.exon_chain.size() != exon_chain.size()) continue;
+    // Step 2: Rule 5 — Terminal variant (same intron chain, TSS/TES <50bp)
+    if (absorb && exon_chain.size() >= 2) {
+        for (const auto& cand : candidates) {
+            if (cand.exon_chain.size() != exon_chain.size()) continue;
 
-            if (has_same_intron_chain(exon_chain, entry.exon_chain) &&
-                terminal_boundaries_within_tolerance(exon_chain, entry.exon_chain, TERMINAL_TOLERANCE_BP)) {
-                    merge_into_segment(entry.segment, transcript_id, sample_id,
-                                      gff_source, expression_value, transcript_biotype,
-                                      sidecar_writer);
-                    get_segment(entry.segment->get_data()).absorbed_count++;
-                    counters.merged_transcripts++;
-                    return;
-                }
+            if (has_same_intron_chain(exon_chain, cand.exon_chain) &&
+                terminal_boundaries_within_tolerance(exon_chain, cand.exon_chain, TERMINAL_TOLERANCE_BP)) {
+                merge_into_segment(cand.segment, transcript_id, sample_id,
+                                  gff_source, expression_value, transcript_biotype,
+                                  sidecar_writer);
+                get_segment(cand.segment->get_data()).absorbed_count++;
+                counters.merged_transcripts++;
+                return;
             }
+        }
     }
 
     // Step 3: Rules 6/7/8 — Mono-exon handling
@@ -109,85 +150,71 @@ void segment_builder::create_segment(
         if (!absorb) return;
 
         auto& mono_coord = exon_chain.front()->get_value();
-        auto mono_class = classify_mono_exon(mono_coord, gene_index, gene_id);
+        auto mono_class = classify_mono_exon(mono_coord, grove, seqid);
 
         switch (mono_class) {
             case mono_exon_class::INTRON_RETENTION:
-                break;  // Rule 7: keep — fall through to segment creation
+                break;
             case mono_exon_class::GENE_OVERLAP:
                 counters.discarded_transcripts++;
-                return; // Rule 6: drop
+                return;
             case mono_exon_class::INTERGENIC:
                 counters.discarded_transcripts++;
-                return; // Rule 8: drop
+                return;
         }
     }
 
-    // Step 4: Rules 0(fuzzy)/1/2/3/4 — Subsequence matching (pointer identity, then fuzzy)
-    if (absorb && exon_chain.size() >= 2 && has_gene_entries) {
-        {
-            key_ptr best_parent = nullptr;
-            size_t best_exon_count = 0;
-            subsequence_type best_match = subsequence_type::NONE;
+    // Step 4: Rules 0(fuzzy)/1/2/3/4 — Subsequence matching
+    if (absorb && exon_chain.size() >= 2) {
+        key_ptr best_parent = nullptr;
+        size_t best_exon_count = 0;
+        subsequence_type best_match = subsequence_type::NONE;
 
-            for (const auto& entry : gene_it->second) {
-                auto& candidate_seg = get_segment(entry.segment->get_data());
-                if (candidate_seg.absorbed) continue;
+        for (const auto& cand : candidates) {
+            if (cand.exon_chain.size() < exon_chain.size()) continue;
 
-                // Early-exit: parent must have at least as many exons as child.
-                // Equal-size chains can still match via fuzzy-FSM (all boundaries
-                // shifted by <=tolerance) and are handled as subsequence_type::FSM.
-                if (entry.exon_chain.size() < exon_chain.size()) continue;
+            const auto& parent_first = cand.exon_chain.front()->get_value();
+            const auto& parent_last = cand.exon_chain.back()->get_value();
+            if (span_start + fuzzy_tolerance < parent_first.get_start()) continue;
+            if (span_end > parent_last.get_end() + fuzzy_tolerance) continue;
 
-                // Early-exit: child's coordinate span must fit within parent's span
-                // (accounting for fuzzy tolerance on the boundaries).
-                const auto& parent_first = entry.exon_chain.front()->get_value();
-                const auto& parent_last = entry.exon_chain.back()->get_value();
-                if (span_start + fuzzy_tolerance < parent_first.get_start()) continue;
-                if (span_end > parent_last.get_end() + fuzzy_tolerance) continue;
-
-                auto match = classify_subsequence(exon_chain, entry.exon_chain);
-                if (match == subsequence_type::NONE) {
-                    match = fuzzy_classify_subsequence(exon_chain, entry.exon_chain, fuzzy_tolerance);
-                }
-
-                if (match == subsequence_type::NONE) continue;
-                if (match == subsequence_type::ISM_5PRIME) continue; // Rule 1: keep
-
-                // Fuzzy-FSM takes priority over any ISM/fragment match — absorb immediately.
-                if (match == subsequence_type::FSM) {
-                    merge_into_segment(entry.segment, transcript_id, sample_id,
-                                      gff_source, expression_value, transcript_biotype,
-                                      sidecar_writer);
-                    get_segment(entry.segment->get_data()).absorbed_count++;
-                    counters.merged_transcripts++;
-                    return;
-                }
-
-                if (entry.exon_chain.size() > best_exon_count) {
-                    best_parent = entry.segment;
-                    best_exon_count = entry.exon_chain.size();
-                    best_match = match;
-                }
+            auto match = classify_subsequence(exon_chain, cand.exon_chain);
+            if (match == subsequence_type::NONE) {
+                match = fuzzy_classify_subsequence(exon_chain, cand.exon_chain, fuzzy_tolerance);
             }
 
-            if (best_parent != nullptr) {
-                if (best_match == subsequence_type::ISM_3PRIME) {
-                    // Rule 2: always absorb
-                    merge_into_segment(best_parent, transcript_id, sample_id,
-                                      gff_source, expression_value, transcript_biotype,
-                                      sidecar_writer);
-                    get_segment(best_parent->get_data()).absorbed_count++;
-                    counters.merged_transcripts++;
-                    return;
-                }
+            if (match == subsequence_type::NONE) continue;
+            if (match == subsequence_type::ISM_5PRIME) continue;
 
-                // Rules 3/4: drop vs ref, keep vs sample
-                if (is_parent_annotation(best_parent)) {
-                    counters.discarded_transcripts++;
-                    return; // Drop
-                }
-                // vs sample: keep — fall through to creation
+            if (match == subsequence_type::FSM) {
+                merge_into_segment(cand.segment, transcript_id, sample_id,
+                                  gff_source, expression_value, transcript_biotype,
+                                  sidecar_writer);
+                get_segment(cand.segment->get_data()).absorbed_count++;
+                counters.merged_transcripts++;
+                return;
+            }
+
+            if (cand.exon_chain.size() > best_exon_count) {
+                best_parent = cand.segment;
+                best_exon_count = cand.exon_chain.size();
+                best_match = match;
+            }
+        }
+
+        if (best_parent != nullptr) {
+            if (best_match == subsequence_type::ISM_3PRIME) {
+                merge_into_segment(best_parent, transcript_id, sample_id,
+                                  gff_source, expression_value, transcript_biotype,
+                                  sidecar_writer);
+                get_segment(best_parent->get_data()).absorbed_count++;
+                counters.merged_transcripts++;
+                return;
+            }
+
+            if (is_parent_annotation(best_parent)) {
+                counters.discarded_transcripts++;
+                return;
             }
         }
     }
@@ -203,9 +230,7 @@ void segment_builder::create_segment(
         new_segment.transcript_biotypes[tx_id] = transcript_biotype;
     }
     new_segment.exon_count = exon_count;
-
-    const auto& first_exon_data = get_exon(exon_chain.front()->get_data());
-    new_segment.gene_idx = first_exon_data.gene_idx;
+    new_segment.gene_idx = gene_idx;
 
     if (sample_id.has_value()) {
         new_segment.add_sample(*sample_id);
@@ -230,20 +255,15 @@ void segment_builder::create_segment(
     }
     segment_count++;
 
-    // Write expression value to sidecar (if writer armed and value present).
-    // segment_index = segment_count - 1 (just assigned above).
     if (sidecar_writer && expression_value >= 0.0f) {
         sidecar_writer->append(segment_count - 1, expression_value);
     }
 
     segment_cache[structure_key] = seg_key;
 
-    // Step 5b: Register in gene segment index
-    gene_index[gene_id].push_back({seg_key, exon_chain, structure_key});
-
-    // Step 6: Reverse absorption
+    // Step 6: Reverse absorption (spatial — no gene_index needed)
     if (absorb) {
-        try_reverse_absorption(gene_index, gene_id, seg_key, exon_chain, segment_cache, fuzzy_tolerance);
+        try_reverse_absorption(grove, seg_key, exon_chain, segment_cache, seqid, fuzzy_tolerance);
     }
 }
 
@@ -357,88 +377,93 @@ void segment_builder::merge_into_segment(
 }
 
 void segment_builder::try_reverse_absorption(
-    gene_segment_index_type& gene_index,
-    const std::string& gene_id,
+    grove_type& grove,
     key_ptr new_seg,
     const std::vector<key_ptr>& new_exon_chain,
     segment_cache_type& segment_cache,
+    const std::string& seqid,
     size_t fuzzy_tolerance
 ) {
-    auto gene_it = gene_index.find(gene_id);
-    if (gene_it == gene_index.end()) return;
-
     auto& parent_seg = get_segment(new_seg->get_data());
     bool new_seg_is_ref = is_parent_annotation(new_seg);
 
-    auto absorb_into_parent = [&](auto& candidate_seg, auto& entry) {
-        for (const auto& tx : candidate_seg.transcript_ids)
-            parent_seg.transcript_ids.insert(tx);
-        for (const auto& [tx, bt] : candidate_seg.transcript_biotypes)
-            parent_seg.transcript_biotypes[tx] = bt;
-        parent_seg.sample_idx.merge(candidate_seg.sample_idx);
-        parent_seg.merge_sources(candidate_seg.sources);
-        parent_seg.absorbed_count += candidate_seg.absorbed_count + 1;
-        candidate_seg.absorbed = true;
-        // Record the parent link so any .qtx records already written to
-        // disk under the candidate's segment_index get remapped to the
-        // parent at merge_to_qtx time instead of being dropped by the
-        // tombstone filter. Issue #34.
-        candidate_seg.absorbed_into_idx = parent_seg.segment_index;
-        segment_cache.erase(entry.structure_key);
-    };
-
-    auto tombstone_candidate = [&](auto& candidate_seg, auto& entry) {
-        candidate_seg.absorbed = true;
-        segment_cache.erase(entry.structure_key);
-    };
-
-    // Precompute new segment's coordinate span for span filter
     const auto& new_first = new_exon_chain.front()->get_value();
     const auto& new_last = new_exon_chain.back()->get_value();
-    size_t new_start = new_first.get_start();
-    size_t new_end = new_last.get_end();
+    // Use min/max — on minus strand, front() has higher genomic coords than back()
+    size_t new_start = std::min(new_first.get_start(), new_last.get_start());
+    size_t new_end   = std::max(new_first.get_end(),   new_last.get_end());
+    char strand = new_first.get_strand();
 
-    for (auto& entry : gene_it->second) {
-        if (entry.segment == new_seg) continue;
+    gdt::genomic_coordinate query_coord(strand, new_start, new_end);
+    auto result = grove.intersect(query_coord, seqid);
 
-        auto& candidate_seg = get_segment(entry.segment->get_data());
+    for (auto* candidate_key : result.get_keys()) {
+        if (candidate_key == new_seg) continue;
+        if (!is_segment(candidate_key->get_data())) continue;
+
+        auto& candidate_seg = get_segment(candidate_key->get_data());
         if (candidate_seg.absorbed) continue;
 
+        auto cand_chain = walk_exon_chain(grove, candidate_key, candidate_seg.segment_index);
+        if (cand_chain.empty()) continue;
+
+        // Compute structure key for cache erasure on absorption
+        auto erase_from_cache = [&]() {
+            std::vector<gdt::genomic_coordinate> coords;
+            coords.reserve(cand_chain.size());
+            for (auto* k : cand_chain) coords.push_back(k->get_value());
+            segment_cache.erase(make_exon_structure_key(seqid, coords));
+        };
+
         // Rule 5: Terminal variant (requires equal exon count)
-        if (entry.exon_chain.size() == new_exon_chain.size() &&
-            has_same_intron_chain(entry.exon_chain, new_exon_chain) &&
-            terminal_boundaries_within_tolerance(entry.exon_chain, new_exon_chain, TERMINAL_TOLERANCE_BP)) {
-            absorb_into_parent(candidate_seg, entry);
+        if (cand_chain.size() == new_exon_chain.size() &&
+            has_same_intron_chain(cand_chain, new_exon_chain) &&
+            terminal_boundaries_within_tolerance(cand_chain, new_exon_chain, TERMINAL_TOLERANCE_BP)) {
+            for (const auto& tx : candidate_seg.transcript_ids)
+                parent_seg.transcript_ids.insert(tx);
+            for (const auto& [tx, bt] : candidate_seg.transcript_biotypes)
+                parent_seg.transcript_biotypes[tx] = bt;
+            parent_seg.sample_idx.merge(candidate_seg.sample_idx);
+            parent_seg.merge_sources(candidate_seg.sources);
+            parent_seg.absorbed_count += candidate_seg.absorbed_count + 1;
+            candidate_seg.absorbed = true;
+            candidate_seg.absorbed_into_idx = parent_seg.segment_index;
+            erase_from_cache();
             continue;
         }
 
-        // Early-exit: candidate (child) must have at most as many exons as new
-        // segment (parent). Equal-size candidates can still match via fuzzy-FSM.
-        if (entry.exon_chain.size() > new_exon_chain.size()) continue;
+        if (cand_chain.size() > new_exon_chain.size()) continue;
 
-        // Early-exit: candidate's span must fit within the new segment's span
-        // (accounting for fuzzy tolerance).
-        const auto& cand_first = entry.exon_chain.front()->get_value();
-        const auto& cand_last = entry.exon_chain.back()->get_value();
-        if (cand_first.get_start() + fuzzy_tolerance < new_start) continue;
-        if (cand_last.get_end() > new_end + fuzzy_tolerance) continue;
+        size_t cand_start = std::min(cand_chain.front()->get_value().get_start(),
+                                     cand_chain.back()->get_value().get_start());
+        size_t cand_end   = std::max(cand_chain.front()->get_value().get_end(),
+                                     cand_chain.back()->get_value().get_end());
+        if (cand_start + fuzzy_tolerance < new_start) continue;
+        if (cand_end > new_end + fuzzy_tolerance) continue;
 
-        // Rules 0(fuzzy)/1/2/3/4: Subsequence (pointer, then fuzzy)
-        auto match = classify_subsequence(entry.exon_chain, new_exon_chain);
+        auto match = classify_subsequence(cand_chain, new_exon_chain);
         if (match == subsequence_type::NONE) {
-            match = fuzzy_classify_subsequence(entry.exon_chain, new_exon_chain, fuzzy_tolerance);
+            match = fuzzy_classify_subsequence(cand_chain, new_exon_chain, fuzzy_tolerance);
         }
 
         if (match == subsequence_type::NONE) continue;
-        if (match == subsequence_type::ISM_5PRIME) continue; // Rule 1: keep
+        if (match == subsequence_type::ISM_5PRIME) continue;
 
         if (match == subsequence_type::FSM || match == subsequence_type::ISM_3PRIME) {
-            // Fuzzy-FSM or Rule 2: always absorb candidate into new segment
-            absorb_into_parent(candidate_seg, entry);
+            for (const auto& tx : candidate_seg.transcript_ids)
+                parent_seg.transcript_ids.insert(tx);
+            for (const auto& [tx, bt] : candidate_seg.transcript_biotypes)
+                parent_seg.transcript_biotypes[tx] = bt;
+            parent_seg.sample_idx.merge(candidate_seg.sample_idx);
+            parent_seg.merge_sources(candidate_seg.sources);
+            parent_seg.absorbed_count += candidate_seg.absorbed_count + 1;
+            candidate_seg.absorbed = true;
+            candidate_seg.absorbed_into_idx = parent_seg.segment_index;
+            erase_from_cache();
         } else {
-            // Rules 3/4: drop vs ref, keep vs sample
             if (new_seg_is_ref) {
-                tombstone_candidate(candidate_seg, entry);
+                candidate_seg.absorbed = true;
+                erase_from_cache();
             }
         }
     }
@@ -487,23 +512,26 @@ bool segment_builder::terminal_boundaries_within_tolerance(
 
 segment_builder::mono_exon_class segment_builder::classify_mono_exon(
     const gdt::genomic_coordinate& mono_coord,
-    const gene_segment_index_type& gene_index,
-    const std::string& gene_id
+    grove_type& grove,
+    const std::string& seqid
 ) {
-    auto gene_it = gene_index.find(gene_id);
-    if (gene_it == gene_index.end()) return mono_exon_class::INTERGENIC;
-
+    // Spatial lookup: find all segments overlapping the mono-exon
+    auto result = grove.intersect(mono_coord, seqid);
     bool overlaps_gene = false;
 
-    for (const auto& entry : gene_it->second) {
-        auto& candidate_seg = get_segment(entry.segment->get_data());
+    for (auto* candidate_key : result.get_keys()) {
+        if (!is_segment(candidate_key->get_data())) continue;
+        auto& candidate_seg = get_segment(candidate_key->get_data());
         if (candidate_seg.absorbed) continue;
-        if (entry.exon_chain.size() < 2) continue;
+        if (candidate_seg.exon_count < 2) continue;
+
+        auto chain = walk_exon_chain(grove, candidate_key, candidate_seg.segment_index);
+        if (chain.size() < 2) continue;
 
         // Check if mono-exon spans from one exon across an intron into the next
-        for (size_t i = 0; i + 1 < entry.exon_chain.size(); ++i) {
-            auto& exon_coord = entry.exon_chain[i]->get_value();
-            auto& next_coord = entry.exon_chain[i + 1]->get_value();
+        for (size_t i = 0; i + 1 < chain.size(); ++i) {
+            auto& exon_coord = chain[i]->get_value();
+            auto& next_coord = chain[i + 1]->get_value();
 
             if (mono_coord.get_start() < exon_coord.get_end() &&
                 mono_coord.get_end() > next_coord.get_start()) {
@@ -511,9 +539,8 @@ segment_builder::mono_exon_class segment_builder::classify_mono_exon(
             }
         }
 
-        // Check if mono-exon overlaps any exon of this segment
         if (!overlaps_gene) {
-            for (const auto& exon_key : entry.exon_chain) {
+            for (const auto& exon_key : chain) {
                 auto& exon_coord = exon_key->get_value();
                 if (mono_coord.get_start() < exon_coord.get_end() &&
                     mono_coord.get_end() > exon_coord.get_start()) {

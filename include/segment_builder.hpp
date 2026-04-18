@@ -55,13 +55,21 @@ public:
     );
 
     /**
+     * Walk a segment's exon chain via SEGMENT_TO_EXON → EXON_TO_EXON
+     * graph edges. Returns the ordered exon key_ptrs.
+     */
+    [[nodiscard]] static std::vector<key_ptr> walk_exon_chain(
+        grove_type& grove,
+        key_ptr segment_key,
+        size_t segment_index
+    );
+
+    /**
      * Create new segment or match against existing ones via absorption rules.
      *
-     * @param seqid Normalized chromosome/sequence ID
-     * @param strand Strand character ('+' or '-')
-     * @param span_start Minimum start coordinate across all exons
-     * @param span_end Maximum end coordinate across all exons
-     * @param exon_count Number of exons in this transcript
+     * Absorption candidates are found via grove.intersect() — spatially,
+     * not by gene_id. This enables cross-annotation absorption and
+     * eliminates gene_id as a structural dependency (issue #40).
      */
     static void create_segment(
         grove_type& grove,
@@ -75,7 +83,7 @@ public:
         const std::vector<gdt::genomic_coordinate>& exon_coords,
         const std::vector<key_ptr>& exon_chain,
         segment_cache_type& segment_cache,
-        gene_segment_index_type& gene_index,
+        uint32_t gene_idx,
         std::optional<uint32_t> sample_id,
         const std::string& gff_source,
         size_t& segment_count,
@@ -127,14 +135,15 @@ public:
 
     /**
      * Reverse absorption: apply Rules 0/2/3/4/5 to existing segments
-     * when a new (potentially longer) segment is created.
+     * when a new (potentially longer) segment is created. Candidates
+     * are found spatially via grove.intersect(), not by gene_id.
      */
     static void try_reverse_absorption(
-        gene_segment_index_type& gene_index,
-        const std::string& gene_id,
+        grove_type& grove,
         key_ptr new_seg,
         const std::vector<key_ptr>& new_exon_chain,
         segment_cache_type& segment_cache,
+        const std::string& seqid,
         size_t fuzzy_tolerance = 5
     );
 
@@ -157,8 +166,8 @@ public:
     enum class mono_exon_class { GENE_OVERLAP, INTRON_RETENTION, INTERGENIC };
     [[nodiscard]] static mono_exon_class classify_mono_exon(
         const gdt::genomic_coordinate& mono_coord,
-        const gene_segment_index_type& gene_index,
-        const std::string& gene_id
+        grove_type& grove,
+        const std::string& seqid
     );
 
     /** Check if the given sample_id corresponds to a reference annotation */

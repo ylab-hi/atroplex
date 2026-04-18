@@ -59,13 +59,8 @@ public:
         size_t fuzzy_tolerance,
         bool prune_tombstones,
         bool include_scaffolds = false,
-        /// Final .qtx output path. Empty means no quantification sidecar
-        /// is written. A temp directory is derived from this path
-        /// (`<qtx_path>.tmp/`) for per-sample streams that are K-way
-        /// merged into the final single file at end of build.
         const std::string& qtx_path = "",
-        chromosome_exon_caches* out_exon_caches = nullptr,
-        chromosome_gene_segment_indices* out_gene_indices = nullptr
+        chromosome_exon_caches* out_exon_caches = nullptr
     );
 
     /**
@@ -127,7 +122,6 @@ private:
     static size_t remove_tombstones(
         grove_type& grove,
         chromosome_segment_caches& segment_caches,
-        chromosome_gene_segment_indices& gene_indices,
         bool physical,
         std::unordered_set<uint64_t>* out_tombstoned_segment_indices = nullptr,
         std::unordered_map<uint64_t, uint64_t>* out_tombstone_remap = nullptr

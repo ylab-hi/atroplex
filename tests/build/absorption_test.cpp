@@ -33,7 +33,6 @@ protected:
         size_t total_absorbed_into;
         size_t live_transcript_count;
         std::unique_ptr<grove_type> grove;
-        chromosome_gene_segment_indices gene_indices;
     };
 
     BuildResult build_fixture(const std::string& filename,
@@ -45,7 +44,6 @@ protected:
         auto grove = std::make_unique<grove_type>(3);
         chromosome_exon_caches exon_caches;
         chromosome_segment_caches segment_caches;
-        chromosome_gene_segment_indices gene_indices;
         size_t segment_count = 0;
 
         sample_info info("test_sample");
@@ -57,14 +55,24 @@ protected:
 
         build_counters counters;
         build_gff::build(*grove, fixture, sample_id, exon_caches, segment_caches,
-                         gene_indices, segment_count, 0, expression_filters{}, absorb, 5,
+                         segment_count, 0, expression_filters{}, absorb, 5,
                          /*include_scaffolds=*/true, counters);
 
         size_t absorbed = 0, live = 0, total_absorbed_into = 0, live_tx_count = 0;
-        for (const auto& [chrom, gene_idx] : gene_indices) {
-            for (const auto& [gene_id, entries] : gene_idx) {
-                for (const auto& entry : entries) {
-                    auto& seg = get_segment(entry.segment->get_data());
+        auto roots = grove->get_root_nodes();
+        for (auto& [seqid, root] : roots) {
+            if (!root) continue;
+            auto* node = root;
+            while (!node->get_is_leaf()) {
+                auto& children = node->get_children();
+                if (children.empty()) break;
+                node = children[0];
+            }
+            while (node) {
+                for (auto* key : node->get_keys()) {
+                    auto& feature = key->get_data();
+                    if (!is_segment(feature)) continue;
+                    auto& seg = get_segment(feature);
                     if (seg.absorbed) {
                         absorbed++;
                     } else {
@@ -73,11 +81,12 @@ protected:
                         live_tx_count += seg.transcript_ids.size();
                     }
                 }
+                node = node->get_next();
             }
         }
 
         return {segment_count, absorbed, live, total_absorbed_into, live_tx_count,
-                std::move(grove), std::move(gene_indices)};
+                std::move(grove)};
     }
 
     // Build two files sequentially to test cross-file absorption with ref/sample distinction
@@ -92,7 +101,6 @@ protected:
         auto grove = std::make_unique<grove_type>(3);
         chromosome_exon_caches exon_caches;
         chromosome_segment_caches segment_caches;
-        chromosome_gene_segment_indices gene_indices;
         size_t segment_count = 0;
 
         build_counters counters;
@@ -102,7 +110,7 @@ protected:
         if (file1_annotation) { info1.type = "annotation"; info1.annotation_source = "GENCODE"; }
         uint32_t sid1 = sample_registry::instance().register_data(info1);
         build_gff::build(*grove, fix1, sid1, exon_caches, segment_caches,
-                         gene_indices, segment_count, 0, expression_filters{}, absorb, 5,
+                         segment_count, 0, expression_filters{}, absorb, 5,
                          /*include_scaffolds=*/true, counters);
 
         // File 2
@@ -110,14 +118,24 @@ protected:
         if (file2_annotation) { info2.type = "annotation"; info2.annotation_source = "GENCODE"; }
         uint32_t sid2 = sample_registry::instance().register_data(info2);
         build_gff::build(*grove, fix2, sid2, exon_caches, segment_caches,
-                         gene_indices, segment_count, 0, expression_filters{}, absorb, 5,
+                         segment_count, 0, expression_filters{}, absorb, 5,
                          /*include_scaffolds=*/true, counters);
 
         size_t absorbed = 0, live = 0, total_absorbed_into = 0, live_tx_count = 0;
-        for (const auto& [chrom, gene_idx] : gene_indices) {
-            for (const auto& [gene_id, entries] : gene_idx) {
-                for (const auto& entry : entries) {
-                    auto& seg = get_segment(entry.segment->get_data());
+        auto roots = grove->get_root_nodes();
+        for (auto& [seqid, root] : roots) {
+            if (!root) continue;
+            auto* node = root;
+            while (!node->get_is_leaf()) {
+                auto& children = node->get_children();
+                if (children.empty()) break;
+                node = children[0];
+            }
+            while (node) {
+                for (auto* key : node->get_keys()) {
+                    auto& feature = key->get_data();
+                    if (!is_segment(feature)) continue;
+                    auto& seg = get_segment(feature);
                     if (seg.absorbed) {
                         absorbed++;
                     } else {
@@ -126,11 +144,12 @@ protected:
                         live_tx_count += seg.transcript_ids.size();
                     }
                 }
+                node = node->get_next();
             }
         }
 
         return {segment_count, absorbed, live, total_absorbed_into, live_tx_count,
-                std::move(grove), std::move(gene_indices)};
+                std::move(grove)};
     }
 };
 

@@ -60,7 +60,6 @@ public:
                       std::optional<uint32_t> sample_id,
                       chromosome_exon_caches& exon_caches,
                       chromosome_segment_caches& segment_caches,
-                      chromosome_gene_segment_indices& gene_indices,
                       size_t& segment_count,
                       uint32_t num_threads,
                       const expression_filters& filters,
@@ -117,7 +116,6 @@ public:
         const std::vector<gio::gff_entry>& gene_entries,
         exon_cache_type& exon_cache,
         segment_cache_type& segment_cache,
-        gene_segment_index_type& gene_index,
         std::optional<uint32_t> sample_id,
         size_t& segment_count,
         const expression_filters& filters,
@@ -128,17 +126,6 @@ public:
     );
 
 private:
-    /**
-     * Process a single transcript: create exon chain and segment
-     * @param grove Grove to add entries to
-     * @param grove_mutex Mutex protecting grove operations
-     * @param transcript_id Transcript ID
-     * @param all_entries All entries for this transcript (exons + annotations)
-     * @param exon_keys Map of exon coordinates to their keys (for reuse across transcripts)
-     * @param segment_keys Map of exon structure keys to segment keys (for deduplication)
-     * @param sample_id Sample registry ID for pan-transcriptome tracking
-     * @param segment_count Reference to segment counter (incremented when segment is created)
-     */
     static void process_transcript(
         grove_type& grove,
         std::mutex& grove_mutex,
@@ -146,7 +133,6 @@ private:
         const std::vector<gio::gff_entry>& all_entries,
         std::map<gdt::genomic_coordinate, key_ptr>& exon_keys,
         std::unordered_map<std::string, key_ptr>& segment_keys,
-        gene_segment_index_type& gene_index,
         std::optional<uint32_t> sample_id,
         size_t& segment_count,
         const expression_filters& filters,

@@ -328,8 +328,8 @@ index_stats index_stats::collect(grove_type& grove, const collect_options& opts)
                         if (is_exon(feature)) {
                             auto& exon = get_exon(feature);
                             index_stats::branching_exon_info info;
-                            info.gene_name = exon.gene_name();
-                            info.gene_id = exon.gene_id();
+                            info.gene_name = std::string("?");
+                            info.gene_id = std::string("?");
                             info.exon_id = exon.id;
                             info.coordinate = format_coordinate(seqid, current->get_value());
                             info.exon_key = current;
@@ -338,7 +338,7 @@ index_stats index_stats::collect(grove_type& grove, const collect_options& opts)
 
                             // Count transcripts for this gene only (exons can accumulate
                             // transcript_ids from overlapping genes via deduplication)
-                            auto gene_tx_set = genes.find(exon.gene_id());
+                            auto gene_tx_set = genes.find(std::string("?"));
                             if (gene_tx_set != genes.end()) {
                                 size_t gene_filtered = 0;
                                 for (const auto& tx : exon.transcript_ids) {
@@ -370,7 +370,7 @@ index_stats index_stats::collect(grove_type& grove, const collect_options& opts)
 
                                     // Count transcripts through this target per sample
                                     // Only count transcripts that also use the hub exon AND belong to same gene
-                                    auto gene_filter = genes.find(exon.gene_id());
+                                    auto gene_filter = genes.find(std::string("?"));
                                     for (const auto& tx : te.transcript_ids) {
                                         if (!exon.transcript_ids.count(tx)) continue;
                                         if (gene_filter != genes.end() && !gene_filter->second.transcript_ids.count(tx)) continue;
@@ -401,7 +401,7 @@ index_stats index_stats::collect(grove_type& grove, const collect_options& opts)
                             // Count per-sample transcripts using this hub exon
                             // Filter to only transcripts belonging to this gene (exons can
                             // accumulate transcript_ids from overlapping genes via deduplication)
-                            auto gene_it = genes.find(exon.gene_id());
+                            auto gene_it = genes.find(std::string("?"));
                             for (const auto& tx : exon.transcript_ids) {
                                 if (gene_it != genes.end() && !gene_it->second.transcript_ids.count(tx)) continue;
                                 auto it = tx_to_samples.find(tx);
@@ -440,7 +440,7 @@ index_stats index_stats::collect(grove_type& grove, const collect_options& opts)
                             }
 
                             // Traditional PSI: hub transcripts / gene transcripts per sample
-                            auto gene_tx_it = gene_sample_tx.find(exon.gene_id());
+                            auto gene_tx_it = gene_sample_tx.find(std::string("?"));
                             if (gene_tx_it != gene_sample_tx.end()) {
                                 for (uint32_t sid : exon.sample_idx) {
                                     auto hub_tx = info.sample_transcripts.find(sid);
@@ -692,7 +692,7 @@ index_stats index_stats::collect(grove_type& grove, const collect_options& opts)
                 }
 
                 // Constitutive vs alternative
-                size_t gene_total = gene_transcript_counts[exon.gene_id()];
+                size_t gene_total = gene_transcript_counts[std::string("?")];
                 if (gene_total > 0 && tx_count >= gene_total) {
                     stats.constitutive_exons++;
                 } else {
@@ -736,8 +736,8 @@ index_stats index_stats::collect(grove_type& grove, const collect_options& opts)
                     if (conserved_stream && conserved_stream->is_open()) {
                         // Stream directly to file
                         *conserved_stream << exon.id << "\t"
-                            << exon.gene_name() << "\t"
-                            << exon.gene_id() << "\t"
+                            << std::string("?") << "\t"
+                            << std::string("?") << "\t"
                             << seqid << "\t"
                             << format_coordinate(seqid, current->get_value()) << "\t"
                             << tx_count << "\t"
@@ -753,8 +753,8 @@ index_stats index_stats::collect(grove_type& grove, const collect_options& opts)
                         // Accumulate in memory (non-streaming path)
                         index_stats::conserved_exon_entry entry;
                         entry.exon_id = exon.id;
-                        entry.gene_name = exon.gene_name();
-                        entry.gene_id = exon.gene_id();
+                        entry.gene_name = std::string("?");
+                        entry.gene_id = std::string("?");
                         entry.chromosome = seqid;
                         entry.coordinate = format_coordinate(seqid, current->get_value());
                         entry.n_transcripts = tx_count;
@@ -770,7 +770,7 @@ index_stats index_stats::collect(grove_type& grove, const collect_options& opts)
                     if (exon.source_count() == 1) {
                         stats.per_source[src].exclusive_exons++;
                     }
-                    source_gene_ids[src].insert(exon.gene_id());
+                    source_gene_ids[src].insert(std::string("?"));
                 });
 
                 // Continue chain

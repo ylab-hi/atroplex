@@ -27,39 +27,10 @@
 // (vector<key_ptr>) where pointer identity means the same exon object.
 // ========================================================================
 
-std::vector<splicing_event> splicing_catalog::collect(
-    const chromosome_gene_segment_indices& gene_indices,
-    grove_type& grove
-) {
-    std::vector<splicing_event> all_events;
-
-    for (const auto& [chrom, gene_idx] : gene_indices) {
-        for (const auto& [gene_id, segments] : gene_idx) {
-            // Filter to non-absorbed segments with ≥2 exons
-            std::vector<segment_chain_entry> valid;
-            for (const auto& entry : segments) {
-                auto& seg = get_segment(entry.segment->get_data());
-                if (seg.absorbed) continue;
-                if (entry.exon_chain.size() < 2) continue;
-                valid.push_back(entry);
-            }
-
-            // Need at least 2 transcript paths to detect alternative splicing
-            if (valid.size() < 2) continue;
-
-            auto gene_events = detect_gene_events(gene_id, chrom, valid, grove);
-            all_events.insert(all_events.end(),
-                std::make_move_iterator(gene_events.begin()),
-                std::make_move_iterator(gene_events.end()));
-        }
-    }
-
-    return all_events;
-}
-
 std::vector<splicing_event> splicing_catalog::collect_from_grove(grove_type& grove) {
-    // Reconstruct gene_indices by walking the grove
-    chromosome_gene_segment_indices gene_indices;
+    // Build per-gene segment chains by walking the grove
+    using gene_index_type = std::unordered_map<std::string, std::vector<segment_chain_entry>>;
+    std::map<std::string, gene_index_type> gene_indices;
 
     auto roots = grove.get_root_nodes();
     for (auto& [seqid, root] : roots) {
@@ -119,7 +90,26 @@ std::vector<splicing_event> splicing_catalog::collect_from_grove(grove_type& gro
         }
     }
 
-    return collect(gene_indices, grove);
+    // Run event detection per gene
+    std::vector<splicing_event> all_events;
+    for (const auto& [chrom, gene_idx] : gene_indices) {
+        for (const auto& [gene_id, segments] : gene_idx) {
+            std::vector<segment_chain_entry> valid;
+            for (const auto& entry : segments) {
+                auto& seg = get_segment(entry.segment->get_data());
+                if (seg.absorbed) continue;
+                if (entry.exon_chain.size() < 2) continue;
+                valid.push_back(entry);
+            }
+            if (valid.size() < 2) continue;
+
+            auto gene_events = detect_gene_events(gene_id, chrom, valid, grove);
+            all_events.insert(all_events.end(),
+                std::make_move_iterator(gene_events.begin()),
+                std::make_move_iterator(gene_events.end()));
+        }
+    }
+    return all_events;
 }
 
 std::vector<splicing_event> splicing_catalog::detect_gene_events(
@@ -234,7 +224,7 @@ void splicing_catalog::detect_cassette_exons(
         event.type = splicing_event_type::CASSETTE_EXON;
         event.gene_id = gene_id;
         auto& exon_data = get_exon(candidate->get_data());
-        event.gene_name = exon_data.gene_name();
+        event.gene_name = get_segment(segments.front().segment->get_data()).gene_name();
         event.chromosome = chromosome;
         event.affected_exons.push_back(candidate);
 
@@ -313,7 +303,7 @@ void splicing_catalog::detect_alt_splice_sites(
         event.type = splicing_event_type::ALT_5PRIME;
         event.gene_id = gene_id;
         auto& exon_data = get_exon(exon_group[0]->get_data());
-        event.gene_name = exon_data.gene_name();
+        event.gene_name = get_segment(segments.front().segment->get_data()).gene_name();
         event.chromosome = chromosome;
         event.affected_exons = exon_group;
 
@@ -335,7 +325,7 @@ void splicing_catalog::detect_alt_splice_sites(
         event.type = splicing_event_type::ALT_3PRIME;
         event.gene_id = gene_id;
         auto& exon_data = get_exon(exon_group[0]->get_data());
-        event.gene_name = exon_data.gene_name();
+        event.gene_name = get_segment(segments.front().segment->get_data()).gene_name();
         event.chromosome = chromosome;
         event.affected_exons = exon_group;
 
@@ -428,7 +418,7 @@ void splicing_catalog::detect_intron_retention(
         event.type = splicing_event_type::INTRON_RETENTION;
         event.gene_id = gene_id;
         auto& exon_data = get_exon(intron.upstream_exon->get_data());
-        event.gene_name = exon_data.gene_name();
+        event.gene_name = get_segment(segments.front().segment->get_data()).gene_name();
         event.chromosome = chromosome;
         event.upstream_exon = intron.upstream_exon;
         event.downstream_exon = intron.downstream_exon;
@@ -479,7 +469,7 @@ void splicing_catalog::detect_alt_terminal_exons(
         event.type = splicing_event_type::ALT_FIRST_EXON;
         event.gene_id = gene_id;
         auto& exon_data = get_exon(segments[0].exon_chain.front()->get_data());
-        event.gene_name = exon_data.gene_name();
+        event.gene_name = get_segment(segments.front().segment->get_data()).gene_name();
         event.chromosome = chromosome;
         event.affected_exons.assign(first_exons.begin(), first_exons.end());
 
@@ -493,7 +483,7 @@ void splicing_catalog::detect_alt_terminal_exons(
         event.type = splicing_event_type::ALT_LAST_EXON;
         event.gene_id = gene_id;
         auto& exon_data = get_exon(segments[0].exon_chain.back()->get_data());
-        event.gene_name = exon_data.gene_name();
+        event.gene_name = get_segment(segments.front().segment->get_data()).gene_name();
         event.chromosome = chromosome;
         event.affected_exons.assign(last_exons.begin(), last_exons.end());
 
@@ -584,7 +574,7 @@ void splicing_catalog::detect_mutually_exclusive(
             event.type = splicing_event_type::MUTUALLY_EXCLUSIVE;
             event.gene_id = gene_id;
             auto& exon_data = get_exon(all_exons[i]->get_data());
-            event.gene_name = exon_data.gene_name();
+            event.gene_name = get_segment(segments.front().segment->get_data()).gene_name();
             event.chromosome = chromosome;
             event.upstream_exon = shared_upstream;
             event.downstream_exon = shared_downstream;

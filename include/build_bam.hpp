@@ -43,7 +43,6 @@ public:
      * @param sample_id Sample registry ID for pan-transcriptome tracking
      * @param exon_caches Chromosome-level exon caches (for cross-file deduplication)
      * @param segment_caches Chromosome-level segment caches
-     * @param gene_indices Per-gene segment index (for absorption)
      * @param segment_count Running segment counter
      * @param filters Type-specific expression thresholds. BAM clusters only have a read-count signal, so only `filters.min_counts` is honored; other attribute thresholds are ignored.
      * @param absorb Enable absorption rules
@@ -54,7 +53,6 @@ public:
                       std::optional<uint32_t> sample_id,
                       chromosome_exon_caches& exon_caches,
                       chromosome_segment_caches& segment_caches,
-                      chromosome_gene_segment_indices& gene_indices,
                       size_t& segment_count,
                       const expression_filters& filters,
                       bool absorb,
