@@ -247,9 +247,18 @@ build_summary builder::build_from_samples(grove_type& grove,
         grove, segment_caches, prune_tombstones,
         &tombstoned_seg_indices, &tombstone_remap);
 
-    // Live segments = total minus tombstones that were reverse-absorbed.
-    size_t live_segments = (segment_count >= counters.absorbed_segments)
-        ? segment_count - counters.absorbed_segments
+    // Live segments = total minus tombstones minus zero-attribution segments
+    // (features that lost all sample bits after replicate merging).
+    size_t zero_attribution = 0;
+    for (const auto& [seqid, seg_cache] : segment_caches) {
+        for (const auto& [key, seg_ptr] : seg_cache) {
+            if (!is_segment(seg_ptr->get_data())) continue;
+            auto& seg = get_segment(seg_ptr->get_data());
+            if (!seg.absorbed && seg.sample_count() == 0) zero_attribution++;
+        }
+    }
+    size_t live_segments = (segment_count >= counters.absorbed_segments + zero_attribution)
+        ? segment_count - counters.absorbed_segments - zero_attribution
         : segment_count;
     std::string tombstone_note;
     if (counters.absorbed_segments > 0) {
