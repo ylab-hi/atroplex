@@ -578,5 +578,5 @@ build_summary builder::build_from_files(grove_type& grove,
         samples.push_back(std::move(info));
     }
 
-    return build_from_samples(grove, samples, threads, expression_filters{}, true, 0, 5, false, false, /*qtx_path=*/"", out_exon_caches);
+    return build_from_samples(grove, samples, threads, expression_filters{}, true, 0, 0.0, 5, false, false, /*qtx_path=*/"", out_exon_caches);
 }
