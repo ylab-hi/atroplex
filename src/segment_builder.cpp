@@ -239,6 +239,18 @@ void segment_builder::create_segment(
         }
     }
 
+    // When overlapping an annotation segment, inherit its gene_idx so
+    // novel isoforms at known loci don't inflate the gene count with
+    // sample-specific gene_ids (MSTRG.*, ENCLB*, etc.).
+    if (annotated_loci_only) {
+        for (const auto& cand : candidates) {
+            if (is_parent_annotation(cand.segment)) {
+                gene_idx = get_segment(cand.segment->get_data()).gene_idx;
+                break;
+            }
+        }
+    }
+
     // Step 5: Create new segment
     gdt::genomic_coordinate segment_coord(strand, span_start, span_end);
 
