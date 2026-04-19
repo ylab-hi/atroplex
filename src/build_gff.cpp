@@ -38,8 +38,8 @@ void build_gff::build(grove_type& grove,
     bool annotated_loci_only) {
 
     gio::gff_reader reader(filepath.string());
+    const size_t segment_count_before = segment_count;
 
-    // Dummy mutex (unused in single-threaded mode, but required by process_gene signature)
     std::mutex grove_mutex;
 
     // Buffer for current gene's entries
@@ -99,7 +99,8 @@ void build_gff::build(grove_type& grove,
             sidecar_writer);
     }
 
-    logging::progress_done(segment_count, "Processed " + filepath.filename().string());
+    logging::progress_done(segment_count, segment_count - segment_count_before,
+                           "Processed " + filepath.filename().string());
 }
 
 void build_gff::process_gene(

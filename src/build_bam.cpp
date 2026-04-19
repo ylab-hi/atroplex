@@ -32,6 +32,8 @@ void build_bam::build(grove_type& grove,
     quant_sidecar::SampleStreamWriter* sidecar_writer,
     bool annotated_loci_only) {
 
+    const size_t segment_count_before = segment_count;
+
     // Step 1: Cluster reads by splice junction signature
     gio::bam_reader reader(filepath.string(), gio::bam_reader_options::primary_only());
 
@@ -120,7 +122,8 @@ void build_bam::build(grove_type& grove,
         );
     }
 
-    logging::progress_done(segment_count, "Processed " + filepath.filename().string());
+    logging::progress_done(segment_count, segment_count - segment_count_before,
+                           "Processed " + filepath.filename().string());
 }
 
 // ========================================================================

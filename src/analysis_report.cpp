@@ -797,7 +797,7 @@ void analysis_report::write_overview(const std::string& path) const {
     out << "metric\tvalue\n" << std::fixed;
     out << "samples\t" << per_sample.size() << "\n";
     out << "genes\t" << total_genes << "\n";
-    out << "transcripts\t" << total_transcripts << "\n";
+    out << "source_transcript_ids\t" << total_transcripts << "\n";
     out << "segments/isoforms\t" << total_segments << "\n";
     out << "exons\t" << total_exons << "\n";
     out << "graph_edges\t" << total_edges << "\n";
