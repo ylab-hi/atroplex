@@ -96,7 +96,7 @@ void build_gff::build(grove_type& grove,
         process_gene(grove, grove_mutex, current_gene_entries,
             exon_caches[current_chrom], segment_caches[current_chrom],
             sample_id, segment_count, filters, absorb, fuzzy_tolerance, counters,
-            sidecar_writer);
+            sidecar_writer, annotated_loci_only);
     }
 
     logging::progress_done(segment_count, segment_count - segment_count_before,
