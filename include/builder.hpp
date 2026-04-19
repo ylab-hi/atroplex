@@ -60,7 +60,8 @@ public:
         bool prune_tombstones,
         bool include_scaffolds = false,
         const std::string& qtx_path = "",
-        chromosome_exon_caches* out_exon_caches = nullptr
+        chromosome_exon_caches* out_exon_caches = nullptr,
+        bool annotated_loci_only = false
     );
 
     /**

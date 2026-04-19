@@ -145,20 +145,20 @@ namespace logging {
                   << RESET << "          " << std::flush;  // Extra spaces to clear previous content
     }
 
-    void progress_done(size_t segments, const std::string& prefix) {
+    void progress_done(size_t total_segments, size_t new_segments, const std::string& prefix) {
         std::lock_guard<std::mutex> lock(log_mutex);
         auto now = std::chrono::steady_clock::now();
         auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - progress_start_time).count();
         double seconds = static_cast<double>(elapsed) / 1000.0;
 
-        // Clear the progress line (if enabled) and print final message
         if (progress_enabled) {
-            std::cout << "\r";  // Clear progress line
+            std::cout << "\r";
         }
         std::cout << "[atroplex] " << get_timestamp() << " - "
-                  << prefix << " " << format_number(segments) << " segments"
+                  << prefix << " " << format_number(total_segments)
+                  << " total segments (+" << format_number(new_segments) << ")"
                   << " in " << std::fixed << std::setprecision(1) << seconds << "s"
-                  << (progress_enabled ? "                    " : "")  // Extra spaces only if clearing
+                  << (progress_enabled ? "                    " : "")
                   << std::endl;
     }
 }

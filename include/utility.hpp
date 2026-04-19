@@ -73,7 +73,7 @@ namespace logging {
      * @param segments Total segments created
      * @param prefix Prefix message
      */
-    void progress_done(size_t segments, const std::string& prefix = "Processed");
+    void progress_done(size_t total_segments, size_t new_segments, const std::string& prefix = "Processed");
 
     /**
      * Reset the progress timer (call before starting a new progress sequence)

@@ -64,6 +64,10 @@ void subcall::add_common_options(cxxopts::Options& options) {
             "Default: off — scaffold features are filtered at ingest to keep the pan-transcriptome index "
             "focused on main-chromosome biology. Enable for non-human/non-mouse species or when you "
             "specifically need scaffold contributions.")
+        ("annotated-loci-only", "Only keep sample transcripts that spatially overlap an annotation "
+            "segment in the grove. Novel intergenic and antisense gene loci (which are predominantly "
+            "long-read artifacts) are discarded. Requires at least one annotation entry in the manifest. "
+            "Default: off — all transcripts are indexed.")
         ;
 }
 
@@ -281,7 +285,11 @@ void subcall::setup_grove(const cxxopts::ParseResult& args) {
         }
 
         auto build_start = std::chrono::steady_clock::now();
-        build_stats = builder::build_from_samples(*grove, all_samples, threads, filters, absorb, min_reps, fuzzy_tol, prune_tombstones, include_scaffolds, qtx_path, &exon_caches_);
+        bool annotated_only = args.count("annotated-loci-only") > 0;
+        if (annotated_only) {
+            logging::info("Annotated-loci-only mode: sample transcripts at novel loci will be discarded");
+        }
+        build_stats = builder::build_from_samples(*grove, all_samples, threads, filters, absorb, min_reps, fuzzy_tol, prune_tombstones, include_scaffolds, qtx_path, &exon_caches_, annotated_only);
         auto build_elapsed = std::chrono::duration<double>(std::chrono::steady_clock::now() - build_start).count();
         build_stats->build_time_seconds = build_elapsed;
         logging::info("Grove ready with spatial index and graph structure");
