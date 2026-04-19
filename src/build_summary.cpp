@@ -87,13 +87,15 @@ void build_summary::collect(
     std::vector<size_t> exons_per_segment;
 
     for (const auto& [seqid, seg_cache] : segment_caches) {
-        per_chromosome[seqid].segments = seg_cache.size();
+        size_t live_in_chrom = 0;
 
         for (const auto& [key, seg_ptr] : seg_cache) {
             auto& feature = seg_ptr->get_data();
             if (!is_segment(feature)) continue;
 
             auto& seg = get_segment(feature);
+            if (seg.absorbed || seg.sample_count() == 0) continue;
+            live_in_chrom++;
             auto& gi = genes[seg.gene_id()];
             gi.biotype = seg.gene_biotype();
             for (const auto& tx : seg.transcript_ids) {
@@ -112,6 +114,7 @@ void build_summary::collect(
                 single_exon_segments++;
             }
         }
+        per_chromosome[seqid].segments = live_in_chrom;
     }
 
     // Exon counts
