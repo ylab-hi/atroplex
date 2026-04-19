@@ -80,6 +80,10 @@ namespace logging {
     // Thread safety
     static std::mutex log_mutex;
 
+    static std::string seg_qualifier;
+    void set_segment_qualifier(const std::string& q) { seg_qualifier = q; }
+    const std::string& segment_qualifier() { return seg_qualifier; }
+
     // Progress tracking
     static std::chrono::steady_clock::time_point progress_start_time;
     static bool progress_enabled = false;  // Disabled by default (for SLURM, CI, etc.)
@@ -157,6 +161,7 @@ namespace logging {
         std::cout << "[atroplex] " << get_timestamp() << " - "
                   << prefix << " " << format_number(total_segments)
                   << " total segments (+" << format_number(new_segments) << ")"
+                  << seg_qualifier
                   << " in " << std::fixed << std::setprecision(1) << seconds << "s"
                   << (progress_enabled ? "                    " : "")
                   << std::endl;

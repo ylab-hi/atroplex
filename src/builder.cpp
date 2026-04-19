@@ -134,6 +134,10 @@ build_summary builder::build_from_samples(grove_type& grove,
     chromosome_segment_caches segment_caches;
     size_t segment_count = 0;
 
+    if (min_replicates > 0 || min_replicate_fraction > 0) {
+        logging::set_segment_qualifier(" (pre-filter)");
+    }
+
     // Process each sample sequentially (annotations first)
     size_t total = ordered.size();
     size_t current = 0;
@@ -265,8 +269,18 @@ build_summary builder::build_from_samples(grove_type& grove,
         tombstone_note = " (" + std::to_string(counters.absorbed_segments)
             + (prune_tombstones ? " tombstones pruned)" : " tombstones)");
     }
-    logging::info("Grove construction complete: " + std::to_string(live_segments)
-        + " segments" + tombstone_note);
+    if (zero_attribution > 0) {
+        size_t pre_filter = segment_count - counters.absorbed_segments;
+        logging::info("Grove construction complete: " +
+            std::to_string(pre_filter) + " segments (pre-filter)" + tombstone_note);
+        logging::info("Replicate filtering: " + std::to_string(live_segments) +
+            " segments (post-filter, -" + std::to_string(zero_attribution) +
+            " below threshold)");
+        logging::set_segment_qualifier("");
+    } else {
+        logging::info("Grove construction complete: " + std::to_string(live_segments)
+            + " segments" + tombstone_note);
+    }
 
     // End-of-build memory estimate — walks segment_caches / exon_caches /
     // gene_indices once and sums struct-owned heap allocations. Approximate
@@ -342,6 +356,10 @@ build_summary builder::build_from_samples(grove_type& grove,
     // --- Collect summary statistics ---
     build_summary stats;
     stats.collect(grove, segment_caches, exon_caches, segment_count, counters);
+    if (zero_attribution > 0) {
+        stats.total_segments = (stats.total_segments >= zero_attribution)
+            ? stats.total_segments - zero_attribution : stats.total_segments;
+    }
 
     // Concise one-line registry summary (detailed per-chromosome breakdown
     // still lives on stats.per_chromosome and surfaces in the .ggx.summary).
