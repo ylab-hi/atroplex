@@ -56,6 +56,7 @@ public:
         const expression_filters& filters,
         bool absorb,
         int min_replicates,
+        double min_replicate_fraction,
         size_t fuzzy_tolerance,
         bool prune_tombstones,
         bool include_scaffolds = false,
@@ -91,7 +92,8 @@ private:
     static size_t merge_replicates(
         chromosome_exon_caches& exon_caches,
         chromosome_segment_caches& segment_caches,
-        int min_replicates
+        int min_replicates,
+        double min_replicate_fraction
     );
 
     /// Handle absorbed (tombstoned) segments after the build.

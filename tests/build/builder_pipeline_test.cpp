@@ -150,7 +150,7 @@ TEST_F(BuilderPipelineTest, BuilderFullPipeline_CountersPopulated) {
     auto summary = builder::build_from_samples(
         grove, samples,
         /*threads=*/1, /*filters=*/expression_filters{}, /*absorb=*/true,
-        /*min_replicates=*/0, /*fuzzy_tolerance=*/5,
+        /*min_replicates=*/0, /*min_replicate_fraction=*/0.0, /*fuzzy_tolerance=*/5,
         /*prune_tombstones=*/false);
 
     // 2 transcripts read from the two files
@@ -198,7 +198,7 @@ TEST_F(BuilderPipelineTest, RemoveTombstones_DefaultKeepsInTree) {
     auto summary = builder::build_from_samples(
         grove, samples,
         /*threads=*/1, /*filters=*/expression_filters{}, /*absorb=*/true,
-        /*min_replicates=*/0, /*fuzzy_tolerance=*/5,
+        /*min_replicates=*/0, /*min_replicate_fraction=*/0.0, /*fuzzy_tolerance=*/5,
         /*prune_tombstones=*/false);
 
     ASSERT_EQ(summary.counters.absorbed_segments, 1u)
@@ -241,7 +241,7 @@ TEST_F(BuilderPipelineTest, RemoveTombstones_PruneFlagPhysicallyRemoves) {
     auto summary = builder::build_from_samples(
         grove, samples,
         /*threads=*/1, /*filters=*/expression_filters{}, /*absorb=*/true,
-        /*min_replicates=*/0, /*fuzzy_tolerance=*/5,
+        /*min_replicates=*/0, /*min_replicate_fraction=*/0.0, /*fuzzy_tolerance=*/5,
         /*prune_tombstones=*/true);
 
     ASSERT_EQ(summary.counters.absorbed_segments, 1u);
@@ -279,7 +279,7 @@ TEST_F(BuilderPipelineTest, RemoveTombstones_PruneFlagDropsOrphanEdges) {
         auto summary = builder::build_from_samples(
             grove, samples,
             /*threads=*/1, /*filters=*/expression_filters{}, /*absorb=*/true,
-            /*min_replicates=*/0, /*fuzzy_tolerance=*/5,
+            /*min_replicates=*/0, /*min_replicate_fraction=*/0.0, /*fuzzy_tolerance=*/5,
             /*prune_tombstones=*/true);
         ASSERT_EQ(summary.counters.absorbed_segments, 1u);
         pruned_edge_count = grove.edge_count();
@@ -303,7 +303,7 @@ TEST_F(BuilderPipelineTest, RemoveTombstones_PruneFlagDropsOrphanEdges) {
         auto summary = builder::build_from_samples(
             grove, samples,
             /*threads=*/1, /*filters=*/expression_filters{}, /*absorb=*/true,
-            /*min_replicates=*/0, /*fuzzy_tolerance=*/5,
+            /*min_replicates=*/0, /*min_replicate_fraction=*/0.0, /*fuzzy_tolerance=*/5,
             /*prune_tombstones=*/false);
         ASSERT_EQ(summary.counters.absorbed_segments, 1u);
         default_edge_count = grove.edge_count();
@@ -334,7 +334,7 @@ TEST_F(BuilderPipelineTest, BuildSummary_WrittenFileContainsCounters) {
     auto summary = builder::build_from_samples(
         grove, samples,
         /*threads=*/1, /*filters=*/expression_filters{}, /*absorb=*/true,
-        /*min_replicates=*/0, /*fuzzy_tolerance=*/5,
+        /*min_replicates=*/0, /*min_replicate_fraction=*/0.0, /*fuzzy_tolerance=*/5,
         /*prune_tombstones=*/false);
 
     fs::path summary_path = tmp_dir / "test.ggx.summary";

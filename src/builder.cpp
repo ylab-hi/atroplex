@@ -11,6 +11,7 @@
 // standard
 #include <algorithm>
 #include <charconv>
+#include <cmath>
 #include <filesystem>
 #include <memory>
 #include <string_view>
@@ -54,6 +55,7 @@ build_summary builder::build_from_samples(grove_type& grove,
                                   const expression_filters& filters,
                                   bool absorb,
                                   int min_replicates,
+                                  double min_replicate_fraction,
                                   size_t fuzzy_tolerance,
                                   bool prune_tombstones,
                                   bool include_scaffolds,
@@ -227,8 +229,9 @@ build_summary builder::build_from_samples(grove_type& grove,
     }
 
     // --- Post-build replicate merging ---
-    if (min_replicates > 0) {
-        counters.replicates_merged = merge_replicates(exon_caches, segment_caches, min_replicates);
+    if (min_replicates > 0 || min_replicate_fraction > 0) {
+        counters.replicates_merged = merge_replicates(exon_caches, segment_caches,
+                                                       min_replicates, min_replicate_fraction);
     }
 
     // --- Count (and optionally physically remove) absorbed segments ---
@@ -244,9 +247,18 @@ build_summary builder::build_from_samples(grove_type& grove,
         grove, segment_caches, prune_tombstones,
         &tombstoned_seg_indices, &tombstone_remap);
 
-    // Live segments = total minus tombstones that were reverse-absorbed.
-    size_t live_segments = (segment_count >= counters.absorbed_segments)
-        ? segment_count - counters.absorbed_segments
+    // Live segments = total minus tombstones minus zero-attribution segments
+    // (features that lost all sample bits after replicate merging).
+    size_t zero_attribution = 0;
+    for (const auto& [seqid, seg_cache] : segment_caches) {
+        for (const auto& [key, seg_ptr] : seg_cache) {
+            if (!is_segment(seg_ptr->get_data())) continue;
+            auto& seg = get_segment(seg_ptr->get_data());
+            if (!seg.absorbed && seg.sample_count() == 0) zero_attribution++;
+        }
+    }
+    size_t live_segments = (segment_count >= counters.absorbed_segments + zero_attribution)
+        ? segment_count - counters.absorbed_segments - zero_attribution
         : segment_count;
     std::string tombstone_note;
     if (counters.absorbed_segments > 0) {
@@ -349,7 +361,8 @@ build_summary builder::build_from_samples(grove_type& grove,
 size_t builder::merge_replicates(
     chromosome_exon_caches& exon_caches,
     chromosome_segment_caches& segment_caches,
-    int min_replicates
+    int min_replicates,
+    double min_replicate_fraction
 ) {
     // NOTE on interaction with the quantification sidecar (.qtx):
     // Replicate merging ORs the per-replicate sample_idx bits into the
@@ -415,9 +428,15 @@ size_t builder::merge_replicates(
                     }
                 }
 
-                // Cap threshold at group size (singletons always pass)
+                // Effective threshold = max(absolute, fraction-derived),
+                // capped at group size so singletons always survive.
+                size_t abs_threshold = (min_replicates > 0)
+                    ? static_cast<size_t>(min_replicates) : 0;
+                size_t frac_threshold = (min_replicate_fraction > 0)
+                    ? static_cast<size_t>(std::ceil(min_replicate_fraction
+                        * static_cast<double>(replicate_ids.size()))) : 0;
                 size_t threshold = std::min(
-                    static_cast<size_t>(min_replicates),
+                    std::max(abs_threshold, frac_threshold),
                     replicate_ids.size());
 
                 uint32_t merged_id = group_merged_ids.at(group_name);
@@ -568,5 +587,5 @@ build_summary builder::build_from_files(grove_type& grove,
         samples.push_back(std::move(info));
     }
 
-    return build_from_samples(grove, samples, threads, expression_filters{}, true, 0, 5, false, false, /*qtx_path=*/"", out_exon_caches);
+    return build_from_samples(grove, samples, threads, expression_filters{}, true, 0, 0.0, 5, false, false, /*qtx_path=*/"", out_exon_caches);
 }

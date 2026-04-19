@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **`--min-replicate-fraction` flag** (#46, fixes #45): fraction-based replicate threshold (0-1). Effective threshold per group = `max(--min-replicates, ceil(fraction × group_size))`, capped at group_size. Both flags can be combined — stricter wins per group. Segments with zero sample attribution after merging (failed threshold in all groups, not in annotation) are excluded from build summary and inspect overview counts.
+
 - **`--annotated-loci-only` build filter** (#43): drops sample transcripts that don't spatially overlap any annotation segment on the same strand. Novel isoforms at annotated loci inherit the annotation's `gene_idx`, so sample-specific gene_ids (MSTRG.*, ENCLB*) no longer inflate the gene count. Annotation transcripts always pass. Expected to reduce gene count from ~1.15M to ~50-80K on mixed-source builds. Also: Docker CI now pushes PR images tagged `pr-<N>` for HPC testing; build log shows per-file segment delta; overview renames `transcripts` to `source_transcript_ids`.
 
 ### Changed
