@@ -267,6 +267,18 @@ void segment_builder::create_segment(
     new_segment.exon_count = exon_count;
     new_segment.gene_idx = gene_idx;
 
+    // Debug: verify inheritance worked for sample transcripts
+    if (annotated_loci_only && !is_annotation_sample(sample_id)) {
+        auto& gene_info = gene_registry::instance().resolve(gene_idx);
+        if (gene_info.gene_id.find("ENSG") == std::string::npos) {
+            logging::warning("annotated-loci-only: sample segment created with "
+                "non-annotation gene_id '" + gene_info.gene_id + "' "
+                "(transcript: " + transcript_id + ", "
+                "seqid: " + seqid + ":" + std::to_string(span_start) + "-" + std::to_string(span_end) + ", "
+                "candidates: " + std::to_string(candidates.size()) + ")");
+        }
+    }
+
     if (sample_id.has_value()) {
         new_segment.add_sample(*sample_id);
     }
