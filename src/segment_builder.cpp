@@ -242,7 +242,10 @@ void segment_builder::create_segment(
     // When overlapping an annotation segment, inherit its gene_idx so
     // novel isoforms at known loci don't inflate the gene count with
     // sample-specific gene_ids (MSTRG.*, ENCLB*, etc.).
-    if (annotated_loci_only) {
+    // Only for sample transcripts — annotations already have the correct
+    // gene_idx from their own GTF. Without this guard, overlapping
+    // annotation genes on the same strand would steal each other's gene_idx.
+    if (annotated_loci_only && !is_annotation_sample(sample_id)) {
         for (const auto& cand : candidates) {
             if (is_parent_annotation(cand.segment)) {
                 gene_idx = get_segment(cand.segment->get_data()).gene_idx;
