@@ -631,7 +631,7 @@ bool segment_builder::is_annotation_sample(std::optional<uint32_t> sample_id) {
     if (!sample_id.has_value()) return false;
     auto& registry = sample_registry::instance();
     const auto& info = registry.get(*sample_id);
-    return info.type == "annotation" || info.is_annotation();
+    return info.type == "annotation";
 }
 
 bool segment_builder::is_parent_annotation(key_ptr parent_seg) {
