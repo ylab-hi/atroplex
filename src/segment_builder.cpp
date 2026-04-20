@@ -268,24 +268,39 @@ void segment_builder::create_segment(
     new_segment.exon_count = exon_count;
     new_segment.gene_idx = gene_idx;
 
-    // Debug: verify inheritance worked for sample transcripts.
-    // Track whether gene_idx was actually overwritten by inheritance.
-    if (annotated_loci_only && !is_annotation_sample(sample_id)) {
-        bool was_inherited = false;
-        for (const auto& cand : candidates) {
-            if (is_parent_annotation(cand.segment)) {
-                was_inherited = true;
-                break;
+    // Debug: count annotation vs non-annotation gene_idx on new segments
+    {
+        static size_t annotation_segments = 0;
+        static size_t sample_inherited = 0;
+        static size_t sample_not_inherited = 0;
+
+        if (is_annotation_sample(sample_id)) {
+            annotation_segments++;
+        } else {
+            bool was_inherited = false;
+            for (const auto& cand : candidates) {
+                if (is_parent_annotation(cand.segment)) {
+                    was_inherited = true;
+                    break;
+                }
+            }
+            if (was_inherited) sample_inherited++;
+            else sample_not_inherited++;
+
+            if (!was_inherited) {
+                auto& gene_info = gene_registry::instance().resolve(gene_idx);
+                logging::warning("NO inheritance: gene='" + gene_info.gene_id +
+                    "' tx=" + transcript_id + " " + seqid + ":" +
+                    std::to_string(span_start) + "-" + std::to_string(span_end) +
+                    " cands=" + std::to_string(candidates.size()));
             }
         }
-        if (!was_inherited) {
-            auto& gene_info = gene_registry::instance().resolve(gene_idx);
-            logging::warning("annotated-loci-only: NO inheritance for sample segment "
-                "(gene_id: '" + gene_info.gene_id + "', "
-                "transcript: " + transcript_id + ", "
-                "seqid: " + seqid + ":" + std::to_string(span_start) + "-" + std::to_string(span_end) + ", "
-                "candidates: " + std::to_string(candidates.size()) + ", "
-                "exon_count: " + std::to_string(exon_count) + ")");
+
+        if ((annotation_segments + sample_inherited + sample_not_inherited) % 50000 == 0) {
+            logging::info("Segment creation stats: annotation=" +
+                std::to_string(annotation_segments) + " inherited=" +
+                std::to_string(sample_inherited) + " NOT_inherited=" +
+                std::to_string(sample_not_inherited));
         }
     }
 
