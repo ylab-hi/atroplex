@@ -147,8 +147,11 @@ void segment_builder::create_segment(
         }
     }
 
-    // Step 3: Rules 6/7/8 — Mono-exon handling
-    if (exon_chain.size() == 1) {
+    // Step 3: Rules 6/7/8 — Mono-exon handling.
+    // Annotation transcripts skip these rules — they ARE the reference
+    // and must create segments so sample mono-exons can be classified
+    // against them later.
+    if (exon_chain.size() == 1 && !is_annotation_sample(sample_id)) {
         if (!absorb) return;
 
         auto& mono_coord = exon_chain.front()->get_value();
