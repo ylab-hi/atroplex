@@ -268,15 +268,24 @@ void segment_builder::create_segment(
     new_segment.exon_count = exon_count;
     new_segment.gene_idx = gene_idx;
 
-    // Debug: verify inheritance worked for sample transcripts
+    // Debug: verify inheritance worked for sample transcripts.
+    // Track whether gene_idx was actually overwritten by inheritance.
     if (annotated_loci_only && !is_annotation_sample(sample_id)) {
-        auto& gene_info = gene_registry::instance().resolve(gene_idx);
-        if (gene_info.gene_id.find("ENSG") == std::string::npos) {
-            logging::warning("annotated-loci-only: sample segment created with "
-                "non-annotation gene_id '" + gene_info.gene_id + "' "
-                "(transcript: " + transcript_id + ", "
+        bool was_inherited = false;
+        for (const auto& cand : candidates) {
+            if (is_parent_annotation(cand.segment)) {
+                was_inherited = true;
+                break;
+            }
+        }
+        if (!was_inherited) {
+            auto& gene_info = gene_registry::instance().resolve(gene_idx);
+            logging::warning("annotated-loci-only: NO inheritance for sample segment "
+                "(gene_id: '" + gene_info.gene_id + "', "
+                "transcript: " + transcript_id + ", "
                 "seqid: " + seqid + ":" + std::to_string(span_start) + "-" + std::to_string(span_end) + ", "
-                "candidates: " + std::to_string(candidates.size()) + ")");
+                "candidates: " + std::to_string(candidates.size()) + ", "
+                "exon_count: " + std::to_string(exon_count) + ")");
         }
     }
 
