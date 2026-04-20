@@ -9,7 +9,6 @@
  */
 
 #include "segment_builder.hpp"
-#include "utility.hpp"
 
 // Absorption rule thresholds (see absorption_rules.txt)
 static constexpr size_t TERMINAL_TOLERANCE_BP = 50;
@@ -270,42 +269,6 @@ void segment_builder::create_segment(
     }
     new_segment.exon_count = exon_count;
     new_segment.gene_idx = gene_idx;
-
-    // Debug: count annotation vs non-annotation gene_idx on new segments
-    {
-        static size_t annotation_segments = 0;
-        static size_t sample_inherited = 0;
-        static size_t sample_not_inherited = 0;
-
-        if (is_annotation_sample(sample_id)) {
-            annotation_segments++;
-        } else {
-            bool was_inherited = false;
-            for (const auto& cand : candidates) {
-                if (is_parent_annotation(cand.segment)) {
-                    was_inherited = true;
-                    break;
-                }
-            }
-            if (was_inherited) sample_inherited++;
-            else sample_not_inherited++;
-
-            if (!was_inherited) {
-                auto& gene_info = gene_registry::instance().resolve(gene_idx);
-                logging::warning("NO inheritance: gene='" + gene_info.gene_id +
-                    "' tx=" + transcript_id + " " + seqid + ":" +
-                    std::to_string(span_start) + "-" + std::to_string(span_end) +
-                    " cands=" + std::to_string(candidates.size()));
-            }
-        }
-
-        if ((annotation_segments + sample_inherited + sample_not_inherited) % 50000 == 0) {
-            logging::info("Segment creation stats: annotation=" +
-                std::to_string(annotation_segments) + " inherited=" +
-                std::to_string(sample_inherited) + " NOT_inherited=" +
-                std::to_string(sample_not_inherited));
-        }
-    }
 
     if (sample_id.has_value()) {
         new_segment.add_sample(*sample_id);
