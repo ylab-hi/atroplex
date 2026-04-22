@@ -54,12 +54,6 @@ void subcall::add_common_options(cxxopts::Options& options) {
         ("no-absorb", "Disable ISM (Incomplete Splice Match) segment absorption into longer parents")
         ("fuzzy-tolerance", "Max bp difference for fuzzy exon boundary matching during absorption (0 = exact only)",
             cxxopts::value<size_t>()->default_value("5"))
-        ("min-replicates", "Merge biological replicates within groups; require features in >= N replicates (0 = no merge)",
-            cxxopts::value<int>()->default_value("0"))
-        ("min-replicate-fraction", "Fraction-based replicate threshold (0-1). Feature must be in >= this fraction of replicates "
-            "in each group. Applied as max(--min-replicates, ceil(fraction * group_size)) per group, "
-            "so both flags can be set together (stricter wins). 0 = disabled.",
-            cxxopts::value<double>()->default_value("0"))
         ("prune-tombstones", "Physically remove absorbed (tombstoned) segments from the grove after build. "
             "Produces a smaller/cleaner .ggx at the cost of a slow post-build sweep "
             "(grove.remove_key is O(E) per call today). Default: off — tombstones stay in the tree and are filtered at query time.")
@@ -213,8 +207,6 @@ void subcall::setup_grove(const cxxopts::ParseResult& args) {
 
         bool absorb = !args.count("no-absorb");
         size_t fuzzy_tol = args["fuzzy-tolerance"].as<size_t>();
-        int min_reps = args["min-replicates"].as<int>();
-        double min_rep_frac = args["min-replicate-fraction"].as<double>();
         bool prune_tombstones = args.count("prune-tombstones") > 0;
         logging::info("Creating grove with order: " + std::to_string(order));
 
@@ -256,12 +248,6 @@ void subcall::setup_grove(const cxxopts::ParseResult& args) {
         } else if (fuzzy_tol > 0) {
             logging::info("Fuzzy absorption tolerance: " + std::to_string(fuzzy_tol) + "bp");
         }
-        if (min_reps > 0 || min_rep_frac > 0) {
-            std::string msg = "Replicate merging enabled:";
-            if (min_reps > 0) msg += " min_replicates=" + std::to_string(min_reps);
-            if (min_rep_frac > 0) msg += " min_replicate_fraction=" + std::to_string(min_rep_frac);
-            logging::info(msg);
-        }
         if (prune_tombstones) {
             logging::info("Physical tombstone removal enabled (--prune-tombstones)");
         }
@@ -297,7 +283,7 @@ void subcall::setup_grove(const cxxopts::ParseResult& args) {
         if (annotated_only) {
             logging::info("Annotated-loci-only mode: sample transcripts at novel loci will be discarded");
         }
-        build_stats = builder::build_from_samples(*grove, all_samples, threads, filters, absorb, min_reps, min_rep_frac, fuzzy_tol, prune_tombstones, include_scaffolds, qtx_path, &exon_caches_, annotated_only);
+        build_stats = builder::build_from_samples(*grove, all_samples, threads, filters, absorb, fuzzy_tol, prune_tombstones, include_scaffolds, qtx_path, &exon_caches_, annotated_only);
         auto build_elapsed = std::chrono::duration<double>(std::chrono::steady_clock::now() - build_start).count();
         build_stats->build_time_seconds = build_elapsed;
         logging::info("Grove ready with spatial index and graph structure");
