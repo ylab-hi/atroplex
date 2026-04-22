@@ -51,9 +51,6 @@ namespace logging {
     void warning(const std::string& message);
     void error(const std::string& message);
 
-    void set_segment_qualifier(const std::string& q);
-    const std::string& segment_qualifier();
-
     /**
      * Enable or disable progress output (carriage return updates)
      * Progress is disabled by default for compatibility with non-interactive

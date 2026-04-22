@@ -11,7 +11,6 @@
 // standard
 #include <algorithm>
 #include <charconv>
-#include <cmath>
 #include <filesystem>
 #include <memory>
 #include <string_view>
@@ -54,8 +53,6 @@ build_summary builder::build_from_samples(grove_type& grove,
                                   uint32_t threads,
                                   const expression_filters& filters,
                                   bool absorb,
-                                  int min_replicates,
-                                  double min_replicate_fraction,
                                   size_t fuzzy_tolerance,
                                   bool prune_tombstones,
                                   bool include_scaffolds,
@@ -82,7 +79,7 @@ build_summary builder::build_from_samples(grove_type& grove,
     //
     // The final single-file output is written at `qtx_path`; per-sample
     // temp streams go in `{qtx_path}.streams/` and are K-way merged into
-    // the final file after the main build + tombstone + replicate phases
+    // the final file after the main build + tombstone phases
     // complete. The streams directory is deleted on successful merge;
     // kept for debugging on failure. (`.tmp` suffix is reserved for
     // merge_to_qtx's own atomic-rename scratch file.)
@@ -133,10 +130,6 @@ build_summary builder::build_from_samples(grove_type& grove,
     chromosome_exon_caches exon_caches;
     chromosome_segment_caches segment_caches;
     size_t segment_count = 0;
-
-    if (min_replicates > 0 || min_replicate_fraction > 0) {
-        logging::set_segment_qualifier(" (pre-filter)");
-    }
 
     // Process each sample sequentially (annotations first)
     size_t total = ordered.size();
@@ -232,12 +225,6 @@ build_summary builder::build_from_samples(grove_type& grove,
         current_sample_meta.reset();
     }
 
-    // --- Post-build replicate merging ---
-    if (min_replicates > 0 || min_replicate_fraction > 0) {
-        counters.replicates_merged = merge_replicates(exon_caches, segment_caches,
-                                                       min_replicates, min_replicate_fraction);
-    }
-
     // --- Count (and optionally physically remove) absorbed segments ---
     // Collect the tombstoned segment_index values so the sidecar merge
     // below can skip emitting dead records for them in the final .qtx.
@@ -251,36 +238,16 @@ build_summary builder::build_from_samples(grove_type& grove,
         grove, segment_caches, prune_tombstones,
         &tombstoned_seg_indices, &tombstone_remap);
 
-    // Live segments = total minus tombstones minus zero-attribution segments
-    // (features that lost all sample bits after replicate merging).
-    size_t zero_attribution = 0;
-    for (const auto& [seqid, seg_cache] : segment_caches) {
-        for (const auto& [key, seg_ptr] : seg_cache) {
-            if (!is_segment(seg_ptr->get_data())) continue;
-            auto& seg = get_segment(seg_ptr->get_data());
-            if (!seg.absorbed && seg.sample_count() == 0) zero_attribution++;
-        }
-    }
-    size_t live_segments = (segment_count >= counters.absorbed_segments + zero_attribution)
-        ? segment_count - counters.absorbed_segments - zero_attribution
+    size_t live_segments = (segment_count >= counters.absorbed_segments)
+        ? segment_count - counters.absorbed_segments
         : segment_count;
     std::string tombstone_note;
     if (counters.absorbed_segments > 0) {
         tombstone_note = " (" + std::to_string(counters.absorbed_segments)
             + (prune_tombstones ? " tombstones pruned)" : " tombstones)");
     }
-    if (zero_attribution > 0) {
-        size_t pre_filter = segment_count - counters.absorbed_segments;
-        logging::info("Grove construction complete: " +
-            std::to_string(pre_filter) + " segments (pre-filter)" + tombstone_note);
-        logging::info("Replicate filtering: " + std::to_string(live_segments) +
-            " segments (post-filter, -" + std::to_string(zero_attribution) +
-            " below threshold)");
-        logging::set_segment_qualifier("");
-    } else {
-        logging::info("Grove construction complete: " + std::to_string(live_segments)
-            + " segments" + tombstone_note);
-    }
+    logging::info("Grove construction complete: " + std::to_string(live_segments)
+        + " segments" + tombstone_note);
 
     // End-of-build memory estimate — walks segment_caches / exon_caches /
     // gene_indices once and sums struct-owned heap allocations. Approximate
@@ -321,9 +288,9 @@ build_summary builder::build_from_samples(grove_type& grove,
     }
 
     // --- Phase: finalize quantification sidecar (K-way merge) ---
-    // Happens after remove_tombstones + merge_replicates so that any
-    // future logic that rewrites the sidecar in response to those
-    // phases can hook in here. The merge itself simply consumes the
+    // Happens after remove_tombstones so that any future logic that
+    // rewrites the sidecar in response to that phase can hook in
+    // here. The merge itself simply consumes the
     // per-sample temp streams produced during the build loop above.
     if (sidecar_enabled && !sidecar_stream_paths.empty()) {
         try {
@@ -356,10 +323,6 @@ build_summary builder::build_from_samples(grove_type& grove,
     // --- Collect summary statistics ---
     build_summary stats;
     stats.collect(grove, segment_caches, exon_caches, segment_count, counters);
-    if (zero_attribution > 0) {
-        stats.total_segments = (stats.total_segments >= zero_attribution)
-            ? stats.total_segments - zero_attribution : stats.total_segments;
-    }
 
     // Concise one-line registry summary (detailed per-chromosome breakdown
     // still lives on stats.per_chromosome and surfaces in the .ggx.summary).
@@ -374,132 +337,6 @@ build_summary builder::build_from_samples(grove_type& grove,
     }
 
     return stats;
-}
-
-size_t builder::merge_replicates(
-    chromosome_exon_caches& exon_caches,
-    chromosome_segment_caches& segment_caches,
-    int min_replicates,
-    double min_replicate_fraction
-) {
-    // NOTE on interaction with the quantification sidecar (.qtx):
-    // Replicate merging ORs the per-replicate sample_idx bits into the
-    // group's merged sample_id on each feature. The sidecar, however, was
-    // written out during the per-sample build phase and only contains
-    // records keyed by the ORIGINAL per-replicate sample_ids — the merged
-    // group_id is a "phantom" in the sidecar. At query time, code that
-    // wants quantitative aggregation across a replicate group has to
-    // either (a) expand the group's sample_id back to the constituent
-    // replicate IDs via sample_registry::group lookup and union their
-    // sidecar records, or (b) report per-replicate without collapsing.
-    // The current 3a PR defers this decision to the follow-up PR that
-    // wires quant_sidecar::Reader into query/inspect.
-    auto& registry = sample_registry::instance();
-
-    // Step 1: Build group -> replicate ID mapping
-    std::map<std::string, std::vector<uint32_t>> groups;
-    for (size_t i = 0; i < registry.size(); ++i) {
-        uint32_t rid = static_cast<uint32_t>(i);
-        const auto& info = registry.get(rid);
-        if (info.type != "sample" || info.group.empty()) continue;
-        groups[info.group].push_back(rid);
-    }
-
-    if (groups.empty()) {
-        logging::warning("No replicate groups found; skipping merge");
-        return 0;
-    }
-
-    // Step 2: Register merged sample_info for each group
-    std::map<std::string, uint32_t> group_merged_ids;
-    for (auto& [group_name, replicate_ids] : groups) {
-        const auto& first = registry.get(replicate_ids[0]);
-        sample_info merged(first);
-        merged.id = group_name;
-        merged.group = group_name;
-        merged.description = "Merged from " + std::to_string(replicate_ids.size()) + " replicates";
-        merged.source_file.clear();
-
-        uint32_t merged_id = registry.register_data(std::move(merged));
-        group_merged_ids[group_name] = merged_id;
-
-        if (replicate_ids.size() == 1 && min_replicates > 1) {
-            logging::warning("Group '" + group_name + "' has only 1 replicate "
-                "but min_replicates=" + std::to_string(min_replicates) +
-                "; threshold capped to 1");
-        }
-
-        logging::info("Replicate group '" + group_name + "': " +
-            std::to_string(replicate_ids.size()) + " replicates");
-    }
-
-    // Step 3: Walk caches and merge bits/expression
-    // Lambda that works on both exon_feature and segment_feature via std::visit
-    auto merge_feature = [&](genomic_feature& feature) {
-        std::visit([&](auto& f) {
-            for (const auto& [group_name, replicate_ids] : groups) {
-                size_t rep_count = 0;
-
-                for (uint32_t rid : replicate_ids) {
-                    if (f.sample_idx.test(rid)) {
-                        rep_count++;
-                    }
-                }
-
-                // Effective threshold = max(absolute, fraction-derived),
-                // capped at group size so singletons always survive.
-                size_t abs_threshold = (min_replicates > 0)
-                    ? static_cast<size_t>(min_replicates) : 0;
-                size_t frac_threshold = (min_replicate_fraction > 0)
-                    ? static_cast<size_t>(std::ceil(min_replicate_fraction
-                        * static_cast<double>(replicate_ids.size()))) : 0;
-                size_t threshold = std::min(
-                    std::max(abs_threshold, frac_threshold),
-                    replicate_ids.size());
-
-                uint32_t merged_id = group_merged_ids.at(group_name);
-                if (rep_count >= threshold) {
-                    f.add_sample(merged_id);
-                }
-
-                // Clear replicate bits
-                for (uint32_t rid : replicate_ids) {
-                    f.sample_idx.clear(rid);
-                }
-            }
-        }, feature);
-    };
-
-    // Walk exon caches
-    for (auto& [seqid, exon_cache] : exon_caches) {
-        for (auto& [coord, exon_ptr] : exon_cache) {
-            merge_feature(exon_ptr->get_data());
-        }
-    }
-
-    // Walk segment caches
-    for (auto& [seqid, seg_cache] : segment_caches) {
-        for (auto& [key, seg_ptr] : seg_cache) {
-            auto& feature = seg_ptr->get_data();
-            if (!is_segment(feature)) continue;
-            if (get_segment(feature).absorbed) continue;
-            merge_feature(feature);
-        }
-    }
-
-    // Step 4: Mark replicate entries as type="replicate" so they're excluded from stats
-    size_t collapsed = 0;
-    for (const auto& [group_name, replicate_ids] : groups) {
-        for (uint32_t rid : replicate_ids) {
-            registry.get(rid).type = "replicate";
-            ++collapsed;
-        }
-    }
-
-    logging::info("Replicate merging complete: " +
-        std::to_string(group_merged_ids.size()) + " groups, min_replicates=" +
-        std::to_string(min_replicates));
-    return collapsed;
 }
 
 size_t builder::remove_tombstones(
@@ -605,5 +442,5 @@ build_summary builder::build_from_files(grove_type& grove,
         samples.push_back(std::move(info));
     }
 
-    return build_from_samples(grove, samples, threads, expression_filters{}, true, 0, 0.0, 5, false, false, /*qtx_path=*/"", out_exon_caches);
+    return build_from_samples(grove, samples, threads, expression_filters{}, true, 5, false, false, /*qtx_path=*/"", out_exon_caches);
 }

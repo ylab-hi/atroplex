@@ -38,7 +38,6 @@
  *   discarded_transcripts — transcripts dropped entirely (expression filter,
  *                        mono-exon Rules 6/8, Rules 3/4 fragment drops against
  *                        reference parents)
- *   replicates_merged  — replicate entries collapsed by --min-replicates
  *   scaffold_filtered_transcripts — transcripts skipped at ingest because
  *                        their seqid is not a canonical main chromosome
  *                        (chr1..chr22, chrX, chrY, chrM). Disabled with
@@ -50,7 +49,6 @@ struct build_counters {
     size_t merged_transcripts = 0;
     size_t absorbed_segments = 0;
     size_t discarded_transcripts = 0;
-    size_t replicates_merged = 0;
     size_t scaffold_filtered_transcripts = 0;
 };
 

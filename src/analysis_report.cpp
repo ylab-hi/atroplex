@@ -490,10 +490,7 @@ void analysis_report::collect(grove_type& grove,
                 if (!is_segment(feature)) continue;
 
                 auto& seg = get_segment(feature);
-                // Skip tombstones and zero-attribution segments (features
-                // that lost all sample bits after replicate merging).
                 if (seg.absorbed) continue;
-                if (seg.sample_count() == 0) continue;
 
                 // ── Segment → per-sample ────────────────────────────
                 size_t seg_sample_count = seg.sample_count();

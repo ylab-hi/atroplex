@@ -94,7 +94,7 @@ void build_summary::collect(
             if (!is_segment(feature)) continue;
 
             auto& seg = get_segment(feature);
-            if (seg.absorbed || seg.sample_count() == 0) continue;
+            if (seg.absorbed) continue;
             live_in_chrom++;
             auto& gi = genes[seg.gene_id()];
             gi.biotype = seg.gene_biotype();
@@ -250,9 +250,6 @@ void build_summary::write_summary(const std::string& path) const {
         << "  (segments tombstoned by reverse absorption and removed)\n";
     out << "  Discarded:        " << counters.discarded_transcripts
         << "  (expression filter, mono-exon, fragment drops)\n";
-    if (counters.replicates_merged > 0) {
-        out << "  Replicates merged: " << counters.replicates_merged << "\n";
-    }
     out << "\n";
 
     // Transcripts per gene
