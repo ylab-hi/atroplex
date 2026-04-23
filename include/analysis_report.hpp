@@ -212,7 +212,8 @@ struct analysis_report {
      * inspect invocation.
      */
     void collect(grove_type& grove,
-                 quant_sidecar::Reader* qtx_reader = nullptr);
+                 quant_sidecar::Reader* qtx_reader = nullptr,
+                 size_t min_samples = 0);
 
     // ── Output ──────────────────────────────────────────────────────
 

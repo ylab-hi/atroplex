@@ -23,6 +23,12 @@ cxxopts::Options inspect::parse_args(int argc, char** argv) {
 
     add_common_options(options);
 
+    options.add_options("Filtering")
+        ("min-samples", "Only include segments present in >= N samples. "
+            "Applied non-destructively during traversal — the grove is not modified.",
+            cxxopts::value<size_t>()->default_value("0"))
+        ;
+
     return options;
 }
 
@@ -109,7 +115,8 @@ void inspect::execute(const cxxopts::ParseResult& args) {
     report.begin_splicing_events_stream(
         (events_dir / (basename + ".splicing_events.tsv")).string());
 
-    report.collect(*grove, qtx_reader_ptr());
+    size_t min_samples = args["min-samples"].as<size_t>();
+    report.collect(*grove, qtx_reader_ptr(), min_samples);
 
     report.write_overview((overview_dir / (basename + ".overview.tsv")).string());
     report.write_per_sample((overview_dir / (basename + ".per_sample.tsv")).string());

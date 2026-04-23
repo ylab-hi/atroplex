@@ -51,8 +51,12 @@ double compute_median(std::vector<size_t>& values) {
 } // anonymous namespace
 
 void analysis_report::collect(grove_type& grove,
-                              quant_sidecar::Reader* qtx_reader) {
+                              quant_sidecar::Reader* qtx_reader,
+                              size_t min_samples) {
     logging::info("Collecting analysis report...");
+    if (min_samples > 0) {
+        logging::info("Filtering: segments with < " + std::to_string(min_samples) + " samples excluded");
+    }
     if (qtx_reader) {
         logging::info("Quantitative columns enabled (reading from .qtx sidecar)");
     }
@@ -491,6 +495,7 @@ void analysis_report::collect(grove_type& grove,
 
                 auto& seg = get_segment(feature);
                 if (seg.absorbed) continue;
+                if (min_samples > 0 && seg.sample_count() < min_samples) continue;
 
                 // ── Segment → per-sample ────────────────────────────
                 size_t seg_sample_count = seg.sample_count();
