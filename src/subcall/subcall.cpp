@@ -12,6 +12,7 @@
 
 #include <filesystem>
 #include <fstream>
+#include <sstream>
 
 #include "utility.hpp"
 #include "builder.hpp"
@@ -66,6 +67,10 @@ void subcall::add_common_options(cxxopts::Options& options) {
             "segment in the grove. Novel intergenic and antisense gene loci (which are predominantly "
             "long-read artifacts) are discarded. Requires at least one annotation entry in the manifest. "
             "Default: off — all transcripts are indexed.")
+        ("chromosomes", "Restrict index to specific chromosomes (comma-separated, e.g. chr1,chr22,chrX). "
+            "Features on unlisted chromosomes are silently skipped at ingest. Accepts both prefixed "
+            "(chr1) and bare (1) names. Default: all chromosomes.",
+            cxxopts::value<std::string>())
         ;
 }
 
@@ -135,6 +140,19 @@ void subcall::setup_grove(const cxxopts::ParseResult& args) {
     // Capture the scaffold-inclusion preference early so it's visible to
     // anything the subclass does during execute(), not just the build path.
     include_scaffolds = args.count("include-scaffolds") > 0;
+
+    if (args.count("chromosomes")) {
+        std::string chr_arg = args["chromosomes"].as<std::string>();
+        std::istringstream ss(chr_arg);
+        std::string token;
+        while (std::getline(ss, token, ',')) {
+            token.erase(0, token.find_first_not_of(' '));
+            token.erase(token.find_last_not_of(' ') + 1);
+            if (!token.empty()) {
+                chromosomes_filter.insert(normalize_chromosome(token));
+            }
+        }
+    }
 
     if (args.count("genogrove")) {
         std::filesystem::path grove_dir = args["genogrove"].as<std::string>();
@@ -256,6 +274,14 @@ void subcall::setup_grove(const cxxopts::ParseResult& args) {
         } else {
             logging::info("Scaffold filter active: main chromosomes only (chr1..chr22, chrX, chrY, chrM)");
         }
+        if (!chromosomes_filter.empty()) {
+            std::string chr_list;
+            for (const auto& c : chromosomes_filter) {
+                if (!chr_list.empty()) chr_list += ", ";
+                chr_list += c;
+            }
+            logging::info("Chromosome filter active: " + chr_list);
+        }
         grove = std::make_unique<grove_type>(order);
 
         // Derive the final single-file quantification sidecar path. We
@@ -283,7 +309,7 @@ void subcall::setup_grove(const cxxopts::ParseResult& args) {
         if (annotated_only) {
             logging::info("Annotated-loci-only mode: sample transcripts at novel loci will be discarded");
         }
-        build_stats = builder::build_from_samples(*grove, all_samples, threads, filters, absorb, fuzzy_tol, prune_tombstones, include_scaffolds, qtx_path, &exon_caches_, annotated_only);
+        build_stats = builder::build_from_samples(*grove, all_samples, threads, filters, absorb, fuzzy_tol, prune_tombstones, include_scaffolds, qtx_path, &exon_caches_, annotated_only, chromosomes_filter);
         auto build_elapsed = std::chrono::duration<double>(std::chrono::steady_clock::now() - build_start).count();
         build_stats->build_time_seconds = build_elapsed;
 
@@ -294,6 +320,14 @@ void subcall::setup_grove(const cxxopts::ParseResult& args) {
             build_stats->build_parameters["fuzzy_tolerance"] = std::to_string(fuzzy_tol) + "bp";
         build_stats->build_parameters["include_scaffolds"] = include_scaffolds ? "yes" : "no";
         build_stats->build_parameters["annotated_loci_only"] = annotated_only ? "yes" : "no";
+        if (!chromosomes_filter.empty()) {
+            std::string chr_list;
+            for (const auto& c : chromosomes_filter) {
+                if (!chr_list.empty()) chr_list += ",";
+                chr_list += c;
+            }
+            build_stats->build_parameters["chromosomes"] = chr_list;
+        }
         if (filters.min_counts >= 0)
             build_stats->build_parameters["min_counts"] = std::to_string(static_cast<int>(filters.min_counts));
         if (filters.min_TPM >= 0)

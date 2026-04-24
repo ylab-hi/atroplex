@@ -11,6 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Build-time replicate merging** (#47): `--min-replicates` and `--min-replicate-fraction` removed from the build path. The `merge_replicates()` function destructively cleared individual sample bits and replaced them with group bits, losing per-sample information needed for within-group analysis (e.g., boxplots). It also didn't save memory (bitset size unchanged) or remove dead segments. Replaced by inspect-time `--min-samples` (#48).
 
 ### Added
+- **`--chromosomes` build filter** (#50): restrict index building to specific chromosomes (e.g. `--chromosomes chr1,chr22,chrX`). Features on unlisted chromosomes are silently skipped at ingest. Accepts both prefixed (`chr1`) and bare (`1`) names. Recorded in `.ggx.summary` build parameters. Applied in both GFF and BAM build paths.
+- **Build parameters in `.ggx.summary`** (#49): the summary now records order, absorb, fuzzy_tolerance, scaffold/loci filters, expression thresholds, and chromosome filter for reproducibility.
 - **`--min-samples` for inspect** (#48): non-destructive sample-count filter applied during the grove traversal. Segments present in fewer than N samples are skipped — all downstream outputs (overview, sharing, hubs, events) reflect the threshold. The grove is not modified, so different thresholds can be explored without rebuilding.
 
 

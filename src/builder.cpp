@@ -58,7 +58,8 @@ build_summary builder::build_from_samples(grove_type& grove,
                                   bool include_scaffolds,
                                   const std::string& qtx_path,
                                   chromosome_exon_caches* out_exon_caches,
-                                  bool annotated_loci_only) {
+                                  bool annotated_loci_only,
+                                  const std::unordered_set<std::string>& chromosomes_filter) {
     if (samples.empty()) {
         logging::warning("No samples provided to build genogrove");
         return {};
@@ -189,7 +190,7 @@ build_summary builder::build_from_samples(grove_type& grove,
             open_sidecar(registry_id);
 
             // Build with persistent caches for cross-file deduplication
-            build_gff::build(grove, filepath, registry_id, exon_caches, segment_caches, segment_count, threads, filters, absorb, fuzzy_tolerance, include_scaffolds, counters, sidecar.get(), annotated_loci_only);
+            build_gff::build(grove, filepath, registry_id, exon_caches, segment_caches, segment_count, threads, filters, absorb, fuzzy_tolerance, include_scaffolds, counters, sidecar.get(), annotated_loci_only, chromosomes_filter);
         } else if (ftype == gio::filetype::BAM || ftype == gio::filetype::SAM) {
             logging::info("[" + std::to_string(current) + "/" + std::to_string(total) + "] Processing BAM: " + filepath.filename().string() +
                          (info.id.empty() ? "" : " (id: " + info.id + ")"));
@@ -199,7 +200,7 @@ build_summary builder::build_from_samples(grove_type& grove,
 
             build_bam::build(grove, filepath, registry_id, exon_caches, segment_caches,
                             segment_count, filters, absorb, fuzzy_tolerance, include_scaffolds, counters, sidecar.get(),
-                            annotated_loci_only);
+                            annotated_loci_only, chromosomes_filter);
         } else {
             logging::warning("Unsupported file type for: " + filepath.string());
         }

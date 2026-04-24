@@ -16,6 +16,7 @@
 #include <vector>
 #include <map>
 #include <unordered_map>
+#include <unordered_set>
 #include <filesystem>
 #include <mutex>
 
@@ -60,7 +61,8 @@ public:
                       bool include_scaffolds,
                       build_counters& counters,
                       quant_sidecar::SampleStreamWriter* sidecar_writer = nullptr,
-                      bool annotated_loci_only = false);
+                      bool annotated_loci_only = false,
+                      const std::unordered_set<std::string>& chromosomes_filter = {});
 
     /**
      * Parse BAM header to extract sample metadata.
