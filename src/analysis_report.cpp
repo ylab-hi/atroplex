@@ -475,9 +475,13 @@ void analysis_report::collect(grove_type& grove,
 
     // ── Traverse grove ──────────────────────────────────────────────
     auto roots = grove.get_root_nodes();
+    size_t chr_done = 0;
+    size_t chr_total = roots.size();
+    logging::progress_start();
 
     for (auto& [seqid, root] : roots) {
         if (!root) continue;
+        chr_done++;
         active_genes.clear();
         exon_expr_sum.clear();
 
@@ -488,7 +492,16 @@ void analysis_report::collect(grove_type& grove,
             node = children[0];
         }
 
+        size_t chr_leaves = 0;
+        size_t chr_segments = 0;
+
         while (node) {
+            chr_leaves++;
+            if (chr_leaves % 100 == 0) {
+                logging::progress(chr_leaves, "Inspecting " + seqid + " [leaf " +
+                    std::to_string(chr_leaves) + ", " +
+                    std::to_string(chr_segments) + " segments]");
+            }
             for (auto* key : node->get_keys()) {
                 auto& feature = key->get_data();
                 if (!is_segment(feature)) continue;
@@ -496,6 +509,7 @@ void analysis_report::collect(grove_type& grove,
                 auto& seg = get_segment(feature);
                 if (seg.absorbed) continue;
                 if (min_samples > 0 && seg.sample_count() < min_samples) continue;
+                chr_segments++;
 
                 // ── Segment → per-sample ────────────────────────────
                 size_t seg_sample_count = seg.sample_count();
@@ -752,6 +766,8 @@ void analysis_report::collect(grove_type& grove,
         active_genes.clear();
         exon_expr_sum.clear();
     }
+
+    logging::progress(chr_total, "Inspecting [" + std::to_string(chr_done) + "/" + std::to_string(chr_total) + " chromosomes] done");
 
     total_exons = visited_exons.size();
     total_edges = grove.edge_count();
