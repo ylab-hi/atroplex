@@ -286,6 +286,25 @@ void subcall::setup_grove(const cxxopts::ParseResult& args) {
         build_stats = builder::build_from_samples(*grove, all_samples, threads, filters, absorb, fuzzy_tol, prune_tombstones, include_scaffolds, qtx_path, &exon_caches_, annotated_only);
         auto build_elapsed = std::chrono::duration<double>(std::chrono::steady_clock::now() - build_start).count();
         build_stats->build_time_seconds = build_elapsed;
+
+        // Record build parameters for summary provenance
+        build_stats->build_parameters["order"] = std::to_string(order);
+        build_stats->build_parameters["absorb"] = absorb ? "yes" : "no";
+        if (absorb && fuzzy_tol > 0)
+            build_stats->build_parameters["fuzzy_tolerance"] = std::to_string(fuzzy_tol) + "bp";
+        build_stats->build_parameters["include_scaffolds"] = include_scaffolds ? "yes" : "no";
+        build_stats->build_parameters["annotated_loci_only"] = annotated_only ? "yes" : "no";
+        if (filters.min_counts >= 0)
+            build_stats->build_parameters["min_counts"] = std::to_string(static_cast<int>(filters.min_counts));
+        if (filters.min_TPM >= 0)
+            build_stats->build_parameters["min_TPM"] = std::to_string(static_cast<int>(filters.min_TPM));
+        if (filters.min_FPKM >= 0)
+            build_stats->build_parameters["min_FPKM"] = std::to_string(static_cast<int>(filters.min_FPKM));
+        if (filters.min_RPKM >= 0)
+            build_stats->build_parameters["min_RPKM"] = std::to_string(static_cast<int>(filters.min_RPKM));
+        if (filters.min_cov >= 0)
+            build_stats->build_parameters["min_cov"] = std::to_string(static_cast<int>(filters.min_cov));
+
         logging::info("Grove ready with spatial index and graph structure");
 
         // Open the qtx reader we just produced so the subclass execute()

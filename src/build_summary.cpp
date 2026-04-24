@@ -184,6 +184,15 @@ void build_summary::write_summary(const std::string& path) const {
     out << "Index Summary\n";
     out << "=============\n\n";
 
+    // Build parameters
+    if (!build_parameters.empty()) {
+        out << "Build parameters:\n";
+        for (const auto& [key, value] : build_parameters) {
+            out << "  " << key << ": " << value << "\n";
+        }
+        out << "\n";
+    }
+
     // Build time
     if (build_time_seconds > 0) {
         if (build_time_seconds >= 60) {
