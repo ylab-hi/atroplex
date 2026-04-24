@@ -60,7 +60,8 @@ public:
         bool include_scaffolds = false,
         const std::string& qtx_path = "",
         chromosome_exon_caches* out_exon_caches = nullptr,
-        bool annotated_loci_only = false
+        bool annotated_loci_only = false,
+        const std::unordered_set<std::string>& chromosomes_filter = {}
     );
 
     /**

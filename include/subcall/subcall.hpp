@@ -15,6 +15,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <unordered_set>
 
 #include <cxxopts.hpp>
 
@@ -78,6 +79,7 @@ protected:
     chromosome_exon_caches exon_caches_;
     std::filesystem::path output_dir;
     bool include_scaffolds = false;  // set from --include-scaffolds (default: main chromosomes only)
+    std::unordered_set<std::string> chromosomes_filter;  // set from --chromosomes
 
     /// Quantification sidecar reader, opened lazily by setup_grove when a
     /// `{prefix}.qtx` file is found alongside the loaded `.ggx`. Empty when

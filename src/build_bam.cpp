@@ -30,7 +30,8 @@ void build_bam::build(grove_type& grove,
     bool include_scaffolds,
     build_counters& counters,
     quant_sidecar::SampleStreamWriter* sidecar_writer,
-    bool annotated_loci_only) {
+    bool annotated_loci_only,
+    const std::unordered_set<std::string>& chromosomes_filter) {
 
     const size_t segment_count_before = segment_count;
 
@@ -61,6 +62,11 @@ void build_bam::build(grove_type& grove,
         // bumping input_transcripts.
         if (!is_main_chromosome(cluster.seqid, include_scaffolds)) {
             counters.scaffold_filtered_transcripts++;
+            continue;
+        }
+
+        if (!chromosomes_filter.empty() &&
+            chromosomes_filter.find(normalize_chromosome(cluster.seqid)) == chromosomes_filter.end()) {
             continue;
         }
 

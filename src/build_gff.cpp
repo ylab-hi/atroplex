@@ -35,7 +35,8 @@ void build_gff::build(grove_type& grove,
     bool include_scaffolds,
     build_counters& counters,
     quant_sidecar::SampleStreamWriter* sidecar_writer,
-    bool annotated_loci_only) {
+    bool annotated_loci_only,
+    const std::unordered_set<std::string>& chromosomes_filter) {
 
     gio::gff_reader reader(filepath.string());
     const size_t segment_count_before = segment_count;
@@ -68,6 +69,11 @@ void build_gff::build(grove_type& grove,
             if (entry.type == "transcript") {
                 counters.scaffold_filtered_transcripts++;
             }
+            continue;
+        }
+
+        if (!chromosomes_filter.empty() &&
+            chromosomes_filter.find(normalize_chromosome(entry.seqid)) == chromosomes_filter.end()) {
             continue;
         }
 
