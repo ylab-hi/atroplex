@@ -8,9 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Removed
-- **Build-time replicate merging** (#47): `--min-replicates` and `--min-replicate-fraction` removed from the build path. The `merge_replicates()` function destructively cleared individual sample bits and replaced them with group bits, losing per-sample information needed for within-group analysis (e.g., boxplots). It also didn't save memory (bitset size unchanged) or remove dead segments. Sample/replicate filtering will move to inspect time (`--min-samples`, future PR) where it's non-destructive and reusable across different thresholds without rebuilding.
+- **Build-time replicate merging** (#47): `--min-replicates` and `--min-replicate-fraction` removed from the build path. The `merge_replicates()` function destructively cleared individual sample bits and replaced them with group bits, losing per-sample information needed for within-group analysis (e.g., boxplots). It also didn't save memory (bitset size unchanged) or remove dead segments. Replaced by inspect-time `--min-samples` (#48).
 
 ### Added
+- **`--min-samples` for inspect** (#48): non-destructive sample-count filter applied during the grove traversal. Segments present in fewer than N samples are skipped — all downstream outputs (overview, sharing, hubs, events) reflect the threshold. The grove is not modified, so different thresholds can be explored without rebuilding.
+
 
 - **`--annotated-loci-only` build filter** (#43): drops sample transcripts that don't spatially overlap any annotation segment on the same strand. Novel isoforms at annotated loci inherit the annotation's `gene_idx`, so sample-specific gene_ids (MSTRG.*, ENCLB*) no longer inflate the gene count. Annotation transcripts always pass. Docker CI now pushes PR images tagged `pr-<N>` for HPC testing; build log shows per-file segment delta; overview renames `transcripts` to `source_transcript_ids`.
 
