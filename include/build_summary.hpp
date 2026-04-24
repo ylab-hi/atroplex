@@ -112,6 +112,9 @@ struct build_summary {
     // ── Build timing ──────────────────────────────────────────────
     double build_time_seconds = 0;
 
+    // ── Build parameters (for summary provenance) ────────────────
+    std::map<std::string, std::string> build_parameters;
+
     /**
      * Populate this build_summary from builder caches post-sweep.
      * Caller must have already run tombstone cleanup and replicate merging.
