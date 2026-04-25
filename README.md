@@ -24,7 +24,7 @@ cmake --build build
 ### Dependencies
 
 - **cxxopts** (v3.3.1): Command-line argument parsing (fetched automatically)
-- **genogrove** (v0.20.2): Genomic interval data structures and graph structure (fetched automatically)
+- **genogrove** (v0.21.0): Genomic interval data structures and graph structure (fetched automatically)
 - **htslib**: Reading BAM/SAM files (system dependency via pkg-config)
 - **zlib**: Compression support
 
@@ -37,10 +37,13 @@ atroplex build -b annotation.gtf
 # Build pan-transcriptome from multiple sources via manifest
 atroplex build -m manifest.tsv
 
-# Build with replicate merging and expression filter
+# Build with expression filter
 # (manifest's `expression_attribute` column declares which GFF attribute
 # to read on each sample — here: `counts` for TALON samples)
-atroplex build -m manifest.tsv --min-replicates 2 --min-counts 3
+atroplex build -m manifest.tsv --min-counts 3
+
+# Build only specific chromosomes (for targeted analysis)
+atroplex build -m manifest.tsv --chromosomes chr1,chr22,chrX
 
 # Run full per-sample inspection (sharing, splicing hubs, diversity)
 atroplex inspect -m manifest.tsv -o results/
@@ -71,9 +74,6 @@ atroplex build -m ENCODE/manifest.tsv -o results/
 # From annotation files directly (metadata parsed from GFF headers)
 atroplex build -b gencode.gtf -b sample1.gtf -b sample2.gtf
 
-# With replicate merging (require feature in >= 2 replicates)
-atroplex build -m manifest.tsv --min-replicates 2
-
 # With expression filtering — thresholds are per-attribute and each sample
 # declares which attributes to read via the manifest's `expression_attribute`
 # column. A TALON manifest row with `expression_attribute = counts` is
@@ -82,6 +82,12 @@ atroplex build -m manifest.tsv --min-replicates 2
 # attributes on a given transcript are pass-through).
 atroplex build -m manifest.tsv --min-counts 3
 atroplex build -m manifest.tsv --min-cov 1 --min-TPM 0.5
+
+# Build only specific chromosomes
+atroplex build -m manifest.tsv --chromosomes chr1,chr22
+
+# Drop sample transcripts at novel loci (keep only annotated gene regions)
+atroplex build -m manifest.tsv --annotated-loci-only
 
 # Disable ISM absorption
 atroplex build -m manifest.tsv --no-absorb
@@ -135,17 +141,17 @@ atroplex discover -i reads.bam -m manifest.tsv -o results/
 Walks a built index and writes one GTF file per sample with gene, transcript, and exon lines. Expression values (when available) are emitted as GTF attributes. Supports filters to restrict output by sample, gene, region, biotype, source, or sample frequency.
 
 ```bash
-# Export all samples from a pre-built index
-atroplex export -g index.ggx -o export/
+# Export all samples from a pre-built index (pass the directory containing the .ggx)
+atroplex export -g index_dir/ -o export/
 
 # Export a specific sample, protein-coding genes only
-atroplex export -g index.ggx --sample HL60_M1_rep1 --biotype protein_coding
+atroplex export -g index_dir/ --sample HL60_M1_rep1 --biotype protein_coding
 
 # Export conserved features in a genomic region
-atroplex export -g index.ggx --region chr22:10000000-15000000 --conserved-only
+atroplex export -g index_dir/ --region chr22:10000000-15000000 --conserved-only
 
 # Export features present in at least 3 samples, from HAVANA
-atroplex export -g index.ggx --min-samples 3 --source HAVANA
+atroplex export -g index_dir/ --min-samples 3 --source HAVANA
 ```
 
 Export-specific options: `--sample`, `--gene`, `--region chr:start-end`, `--min-samples`, `--conserved-only`, `--biotype`, `--source` (all filters are AND'd).
@@ -160,7 +166,7 @@ Export-specific options: `--sample`, `--gene`, `--region chr:start-end`, `--min-
 | `--progress` | Show progress output |
 | `-m, --manifest` | Sample manifest file (TSV) |
 | `-b, --build-from` | Build from GFF/GTF file(s) |
-| `-g, --genogrove` | Load pre-built genogrove index (.ggx) |
+| `-g, --genogrove` | Directory containing a pre-built genogrove index (`.ggx` + optional `.qtx` sidecar) |
 | `-k, --order` | Genogrove tree order (default: 3) |
 | `--min-counts` | Minimum `counts` value for transcripts whose sample declares `counts` in its manifest `expression_attribute` column (default: -1, disabled) |
 | `--min-TPM` | Minimum `TPM` value for transcripts whose sample declares `TPM` (default: -1, disabled) |
@@ -169,9 +175,10 @@ Export-specific options: `--sample`, `--gene`, `--region chr:start-end`, `--min-
 | `--min-cov` | Minimum `cov` value for transcripts whose sample declares `cov` (default: -1, disabled) |
 | `--no-absorb` | Disable ISM segment absorption into longer parent segments |
 | `--fuzzy-tolerance` | Max bp difference for fuzzy exon boundary matching (default: 5) |
-| `--min-replicates` | Merge biological replicates; require features in >= N replicates (default: 0, no merge) |
 | `--prune-tombstones` | Physically remove absorbed segments from the grove post-build (slower, smaller .ggx) |
 | `--include-scaffolds` | Keep transcripts on unplaced scaffolds, alt contigs, fix patches, and decoy sequences. Default: off — GFF/BAM ingest is filtered to canonical main chromosomes only (`chr1..chr22`, `chrX`, `chrY`, `chrM`). Enable for non-human/non-mouse species or when you specifically need scaffold contributions. |
+| `--chromosomes` | Restrict index to specific chromosomes (comma-separated, e.g. `chr1,chr22,chrX`). Accepts both prefixed and bare names. Default: all chromosomes. |
+| `--annotated-loci-only` | Only keep sample transcripts that overlap an annotation segment. Novel intergenic loci are discarded; novel isoforms at annotated loci inherit the annotation gene identity. |
 
 ## Input Files
 
@@ -276,15 +283,6 @@ Absorption rules (in execution order):
 | 4 | Internal fragment (both ends missing) | Drop vs ref, Keep vs sample |
 
 After creating a new segment, reverse absorption applies the same rules to existing shorter segments. Matching uses pointer identity first, then fuzzy coordinate matching within `--fuzzy-tolerance` bp. Absorption can be disabled with `--no-absorb`.
-
-## Biological Replicate Merging
-
-When `--min-replicates N` is provided, biological replicates within the same experiment group are merged after grove construction:
-
-- Groups are determined by the `group` column in the manifest, or auto-inferred by stripping `_repNN` suffix from sample IDs
-- Features must be present in >= N replicates to survive (threshold capped at group size)
-- Expression values are averaged across replicates
-- Original replicate entries are excluded from downstream statistics
 
 ## Output Files
 
