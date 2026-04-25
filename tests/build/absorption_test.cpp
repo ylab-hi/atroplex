@@ -156,11 +156,12 @@ protected:
 // ── Rule 0: FSM — identical structure → merge metadata ──────────────
 
 TEST_F(AbsorptionTest, Rule0_FSM_Merge) {
-    // Two transcripts with identical exon structure → one segment, both transcript IDs
-    auto result = build_fixture("rule1_3prime_ism.gtf");
-    // PARENT has 4 exons — it will always create a segment
-    // Whether ISM_3P is absorbed or not, PARENT's segment exists
-    EXPECT_GE(result.live_segments, 1);
+    auto result = build_fixture("rule0_fsm.gtf");
+
+    // TX_A and TX_B have identical exon structure → one segment, both transcript IDs
+    EXPECT_EQ(result.live_segments, 1) << "FSM should merge into one segment";
+    EXPECT_EQ(result.live_transcript_count, 2) << "Both transcript IDs should be on the segment";
+    EXPECT_EQ(result.total_absorbed_into, 0) << "FSM merges metadata, not absorption";
 }
 
 // ── Rule 1: 5' ISM — contiguous subset at 5' end → keep ────────────
@@ -189,24 +190,37 @@ TEST_F(AbsorptionTest, Rule2_3PrimeISM_Absorbed) {
 // ── Rule 3: 3' degradation — missing 3+ exons → drop vs ref ────────
 
 TEST_F(AbsorptionTest, Rule3_3PrimeDegradation_DroppedVsRef) {
-    // Fragment shares last 2 exons of a 5-exon parent (missing 3 from 5' end)
-    // Parent is annotation → drop (don't merge metadata)
-    auto result = build_fixture("rule2_internal_fragment.gtf", true, true);
+    // PARENT: 5 exons, DEGRAD: last 2 exons (missing 3 from 5' end)
+    // As annotation → Rule 3 drops the fragment
+    auto result = build_fixture("rule3_degradation.gtf", true, true);
 
-    // PARENT: 5 exons, INTERNAL: 3 internal exons (missing from both ends = Rule 4)
-    // Need a specific 3' degradation fixture — for now this tests Rule 4 path
-    EXPECT_GE(result.live_segments, 1);
+    EXPECT_EQ(result.live_segments, 1) << "3' degradation fragment should be dropped vs annotation";
+    EXPECT_EQ(result.live_transcript_count, 1) << "Only parent transcript survives";
+}
+
+TEST_F(AbsorptionTest, Rule3_3PrimeDegradation_KeptVsSample) {
+    // Same fixture but as sample → Rule 3 keeps the fragment
+    auto result = build_fixture("rule3_degradation.gtf", true, false);
+
+    EXPECT_EQ(result.live_segments, 2) << "3' degradation fragment should be kept vs sample";
 }
 
 // ── Rule 4: Internal fragment — both ends missing → drop vs ref ─────
 
-TEST_F(AbsorptionTest, Rule4_InternalFragment_Absorbed) {
-    auto result = build_fixture("rule2_internal_fragment.gtf");
+TEST_F(AbsorptionTest, Rule4_InternalFragment_DroppedVsRef) {
+    // PARENT: 5 exons, INTERNAL: middle 3 (missing from both ends)
+    // As annotation → Rule 4 drops the fragment
+    auto result = build_fixture("rule2_internal_fragment.gtf", true, true);
 
-    // PARENT: 5 exons, INTERNAL: middle 3 exons (missing from both ends)
-    // Single file = same sample, parent is not annotation → keep vs sample
-    // But within same file, the sample IS the parent → treated as absorb
-    EXPECT_GE(result.live_segments, 1);
+    EXPECT_EQ(result.live_segments, 1) << "Internal fragment should be dropped vs annotation";
+    EXPECT_EQ(result.live_transcript_count, 1) << "Only parent transcript survives";
+}
+
+TEST_F(AbsorptionTest, Rule4_InternalFragment_KeptVsSample) {
+    // Same fixture as sample → Rule 4 keeps the fragment
+    auto result = build_fixture("rule2_internal_fragment.gtf", true, false);
+
+    EXPECT_EQ(result.live_segments, 2) << "Internal fragment should be kept vs sample";
 }
 
 // ── Rule 5: Terminal variant — same intron chain, <50bp → absorb ────
@@ -252,9 +266,13 @@ TEST_F(AbsorptionTest, Rule7_MonoExonIntronRetention_Kept) {
 
 // ── Rule 8: Mono-exon intergenic → drop ─────────────────────────────
 
-// Mono-exons with no gene overlap are dropped — tested implicitly via
-// Rule 6 test (if no multi-exon segment exists for gene, classify_mono_exon
-// returns INTERGENIC)
+TEST_F(AbsorptionTest, Rule8_MonoExonIntergenic_Dropped) {
+    auto result = build_fixture("rule8_mono_intergenic.gtf");
+
+    // MULTI: 3 exons → creates a segment
+    // MONO_INTER: single exon at chr1:10000-10500, no overlap with G1 → Rule 8 → drop
+    EXPECT_EQ(result.live_segments, 1) << "Intergenic mono-exon should be dropped";
+}
 
 // ── Fuzzy matching: ≤5bp junction shift → absorb ────────────────────
 
