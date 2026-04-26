@@ -21,6 +21,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`--annotated-loci-only` build filter** (#43): drops sample transcripts that don't spatially overlap any annotation segment on the same strand. Novel isoforms at annotated loci inherit the annotation's `gene_idx`, so sample-specific gene_ids (MSTRG.*, ENCLB*) no longer inflate the gene count. Annotation transcripts always pass. Docker CI now pushes PR images tagged `pr-<N>` for HPC testing; build log shows per-file segment delta; overview renames `transcripts` to `source_transcript_ids`.
 
+### Changed
+- **Gene_idx inheritance always applied** ([#63](https://github.com/ylab-hi/atroplex/pull/63)): sample transcripts that spatially overlap an annotation segment now always inherit its gene_idx, regardless of `--annotated-loci-only`. Previously this was gated behind the flag, causing 19M inflated gene counts on 21K-sample builds without it (each StringTie gene_id created a separate gene entry). `--annotated-loci-only` now only controls whether novel-locus transcripts are kept or dropped.
+
 ### Fixed
 - **Duplicate .qtx records at merge time** ([#62](https://github.com/ylab-hi/atroplex/pull/62), fixes [#35](https://github.com/ylab-hi/atroplex/issues/35), [#58](https://github.com/ylab-hi/atroplex/issues/58)): `flush_block` in `run_final_merge` now collapses duplicate `(segment, sample)` pairs by summing values before writing. Removes inconsistent reader-side workarounds. Also standardizes file-open error logging in `analysis_report` and adds stream read checks to `.ggx` deserialization.
 - **`is_annotation_sample` checked `annotation_source` field, not just `type`**: samples with `annotation_source` filled in the manifest (common in StringTie GTFs built against a reference) were misclassified as annotations, bypassing the `--annotated-loci-only` filter and gene_idx inheritance. Fix: check `info.type == "annotation"` only.
