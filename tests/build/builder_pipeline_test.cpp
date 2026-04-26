@@ -21,6 +21,7 @@
 #include "build_summary.hpp"
 #include "builder.hpp"
 #include "genomic_feature.hpp"
+#include "quant_sidecar.hpp"
 #include "sample_info.hpp"
 
 namespace fs = std::filesystem;
@@ -353,4 +354,170 @@ TEST_F(BuilderPipelineTest, BuildSummary_WrittenFileContainsCounters) {
     // Values should appear verbatim next to their labels
     EXPECT_NE(contents.find("Input:            2"), std::string::npos);
     EXPECT_NE(contents.find("Absorbed:         1"), std::string::npos);
+}
+
+// ── Tier 2.1: Reverse absorption remaps .qtx expression (#37) ────────────
+//
+// rep1 has a 3-exon transcript with counts=10. rep2 has a 4-exon transcript
+// (extends rep1's chain) with counts=20. rep2's parent reverse-absorbs rep1's
+// segment. After merge_to_qtx, the parent's block should contain both
+// sample records (remapped from the tombstoned child).
+TEST_F(BuilderPipelineTest, ReverseAbsorption_QtxRemap) {
+    auto rep1_path = write_gtf("rep1.gtf",
+        "chr22\tTALON\tgene\t1000\t5000\t.\t+\t.\tgene_id \"G1\"; gene_name \"TEST\";\n"
+        "chr22\tTALON\ttranscript\t1000\t5000\t.\t+\t.\tgene_id \"G1\"; transcript_id \"T1\"; counts \"10\";\n"
+        "chr22\tTALON\texon\t1000\t1500\t.\t+\t.\tgene_id \"G1\"; transcript_id \"T1\";\n"
+        "chr22\tTALON\texon\t2000\t2500\t.\t+\t.\tgene_id \"G1\"; transcript_id \"T1\";\n"
+        "chr22\tTALON\texon\t3000\t3500\t.\t+\t.\tgene_id \"G1\"; transcript_id \"T1\";\n");
+
+    auto rep2_path = write_gtf("rep2.gtf",
+        "chr22\tTALON\tgene\t1000\t6000\t.\t+\t.\tgene_id \"G1\"; gene_name \"TEST\";\n"
+        "chr22\tTALON\ttranscript\t1000\t6000\t.\t+\t.\tgene_id \"G1\"; transcript_id \"T2\"; counts \"20\";\n"
+        "chr22\tTALON\texon\t1000\t1500\t.\t+\t.\tgene_id \"G1\"; transcript_id \"T2\";\n"
+        "chr22\tTALON\texon\t2000\t2500\t.\t+\t.\tgene_id \"G1\"; transcript_id \"T2\";\n"
+        "chr22\tTALON\texon\t3000\t3500\t.\t+\t.\tgene_id \"G1\"; transcript_id \"T2\";\n"
+        "chr22\tTALON\texon\t4500\t5000\t.\t+\t.\tgene_id \"G1\"; transcript_id \"T2\";\n");
+
+    std::vector<sample_info> samples;
+    samples.emplace_back("rep1", rep1_path);
+    samples.back().type = "sample";
+    samples.back().expression_attributes = {"counts"};
+    samples.emplace_back("rep2", rep2_path);
+    samples.back().type = "sample";
+    samples.back().expression_attributes = {"counts"};
+
+    std::string qtx_path = (tmp_dir / "test.qtx").string();
+    grove_type grove(3);
+    auto summary = builder::build_from_samples(
+        grove, samples,
+        /*threads=*/1, /*filters=*/expression_filters{}, /*absorb=*/true,
+        /*fuzzy_tolerance=*/5, /*prune_tombstones=*/false,
+        /*include_scaffolds=*/true, qtx_path);
+
+    ASSERT_EQ(summary.counters.absorbed_segments, 1u)
+        << "rep1's 3-exon segment should be reverse-absorbed into rep2's 4-exon parent";
+
+    // Find the parent (live) segment index
+    auto segs = walk_live_segments(grove);
+    size_t parent_idx = 0;
+    for (const auto* seg : segs) {
+        if (!seg->absorbed) {
+            parent_idx = seg->segment_index;
+        }
+    }
+
+    // Read the .qtx sidecar and verify remapped records
+    quant_sidecar::Reader reader(qtx_path);
+    auto records = reader.lookup(static_cast<uint64_t>(parent_idx));
+
+    ASSERT_GE(records.size(), 2u)
+        << "Parent block should have records from both samples (rep1 remapped + rep2 direct)";
+
+    // Verify both sample values are present
+    std::map<uint32_t, float> sample_values;
+    for (const auto& rec : records) {
+        sample_values[rec.sample_id] = rec.value;
+    }
+
+    auto& reg = sample_registry::instance();
+    uint32_t rep1_id = 0, rep2_id = 0;
+    for (size_t i = 0; i < reg.size(); ++i) {
+        const auto& info = reg.get(static_cast<uint32_t>(i));
+        if (info.id == "rep1") rep1_id = static_cast<uint32_t>(i);
+        if (info.id == "rep2") rep2_id = static_cast<uint32_t>(i);
+    }
+
+    EXPECT_FLOAT_EQ(sample_values[rep1_id], 10.0f)
+        << "rep1's expression should be remapped to the parent";
+    EXPECT_FLOAT_EQ(sample_values[rep2_id], 20.0f)
+        << "rep2's expression should be on the parent directly";
+}
+
+// ── Tier 2.2: Transitive chain resolution in tombstone remap (#38) ───────
+//
+// Three files: A (3 exons), B (4 exons, extends A), C (5 exons, extends B).
+// A is absorbed into B, then B is absorbed into C. The remap chain A→B→C
+// should be compressed to A→C so all expression lands on C's block.
+TEST_F(BuilderPipelineTest, TransitiveChain_QtxRemap) {
+    auto a_path = write_gtf("chain_a.gtf",
+        "chr22\tTALON\tgene\t1000\t7000\t.\t+\t.\tgene_id \"G1\"; gene_name \"TEST\";\n"
+        "chr22\tTALON\ttranscript\t2000\t5000\t.\t+\t.\tgene_id \"G1\"; transcript_id \"TA\"; counts \"5\";\n"
+        "chr22\tTALON\texon\t2000\t2500\t.\t+\t.\tgene_id \"G1\"; transcript_id \"TA\";\n"
+        "chr22\tTALON\texon\t3000\t3500\t.\t+\t.\tgene_id \"G1\"; transcript_id \"TA\";\n"
+        "chr22\tTALON\texon\t4500\t5000\t.\t+\t.\tgene_id \"G1\"; transcript_id \"TA\";\n");
+
+    auto b_path = write_gtf("chain_b.gtf",
+        "chr22\tTALON\tgene\t1000\t7000\t.\t+\t.\tgene_id \"G1\"; gene_name \"TEST\";\n"
+        "chr22\tTALON\ttranscript\t1000\t5000\t.\t+\t.\tgene_id \"G1\"; transcript_id \"TB\"; counts \"10\";\n"
+        "chr22\tTALON\texon\t1000\t1500\t.\t+\t.\tgene_id \"G1\"; transcript_id \"TB\";\n"
+        "chr22\tTALON\texon\t2000\t2500\t.\t+\t.\tgene_id \"G1\"; transcript_id \"TB\";\n"
+        "chr22\tTALON\texon\t3000\t3500\t.\t+\t.\tgene_id \"G1\"; transcript_id \"TB\";\n"
+        "chr22\tTALON\texon\t4500\t5000\t.\t+\t.\tgene_id \"G1\"; transcript_id \"TB\";\n");
+
+    auto c_path = write_gtf("chain_c.gtf",
+        "chr22\tTALON\tgene\t1000\t7000\t.\t+\t.\tgene_id \"G1\"; gene_name \"TEST\";\n"
+        "chr22\tTALON\ttranscript\t1000\t7000\t.\t+\t.\tgene_id \"G1\"; transcript_id \"TC\"; counts \"15\";\n"
+        "chr22\tTALON\texon\t1000\t1500\t.\t+\t.\tgene_id \"G1\"; transcript_id \"TC\";\n"
+        "chr22\tTALON\texon\t2000\t2500\t.\t+\t.\tgene_id \"G1\"; transcript_id \"TC\";\n"
+        "chr22\tTALON\texon\t3000\t3500\t.\t+\t.\tgene_id \"G1\"; transcript_id \"TC\";\n"
+        "chr22\tTALON\texon\t4500\t5000\t.\t+\t.\tgene_id \"G1\"; transcript_id \"TC\";\n"
+        "chr22\tTALON\texon\t6000\t7000\t.\t+\t.\tgene_id \"G1\"; transcript_id \"TC\";\n");
+
+    std::vector<sample_info> samples;
+    samples.emplace_back("sa", a_path);
+    samples.back().type = "sample";
+    samples.back().expression_attributes = {"counts"};
+    samples.emplace_back("sb", b_path);
+    samples.back().type = "sample";
+    samples.back().expression_attributes = {"counts"};
+    samples.emplace_back("sc", c_path);
+    samples.back().type = "sample";
+    samples.back().expression_attributes = {"counts"};
+
+    std::string qtx_path = (tmp_dir / "chain.qtx").string();
+    grove_type grove(3);
+    auto summary = builder::build_from_samples(
+        grove, samples,
+        /*threads=*/1, /*filters=*/expression_filters{}, /*absorb=*/true,
+        /*fuzzy_tolerance=*/5, /*prune_tombstones=*/false,
+        /*include_scaffolds=*/true, qtx_path);
+
+    EXPECT_GE(summary.counters.absorbed_segments, 2u)
+        << "Both A and B should be absorbed (A→B→C chain)";
+
+    // Find the sole live segment (C's 5-exon parent)
+    auto segs = walk_live_segments(grove);
+    size_t live_idx = 0;
+    size_t live_count = 0;
+    for (const auto* seg : segs) {
+        if (!seg->absorbed) {
+            live_idx = seg->segment_index;
+            live_count++;
+        }
+    }
+    EXPECT_EQ(live_count, 1u) << "Only C's segment should be live";
+
+    // All three samples' expression should land on the live segment
+    quant_sidecar::Reader reader(qtx_path);
+    auto records = reader.lookup(static_cast<uint64_t>(live_idx));
+
+    std::map<uint32_t, float> sample_values;
+    for (const auto& rec : records) {
+        sample_values[rec.sample_id] = rec.value;
+    }
+
+    auto& reg = sample_registry::instance();
+    for (size_t i = 0; i < reg.size(); ++i) {
+        const auto& info = reg.get(static_cast<uint32_t>(i));
+        if (info.id == "sa") {
+            EXPECT_FLOAT_EQ(sample_values[static_cast<uint32_t>(i)], 5.0f)
+                << "sa's expression should be transitively remapped to C";
+        } else if (info.id == "sb") {
+            EXPECT_FLOAT_EQ(sample_values[static_cast<uint32_t>(i)], 10.0f)
+                << "sb's expression should be remapped to C";
+        } else if (info.id == "sc") {
+            EXPECT_FLOAT_EQ(sample_values[static_cast<uint32_t>(i)], 15.0f)
+                << "sc's expression should be on C directly";
+        }
+    }
 }
