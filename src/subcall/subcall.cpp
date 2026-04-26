@@ -389,11 +389,17 @@ void subcall::load_grove(const std::string& path) {
     // Read magic bytes + version
     char magic[4];
     ifs.read(magic, 4);
+    if (!ifs.good()) {
+        throw std::runtime_error("Failed to read .ggx header (file too short?): " + path);
+    }
     if (std::string(magic, 4) != "AGRX") {
         throw std::runtime_error("Invalid .ggx file (bad magic): " + path);
     }
     uint16_t version;
     ifs.read(reinterpret_cast<char*>(&version), sizeof(version));
+    if (!ifs.good()) {
+        throw std::runtime_error("Failed to read .ggx version (file truncated?): " + path);
+    }
     if (version != 1) {
         throw std::runtime_error("Unsupported .ggx version: " + std::to_string(version));
     }

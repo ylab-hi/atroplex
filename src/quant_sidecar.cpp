@@ -332,6 +332,19 @@ std::vector<TOCEntry> run_final_merge(
     // we've been accumulating for.
     auto flush_block = [&](uint64_t current_seg) {
         if (block_records.empty()) return;
+
+        // Dedup by sample_id: records are sample_id-sorted (heap ordering),
+        // so duplicates are adjacent. Sum values for the same sample (#35).
+        size_t write_pos = 0;
+        for (size_t i = 0; i < block_records.size(); ++i) {
+            if (write_pos > 0 && block_records[write_pos - 1].first == block_records[i].first) {
+                block_records[write_pos - 1].second += block_records[i].second;
+            } else {
+                block_records[write_pos++] = block_records[i];
+            }
+        }
+        block_records.resize(write_pos);
+
         const auto block_offset = static_cast<uint64_t>(out.tellp());
 
         const uint32_t num_records =

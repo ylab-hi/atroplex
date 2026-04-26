@@ -782,7 +782,10 @@ void analysis_report::collect(grove_type& grove,
 
 void analysis_report::write_overview(const std::string& path) const {
     std::ofstream out(path);
-    if (!out.is_open()) return;
+    if (!out.is_open()) {
+        logging::error("Cannot open overview file: " + path);
+        return;
+    }
 
     size_t total_segments = exons_per_segment.size();
     size_t total_genes = transcripts_per_gene.size();
@@ -833,7 +836,10 @@ void analysis_report::write_overview(const std::string& path) const {
 
 void analysis_report::write_per_sample(const std::string& path) const {
     std::ofstream out(path);
-    if (!out.is_open()) return;
+    if (!out.is_open()) {
+        logging::error("Cannot open per-sample file: " + path);
+        return;
+    }
 
     auto& registry = sample_registry::instance();
 
