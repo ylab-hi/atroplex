@@ -52,10 +52,12 @@ void build_gff::build(grove_type& grove,
     std::string progress_prefix = "Processing " + filepath.filename().string();
     logging::progress_start();
 
+    constexpr size_t PROGRESS_INTERVAL = 50000;
+
     for (const auto& entry : reader) {
         line_count++;
 
-        if (line_count % 50000 == 0) {
+        if (line_count % PROGRESS_INTERVAL == 0) {
             logging::progress(line_count, progress_prefix);
         }
 

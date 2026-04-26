@@ -45,7 +45,7 @@ static size_t abs_diff(size_t a, size_t b) {
 // ── Exon chain walking via graph edges ──────────────────────────────
 
 std::vector<key_ptr> segment_builder::walk_exon_chain(
-    grove_type& grove, key_ptr segment_key, size_t segment_index
+    const grove_type& grove, key_ptr segment_key, size_t segment_index
 ) {
     std::vector<key_ptr> chain;
     auto first_exons = grove.get_neighbors_if(segment_key,

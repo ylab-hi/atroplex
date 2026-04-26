@@ -7,22 +7,16 @@
 #include <locale>
 #include <mutex>
 
-std::string normalize_chromosome(const std::string& seqid) {
-    // Already has chr prefix - check for MT variant
+std::string normalize_chromosome(std::string_view seqid) {
     if (seqid.size() >= 3 && seqid.substr(0, 3) == "chr") {
-        return seqid;
+        return std::string(seqid);
     }
 
-    // Ensembl mitochondria
     if (seqid == "MT") {
         return "chrM";
     }
 
-    // Numeric chromosomes (1-22) or sex chromosomes (X, Y) or M
     if (!seqid.empty()) {
-        // Check if it's a valid chromosome to prefix
-        // Numeric: 1, 2, ..., 22
-        // Letters: X, Y, M
         bool is_numeric = true;
         for (char c : seqid) {
             if (!std::isdigit(c)) {
@@ -32,20 +26,18 @@ std::string normalize_chromosome(const std::string& seqid) {
         }
 
         if (is_numeric || seqid == "X" || seqid == "Y" || seqid == "M") {
-            return "chr" + seqid;
+            return "chr" + std::string(seqid);
         }
     }
 
-    // Unknown format - return as-is
-    return seqid;
+    return std::string(seqid);
 }
 
-bool is_main_chromosome(const std::string& seqid, bool include_scaffolds) {
+bool is_main_chromosome(std::string_view seqid, bool include_scaffolds) {
     if (include_scaffolds) return true;
     if (seqid.empty()) return false;
 
-    // Strip an optional "chr" prefix so both `chr1` and `1` match.
-    std::string core = (seqid.size() >= 3 && seqid.substr(0, 3) == "chr")
+    std::string_view core = (seqid.size() >= 3 && seqid.substr(0, 3) == "chr")
         ? seqid.substr(3)
         : seqid;
     if (core.empty()) return false;
@@ -109,17 +101,17 @@ namespace logging {
         return s;
     }
 
-    void info(const std::string& message) {
+    void info(std::string_view message) {
         std::lock_guard<std::mutex> lock(log_mutex);
         std::cout << "[atroplex] " << get_timestamp() << " - " << message << std::endl;
     }
 
-    void warning(const std::string& message) {
+    void warning(std::string_view message) {
         std::lock_guard<std::mutex> lock(log_mutex);
         std::cout << YELLOW << "[atroplex] " << get_timestamp() << " - WARNING: " << message << RESET << std::endl;
     }
 
-    void error(const std::string& message) {
+    void error(std::string_view message) {
         std::lock_guard<std::mutex> lock(log_mutex);
         std::cerr << RED << "[atroplex] " << get_timestamp() << " - ERROR: " << message << RESET << std::endl;
     }
@@ -129,7 +121,7 @@ namespace logging {
         progress_start_time = std::chrono::steady_clock::now();
     }
 
-    void progress(size_t lines, const std::string& prefix) {
+    void progress(size_t lines, std::string_view prefix) {
         std::lock_guard<std::mutex> lock(log_mutex);
         if (!progress_enabled) return;
 
@@ -145,7 +137,7 @@ namespace logging {
                   << RESET << "          " << std::flush;  // Extra spaces to clear previous content
     }
 
-    void progress_done(size_t total_segments, size_t new_segments, const std::string& prefix) {
+    void progress_done(size_t total_segments, size_t new_segments, std::string_view prefix) {
         std::lock_guard<std::mutex> lock(log_mutex);
         auto now = std::chrono::steady_clock::now();
         auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - progress_start_time).count();

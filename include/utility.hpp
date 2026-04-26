@@ -14,6 +14,7 @@
 // standard
 #include <chrono>
 #include <string>
+#include <string_view>
 
 /**
  * Normalize chromosome name to UCSC/GENCODE style
@@ -21,7 +22,7 @@
  * - "MT" → "chrM" (Ensembl mitochondria)
  * - "chr1" → "chr1" (already normalized)
  */
-std::string normalize_chromosome(const std::string& seqid);
+std::string normalize_chromosome(std::string_view seqid);
 
 /**
  * Return true if `seqid` names a canonical main chromosome on the
@@ -44,12 +45,12 @@ std::string normalize_chromosome(const std::string& seqid);
  * @param seqid           The chromosome name as read from the GTF
  * @param include_scaffolds  If true, always return true (no filtering)
  */
-bool is_main_chromosome(const std::string& seqid, bool include_scaffolds = false);
+bool is_main_chromosome(std::string_view seqid, bool include_scaffolds = false);
 
 namespace logging {
-    void info(const std::string& message);
-    void warning(const std::string& message);
-    void error(const std::string& message);
+    void info(std::string_view message);
+    void warning(std::string_view message);
+    void error(std::string_view message);
 
     /**
      * Enable or disable progress output (carriage return updates)
@@ -66,14 +67,14 @@ namespace logging {
      * @param lines Number of lines read
      * @param prefix Prefix message (e.g., "Processing gencode.gtf")
      */
-    void progress(size_t lines, const std::string& prefix = "Processing");
+    void progress(size_t lines, std::string_view prefix = "Processing");
 
     /**
      * Clear the progress line and print final summary
      * @param segments Total segments created
      * @param prefix Prefix message
      */
-    void progress_done(size_t total_segments, size_t new_segments, const std::string& prefix = "Processed");
+    void progress_done(size_t total_segments, size_t new_segments, std::string_view prefix = "Processed");
 
     /**
      * Reset the progress timer (call before starting a new progress sequence)

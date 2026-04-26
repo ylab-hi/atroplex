@@ -289,13 +289,13 @@ public:
 
     /// Look up all (sample_id, value) records for a segment. Returns an
     /// empty vector if the segment has no records in the file.
-    std::vector<ValueRecord> lookup(uint64_t segment_index) const;
+    [[nodiscard]] std::vector<ValueRecord> lookup(uint64_t segment_index) const;
 
     /// Look up a segment and filter to a set of samples of interest.
     /// Returns a map of sample_id → value for samples that appear in
     /// both the segment's block and `wanted_samples`. Efficient because
     /// records are already sorted by sample_id within a block.
-    std::unordered_map<uint32_t, float> lookup_filtered(
+    [[nodiscard]] std::unordered_map<uint32_t, float> lookup_filtered(
         uint64_t segment_index,
         const std::vector<uint32_t>& wanted_samples) const;
 

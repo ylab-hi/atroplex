@@ -59,7 +59,7 @@ public:
      * graph edges. Returns the ordered exon key_ptrs.
      */
     [[nodiscard]] static std::vector<key_ptr> walk_exon_chain(
-        grove_type& grove,
+        const grove_type& grove,
         key_ptr segment_key,
         size_t segment_index
     );
