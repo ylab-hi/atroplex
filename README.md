@@ -351,8 +351,45 @@ One row per (hub exon, downstream target) pair with per-sample branch usage frac
 | File | Description |
 |------|-------------|
 | `{basename}.query.tsv` | Per-transcript classification with per-sample presence/expression |
-| `{basename}.query.summary.txt` | Classification summary |
+| `{basename}.query.summary.txt` | Classification summary (counts per category) |
 | `{basename}.{group_a}_vs_{group_b}.dtu.tsv` | DTU results (when `--contrast` is provided) |
+
+Only matched transcripts are emitted in `query.tsv` — unmatched transcripts (intergenic, antisense) are counted in the summary but omitted from the TSV since they carry no per-sample or structural information.
+
+#### Classification columns (`query.tsv`)
+
+| Column | Description |
+|--------|-------------|
+| `transcript_id` | Query transcript identifier (from input GTF `transcript_id` attribute) |
+| `gene_id` | Gene ID of the best-matching segment in the index (may be an annotated gene like ENSG… or a tool-generated ID like MSTRG.* for novel loci) |
+| `gene_name` | Gene name of the best-matching segment (`.` when no gene name is available) |
+| `structural_category` | SQANTI-like classification: FSM, ISM, NIC, NNC, genic_intron, genic_genomic |
+| `subcategory` | Refinement: ISM → 5prime_fragment / 3prime_fragment / internal_fragment; NIC → combination / intron_retention / exon_skipping / alternative_3end / alternative_5end; NNC → novel_donor / novel_acceptor / novel_both / novel_exon |
+| `junction_match_score` | Fraction of query splice junctions matching the best reference segment (0.0–1.0) |
+| `matching_junctions` | Number of query junctions that match the reference |
+| `query_junctions` | Total splice junctions in the query transcript |
+| `ref_junctions` | Total splice junctions in the best-matching reference segment |
+| `known_donors` | Query donor sites (exon 3' ends) matching any known donor in the index |
+| `known_acceptors` | Query acceptor sites (exon 5' starts) matching any known acceptor in the index |
+| `novel_donors` | Query donor sites not found in the index |
+| `novel_acceptors` | Query acceptor sites not found in the index |
+| `n_samples` | Number of samples in the index that contain the matched segment |
+| `{sample_id}.present` | Per-sample presence (1/0) — one column per entry in the index |
+| `{sample_id}.{expr_type}` | Per-sample expression at the matched segment (only when `.qtx` sidecar is available; `.` = no data) |
+
+#### DTU columns (`*.dtu.tsv`)
+
+| Column | Description |
+|--------|-------------|
+| `gene_id` | Gene identifier |
+| `gene_name` | Gene name |
+| `transcript_id` | Transcript being tested |
+| `prop_{group_a}` | Proportion of gene expression from this transcript in group A |
+| `prop_{group_b}` | Proportion of gene expression from this transcript in group B |
+| `delta_proportion` | Difference in proportions (group A − group B) |
+| `p_value` | Chi-squared test p-value (Wilson-Hilferty approximation) |
+| `fdr` | Benjamini-Hochberg adjusted p-value |
+| `significant` | `yes` / `no` based on `--fdr` threshold |
 
 ### `atroplex discover` output
 
