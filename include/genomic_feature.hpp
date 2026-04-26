@@ -45,8 +45,9 @@ namespace gst = genogrove::structure;
 class sample_bitset {
     std::vector<uint64_t> words_;
 
-    static size_t word_index(uint32_t id) { return id / 64; }
-    static uint64_t bit_mask(uint32_t id) { return uint64_t{1} << (id % 64); }
+    static constexpr size_t BITS_PER_WORD = 64;
+    static size_t word_index(uint32_t id) { return id / BITS_PER_WORD; }
+    static uint64_t bit_mask(uint32_t id) { return uint64_t{1} << (id % BITS_PER_WORD); }
 
     void ensure_capacity(uint32_t id) {
         size_t needed = word_index(id) + 1;
@@ -233,7 +234,7 @@ public:
         return reg;
     }
 
-    uint32_t intern(const std::string& name) {
+    [[nodiscard]] uint32_t intern(const std::string& name) {
         auto it = str_to_id_.find(name);
         if (it != str_to_id_.end()) return it->second;
         uint32_t id = static_cast<uint32_t>(id_to_str_.size());
@@ -281,7 +282,7 @@ public:
         return reg;
     }
 
-    uint32_t intern(const std::string& gene_id,
+    [[nodiscard]] uint32_t intern(const std::string& gene_id,
                     const std::string& gene_name,
                     const std::string& gene_biotype) {
         auto it = id_to_idx_.find(gene_id);
@@ -314,6 +315,7 @@ public:
  * Features store a uint16_t bitfield instead of unordered_set<string>.
  */
 class source_registry {
+    static constexpr size_t MAX_SOURCES = 16;
     std::unordered_map<std::string, uint8_t> str_to_bit_;
     std::vector<std::string> bit_to_str_;
 public:
@@ -323,13 +325,13 @@ public:
     }
 
     /// Returns the bit position for this source string (allocates new if unseen)
-    uint8_t intern(const std::string& source) {
+    [[nodiscard]] uint8_t intern(const std::string& source) {
         auto it = str_to_bit_.find(source);
         if (it != str_to_bit_.end()) return it->second;
         uint8_t bit = static_cast<uint8_t>(bit_to_str_.size());
-        if (bit >= 16) {
+        if (bit >= MAX_SOURCES) {
             throw std::overflow_error(
-                "source_registry: max 16 unique sources exceeded (trying to add '" + source +
+                "source_registry: max " + std::to_string(MAX_SOURCES) + " unique sources exceeded (trying to add '" + source +
                 "'). If you need more, widen the sources bitfield from uint16_t to uint32_t.");
         }
         str_to_bit_[source] = bit;
