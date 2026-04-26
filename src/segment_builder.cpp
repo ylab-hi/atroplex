@@ -223,38 +223,32 @@ void segment_builder::create_segment(
         }
     }
 
-    // Annotated-loci-only filter: if the flag is set and this is a
-    // SAMPLE transcript (not annotation), require at least one spatial
-    // candidate from an annotation source. Annotation transcripts always
-    // pass — they ARE the reference loci. Transcripts that merged into
-    // existing segments via Rules 0-5 already returned above.
-    if (annotated_loci_only && !is_annotation_sample(sample_id)) {
-        bool overlaps_annotation = false;
+    // Gene_idx inheritance: sample transcripts that overlap an annotation
+    // segment always inherit its gene_idx so novel isoforms at known loci
+    // don't inflate the gene count with sample-specific gene_ids (MSTRG.*,
+    // ENCLB*, etc.). Not gated behind --annotated-loci-only — this is
+    // always the right behavior when an annotation overlap exists.
+    // Only for sample transcripts — annotations keep their own gene_idx.
+    // Without this guard, overlapping annotation genes on the same strand
+    // would steal each other's gene_idx.
+    bool overlaps_annotation = false;
+    if (!is_annotation_sample(sample_id)) {
         for (const auto& cand : candidates) {
             if (is_parent_annotation(cand.segment)) {
+                gene_idx = get_segment(cand.segment->get_data()).gene_idx;
                 overlaps_annotation = true;
                 break;
             }
         }
-        if (!overlaps_annotation) {
-            counters.discarded_transcripts++;
-            return;
-        }
     }
 
-    // When overlapping an annotation segment, inherit its gene_idx so
-    // novel isoforms at known loci don't inflate the gene count with
-    // sample-specific gene_ids (MSTRG.*, ENCLB*, etc.).
-    // Only for sample transcripts — annotations already have the correct
-    // gene_idx from their own GTF. Without this guard, overlapping
-    // annotation genes on the same strand would steal each other's gene_idx.
-    if (annotated_loci_only && !is_annotation_sample(sample_id)) {
-        for (const auto& cand : candidates) {
-            if (is_parent_annotation(cand.segment)) {
-                gene_idx = get_segment(cand.segment->get_data()).gene_idx;
-                break;
-            }
-        }
+    // Annotated-loci-only filter: if the flag is set and this is a
+    // SAMPLE transcript with no annotation overlap, discard it.
+    // Annotation transcripts always pass. Transcripts that merged into
+    // existing segments via Rules 0-5 already returned above.
+    if (annotated_loci_only && !is_annotation_sample(sample_id) && !overlaps_annotation) {
+        counters.discarded_transcripts++;
+        return;
     }
 
     // Step 5: Create new segment
