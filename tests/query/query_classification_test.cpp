@@ -9,6 +9,7 @@
  *   sample.gtf (type=sample, source=TALON, with expression counts):
  *     TX_S1: 4 exons [same as TX_A1] — deduplicates with TX_A1's segment
  *     TX_S2: 2 exons [10000-10200, 12500-12800] — sample-only segment
+ *     TX_NOVEL_LOCUS: 3 exons at chr22:50000-55000 (gene MSTRG.42) — unannotated locus
  *
  * After build, segments have these sample memberships:
  *   Segment for TX_A1/TX_S1: annotation_id + sample_id (shared)
@@ -20,6 +21,7 @@
  *   Q_ANNO_ONLY:   matches TX_A2 structure — present in annotation only
  *   Q_SAMPLE_ONLY: matches TX_S2 structure — present in sample only
  *   Q_NOVEL:       novel exon at 11500-11800 — not in any source, NNC
+ *   Q_NOVEL_LOCUS: matches TX_NOVEL_LOCUS at unannotated locus (MSTRG.42) — FSM with tool-generated gene_id
  */
 
 #include <gtest/gtest.h>
@@ -233,30 +235,31 @@ TEST_F(QueryClassificationTest, NovelTranscript_NoSamplePresence) {
 
 // ── Gene assignment ────────────────────────────────────────────────
 
-TEST_F(QueryClassificationTest, AllTranscripts_AssignedToGeneA) {
+TEST_F(QueryClassificationTest, AnnotatedLocus_AssignedToGeneA) {
     auto results = classify_query_transcripts();
 
     for (const auto& r : results) {
-        if (r.category != structural_category::INTERGENIC) {
-            EXPECT_EQ(r.gene_id, "GENE_A")
-                << "Transcript " << r.transcript_id
-                << " should map to GENE_A";
-        }
+        if (r.category == structural_category::INTERGENIC) continue;
+        if (r.transcript_id == "Q_NOVEL_LOCUS") continue;
+        EXPECT_EQ(r.gene_id, "GENE_A")
+            << "Transcript " << r.transcript_id
+            << " should map to GENE_A";
     }
 }
 
 // ── Classification correctness ─────────────────────────────────────
 
-TEST_F(QueryClassificationTest, AllFourTranscripts_Classified) {
+TEST_F(QueryClassificationTest, AllTranscripts_Classified) {
     auto results = classify_query_transcripts();
 
-    EXPECT_EQ(results.size(), 4)
-        << "All 4 query transcripts should be classified (multi-exon)";
+    EXPECT_EQ(results.size(), 5)
+        << "All 5 query transcripts should be classified (multi-exon)";
 
     ASSERT_NE(find_result(results, "Q_SHARED"), nullptr);
     ASSERT_NE(find_result(results, "Q_ANNO_ONLY"), nullptr);
     ASSERT_NE(find_result(results, "Q_SAMPLE_ONLY"), nullptr);
     ASSERT_NE(find_result(results, "Q_NOVEL"), nullptr);
+    ASSERT_NE(find_result(results, "Q_NOVEL_LOCUS"), nullptr);
 }
 
 TEST_F(QueryClassificationTest, SampleCount_MatchesExpected) {
@@ -276,4 +279,30 @@ TEST_F(QueryClassificationTest, SampleCount_MatchesExpected) {
         << "Q_ANNO_ONLY present in 1 entry (annotation)";
     EXPECT_EQ(sample_only->sample_ids.size(), 1)
         << "Q_SAMPLE_ONLY present in 1 entry (sample)";
+}
+
+// ── Novel locus (unannotated gene) ────────────────────────────────
+
+TEST_F(QueryClassificationTest, NovelLocus_FSM_WithToolGeneratedGeneId) {
+    auto results = classify_query_transcripts();
+    auto* r = find_result(results, "Q_NOVEL_LOCUS");
+    ASSERT_NE(r, nullptr) << "Q_NOVEL_LOCUS should be classified";
+
+    EXPECT_EQ(r->category, structural_category::FSM)
+        << "Q_NOVEL_LOCUS matches TX_NOVEL_LOCUS exactly — should be FSM";
+    EXPECT_EQ(r->gene_id, "MSTRG.42")
+        << "Should return tool-generated gene_id from the index, not GENE_A";
+}
+
+TEST_F(QueryClassificationTest, NovelLocus_SampleOnlyPresence) {
+    auto results = classify_query_transcripts();
+    auto* r = find_result(results, "Q_NOVEL_LOCUS");
+    ASSERT_NE(r, nullptr);
+
+    EXPECT_EQ(r->sample_ids.size(), 1)
+        << "Novel locus segment should be in sample only";
+    EXPECT_TRUE(has_sample(*r, sample_id))
+        << "Novel locus should be present in sample";
+    EXPECT_FALSE(has_sample(*r, annotation_id))
+        << "Novel locus should NOT be present in annotation";
 }

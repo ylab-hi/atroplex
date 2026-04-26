@@ -9,3 +9,8 @@ chr22	TALON	exon	14000	14500	.	+	.	gene_id "GENE_A"; transcript_id "TX_S1"; exon
 chr22	TALON	transcript	10000	12800	.	+	.	gene_id "GENE_A"; transcript_id "TX_S2"; transcript_type "protein_coding"; counts "75";
 chr22	TALON	exon	10000	10200	.	+	.	gene_id "GENE_A"; transcript_id "TX_S2"; exon_number "1";
 chr22	TALON	exon	12500	12800	.	+	.	gene_id "GENE_A"; transcript_id "TX_S2"; exon_number "2";
+chr22	TALON	gene	50000	55000	.	+	.	gene_id "MSTRG.42"; gene_name "MSTRG.42"; gene_biotype "lncRNA";
+chr22	TALON	transcript	50000	55000	.	+	.	gene_id "MSTRG.42"; transcript_id "TX_NOVEL_LOCUS"; transcript_type "lncRNA"; counts "30";
+chr22	TALON	exon	50000	50300	.	+	.	gene_id "MSTRG.42"; transcript_id "TX_NOVEL_LOCUS"; exon_number "1";
+chr22	TALON	exon	52000	52400	.	+	.	gene_id "MSTRG.42"; transcript_id "TX_NOVEL_LOCUS"; exon_number "2";
+chr22	TALON	exon	54500	55000	.	+	.	gene_id "MSTRG.42"; transcript_id "TX_NOVEL_LOCUS"; exon_number "3";

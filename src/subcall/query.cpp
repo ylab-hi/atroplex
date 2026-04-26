@@ -351,8 +351,12 @@ void query::write_classification(const std::string& path,
     }
     out << "\n";
 
-    // Rows
+    // Rows — skip unmatched transcripts (intergenic/antisense/genic with no
+    // useful per-sample data; counts are in the summary file)
     for (const auto& r : results) {
+        if (r.category == structural_category::INTERGENIC ||
+            r.category == structural_category::ANTISENSE) continue;
+
         out << r.transcript_id << "\t"
             << r.gene_id << "\t"
             << r.gene_name << "\t"

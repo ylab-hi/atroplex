@@ -14,3 +14,6 @@ chr22	QUERY	transcript	10000	14500	.	+	.	gene_id "GENE_A"; transcript_id "Q_NOVE
 chr22	QUERY	exon	10000	10200	.	+	.	gene_id "GENE_A"; transcript_id "Q_NOVEL";
 chr22	QUERY	exon	11500	11800	.	+	.	gene_id "GENE_A"; transcript_id "Q_NOVEL";
 chr22	QUERY	exon	14000	14500	.	+	.	gene_id "GENE_A"; transcript_id "Q_NOVEL";
+chr22	QUERY	exon	50000	50300	.	+	.	gene_id "UNKNOWN"; transcript_id "Q_NOVEL_LOCUS";
+chr22	QUERY	exon	52000	52400	.	+	.	gene_id "UNKNOWN"; transcript_id "Q_NOVEL_LOCUS";
+chr22	QUERY	exon	54500	55000	.	+	.	gene_id "UNKNOWN"; transcript_id "Q_NOVEL_LOCUS";
