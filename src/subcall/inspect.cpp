@@ -29,6 +29,12 @@ cxxopts::Options inspect::parse_args(int argc, char** argv) {
             cxxopts::value<size_t>()->default_value("0"))
         ;
 
+    options.add_options("Output")
+        ("events", "Write per-gene splicing event catalog (cassette, alt-5'/3', IR, "
+            "alt-terminal, mutually exclusive). Off by default — the file can be very "
+            "large on cohort-scale builds. Hub analysis always runs regardless.")
+        ;
+
     return options;
 }
 
@@ -106,14 +112,16 @@ void inspect::execute(const cxxopts::ParseResult& args) {
         (hubs_dir / (basename + ".branch_details.tsv")).string(),
         emit_expression_cols);
 
-    // Phase 8.6: open splicing events stream before collect() — events
-    // are detected per-gene at gene finalization and rows are streamed
-    // inline. Per-gene segment chains are captured during the existing
-    // exon walk and dropped at chromosome boundary.
-    auto events_dir = out_dir / "splicing_events";
-    std::filesystem::create_directories(events_dir);
-    report.begin_splicing_events_stream(
-        (events_dir / (basename + ".splicing_events.tsv")).string());
+    // Phase 8.6: splicing events are opt-in (--events) because the
+    // per-event TSV can be very large on cohort-scale builds. When
+    // disabled, the exon chain capture and detect_gene_events() call
+    // are both skipped (gated by splicing_events_stream == nullptr).
+    if (args.count("events")) {
+        auto events_dir = out_dir / "splicing_events";
+        std::filesystem::create_directories(events_dir);
+        report.begin_splicing_events_stream(
+            (events_dir / (basename + ".splicing_events.tsv")).string());
+    }
 
     size_t min_samples = args["min-samples"].as<size_t>();
     report.collect(*grove, qtx_reader_ptr(), min_samples);
