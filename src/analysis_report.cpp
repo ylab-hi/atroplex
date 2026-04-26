@@ -482,6 +482,7 @@ void analysis_report::collect(grove_type& grove,
     for (auto& [seqid, root] : roots) {
         if (!root) continue;
         chr_done++;
+        logging::info("Inspecting " + seqid + " (" + std::to_string(chr_done) + "/" + std::to_string(chr_total) + ")...");
         active_genes.clear();
         exon_expr_sum.clear();
 
@@ -768,6 +769,7 @@ void analysis_report::collect(grove_type& grove,
     }
 
     logging::progress(chr_total, "Inspecting [" + std::to_string(chr_done) + "/" + std::to_string(chr_total) + " chromosomes] done");
+    std::cout << "\n" << std::flush;
 
     total_exons = visited_exons.size();
     total_edges = grove.edge_count();
