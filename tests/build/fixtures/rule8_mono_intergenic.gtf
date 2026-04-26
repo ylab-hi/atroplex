@@ -1,0 +1,10 @@
+##id: rule8_test
+##description: Rule 8 - Mono-exon intergenic (no gene overlap) → drop
+chr1	TEST	gene	1000	3800	.	+	.	gene_id "G1"; gene_name "TestGene"; gene_biotype "protein_coding";
+chr1	TEST	transcript	1000	3800	.	+	.	gene_id "G1"; transcript_id "MULTI"; gene_name "TestGene"; gene_biotype "protein_coding";
+chr1	TEST	exon	1000	1200	.	+	.	gene_id "G1"; transcript_id "MULTI"; exon_number "1";
+chr1	TEST	exon	2000	2300	.	+	.	gene_id "G1"; transcript_id "MULTI"; exon_number "2";
+chr1	TEST	exon	3500	3800	.	+	.	gene_id "G1"; transcript_id "MULTI"; exon_number "3";
+chr1	TEST	gene	10000	10500	.	+	.	gene_id "G2"; gene_name "InterGene"; gene_biotype "lncRNA";
+chr1	TEST	transcript	10000	10500	.	+	.	gene_id "G2"; transcript_id "MONO_INTER"; gene_name "InterGene"; gene_biotype "lncRNA";
+chr1	TEST	exon	10000	10500	.	+	.	gene_id "G2"; transcript_id "MONO_INTER"; exon_number "1";

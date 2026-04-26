@@ -1,0 +1,12 @@
+##id: rule3_test
+##description: Rule 3 - 3' degradation (missing 3+ exons from 5' end)
+chr1	TEST	gene	1000	7000	.	+	.	gene_id "G1"; gene_name "TestGene"; gene_biotype "protein_coding";
+chr1	TEST	transcript	1000	7000	.	+	.	gene_id "G1"; transcript_id "PARENT"; gene_name "TestGene"; gene_biotype "protein_coding";
+chr1	TEST	exon	1000	1200	.	+	.	gene_id "G1"; transcript_id "PARENT"; exon_number "1";
+chr1	TEST	exon	2000	2300	.	+	.	gene_id "G1"; transcript_id "PARENT"; exon_number "2";
+chr1	TEST	exon	3500	3800	.	+	.	gene_id "G1"; transcript_id "PARENT"; exon_number "3";
+chr1	TEST	exon	4500	5000	.	+	.	gene_id "G1"; transcript_id "PARENT"; exon_number "4";
+chr1	TEST	exon	6000	7000	.	+	.	gene_id "G1"; transcript_id "PARENT"; exon_number "5";
+chr1	TEST	transcript	4500	7000	.	+	.	gene_id "G1"; transcript_id "DEGRAD"; gene_name "TestGene"; gene_biotype "protein_coding";
+chr1	TEST	exon	4500	5000	.	+	.	gene_id "G1"; transcript_id "DEGRAD"; exon_number "1";
+chr1	TEST	exon	6000	7000	.	+	.	gene_id "G1"; transcript_id "DEGRAD"; exon_number "2";
