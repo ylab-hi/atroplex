@@ -363,12 +363,13 @@ TEST_F(BuilderPipelineTest, BuildSummary_WrittenFileContainsCounters) {
 // segment. After merge_to_qtx, the parent's block should contain both
 // sample records (remapped from the tombstoned child).
 TEST_F(BuilderPipelineTest, ReverseAbsorption_QtxRemap) {
+    // rep1: 3 exons = last 3 of rep2's 4-exon chain (3' ISM, Rule 2 → absorb)
     auto rep1_path = write_gtf("rep1.gtf",
-        "chr22\tTALON\tgene\t1000\t5000\t.\t+\t.\tgene_id \"G1\"; gene_name \"TEST\";\n"
-        "chr22\tTALON\ttranscript\t1000\t5000\t.\t+\t.\tgene_id \"G1\"; transcript_id \"T1\"; counts \"10\";\n"
-        "chr22\tTALON\texon\t1000\t1500\t.\t+\t.\tgene_id \"G1\"; transcript_id \"T1\";\n"
+        "chr22\tTALON\tgene\t2000\t5000\t.\t+\t.\tgene_id \"G1\"; gene_name \"TEST\";\n"
+        "chr22\tTALON\ttranscript\t2000\t5000\t.\t+\t.\tgene_id \"G1\"; transcript_id \"T1\"; counts \"10\";\n"
         "chr22\tTALON\texon\t2000\t2500\t.\t+\t.\tgene_id \"G1\"; transcript_id \"T1\";\n"
-        "chr22\tTALON\texon\t3000\t3500\t.\t+\t.\tgene_id \"G1\"; transcript_id \"T1\";\n");
+        "chr22\tTALON\texon\t3000\t3500\t.\t+\t.\tgene_id \"G1\"; transcript_id \"T1\";\n"
+        "chr22\tTALON\texon\t4500\t5000\t.\t+\t.\tgene_id \"G1\"; transcript_id \"T1\";\n");
 
     auto rep2_path = write_gtf("rep2.gtf",
         "chr22\tTALON\tgene\t1000\t6000\t.\t+\t.\tgene_id \"G1\"; gene_name \"TEST\";\n"
@@ -439,21 +440,24 @@ TEST_F(BuilderPipelineTest, ReverseAbsorption_QtxRemap) {
 // A is absorbed into B, then B is absorbed into C. The remap chain A→B→C
 // should be compressed to A→C so all expression lands on C's block.
 TEST_F(BuilderPipelineTest, TransitiveChain_QtxRemap) {
+    // A: 3 exons = last 3 of B's chain (3' ISM of B)
     auto a_path = write_gtf("chain_a.gtf",
-        "chr22\tTALON\tgene\t1000\t7000\t.\t+\t.\tgene_id \"G1\"; gene_name \"TEST\";\n"
-        "chr22\tTALON\ttranscript\t2000\t5000\t.\t+\t.\tgene_id \"G1\"; transcript_id \"TA\"; counts \"5\";\n"
-        "chr22\tTALON\texon\t2000\t2500\t.\t+\t.\tgene_id \"G1\"; transcript_id \"TA\";\n"
+        "chr22\tTALON\tgene\t3000\t7000\t.\t+\t.\tgene_id \"G1\"; gene_name \"TEST\";\n"
+        "chr22\tTALON\ttranscript\t3000\t7000\t.\t+\t.\tgene_id \"G1\"; transcript_id \"TA\"; counts \"5\";\n"
         "chr22\tTALON\texon\t3000\t3500\t.\t+\t.\tgene_id \"G1\"; transcript_id \"TA\";\n"
-        "chr22\tTALON\texon\t4500\t5000\t.\t+\t.\tgene_id \"G1\"; transcript_id \"TA\";\n");
+        "chr22\tTALON\texon\t4500\t5000\t.\t+\t.\tgene_id \"G1\"; transcript_id \"TA\";\n"
+        "chr22\tTALON\texon\t6000\t7000\t.\t+\t.\tgene_id \"G1\"; transcript_id \"TA\";\n");
 
+    // B: 4 exons = last 4 of C's chain (3' ISM of C); reverse-absorbs A
     auto b_path = write_gtf("chain_b.gtf",
-        "chr22\tTALON\tgene\t1000\t7000\t.\t+\t.\tgene_id \"G1\"; gene_name \"TEST\";\n"
-        "chr22\tTALON\ttranscript\t1000\t5000\t.\t+\t.\tgene_id \"G1\"; transcript_id \"TB\"; counts \"10\";\n"
-        "chr22\tTALON\texon\t1000\t1500\t.\t+\t.\tgene_id \"G1\"; transcript_id \"TB\";\n"
+        "chr22\tTALON\tgene\t2000\t7000\t.\t+\t.\tgene_id \"G1\"; gene_name \"TEST\";\n"
+        "chr22\tTALON\ttranscript\t2000\t7000\t.\t+\t.\tgene_id \"G1\"; transcript_id \"TB\"; counts \"10\";\n"
         "chr22\tTALON\texon\t2000\t2500\t.\t+\t.\tgene_id \"G1\"; transcript_id \"TB\";\n"
         "chr22\tTALON\texon\t3000\t3500\t.\t+\t.\tgene_id \"G1\"; transcript_id \"TB\";\n"
-        "chr22\tTALON\texon\t4500\t5000\t.\t+\t.\tgene_id \"G1\"; transcript_id \"TB\";\n");
+        "chr22\tTALON\texon\t4500\t5000\t.\t+\t.\tgene_id \"G1\"; transcript_id \"TB\";\n"
+        "chr22\tTALON\texon\t6000\t7000\t.\t+\t.\tgene_id \"G1\"; transcript_id \"TB\";\n");
 
+    // C: 5 exons = full chain; reverse-absorbs B (and transitively A)
     auto c_path = write_gtf("chain_c.gtf",
         "chr22\tTALON\tgene\t1000\t7000\t.\t+\t.\tgene_id \"G1\"; gene_name \"TEST\";\n"
         "chr22\tTALON\ttranscript\t1000\t7000\t.\t+\t.\tgene_id \"G1\"; transcript_id \"TC\"; counts \"15\";\n"
