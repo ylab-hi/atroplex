@@ -101,9 +101,8 @@ Build always produces a serialized index (`.ggx`) and a build summary (`.ggx.sum
 ### `atroplex inspect` — Full pan-transcriptome inspection
 
 Performs detailed per-sample inspection: overview / per-source / biotype
-breakdowns, exon & segment sharing, conserved-exon detail, splicing hubs
-(per-sample PSI + entropy + branch fan-out), and splicing events
-(cassette / alt-5′ / alt-3′ / IR / alt-terminal / mutually-exclusive).
+breakdowns, exon & segment sharing, conserved-exon detail, and splicing hubs
+(per-sample PSI + entropy + branch fan-out). Splicing events (cassette / alt-5′ / alt-3′ / IR / alt-terminal / mutually-exclusive) are opt-in via `--events`.
 
 ```bash
 # Full inspection from manifest
@@ -111,7 +110,15 @@ atroplex inspect -m ENCODE/manifest.tsv -o results/
 
 # Full inspection from annotation files
 atroplex inspect -b gencode.gtf -b sample1.gtf -o results/
+
+# Filter to segments in >= 5 samples (annotations always kept)
+atroplex inspect -m manifest.tsv -o results/ --min-samples 5
+
+# Include splicing event catalog (cassette, alt-5'/3', IR, etc.)
+atroplex inspect -m manifest.tsv -o results/ --events
 ```
+
+Inspect-specific options: `--min-samples` (skip segments in < N samples, annotations always kept), `--events` (write per-gene splicing event catalog, off by default)
 
 ### `atroplex query` — Classify transcripts against the index
 
@@ -313,7 +320,7 @@ subcommands):
   splicing_hubs/
     {basename}.splicing_hubs.tsv     Hub exons (>10 downstream branches) with per-sample PSI + entropy
     {basename}.branch_details.tsv    Per-(hub × target) branch fraction + expression
-  splicing_events/
+  splicing_events/                   (only with --events)
     {basename}.splicing_events.tsv   Classified events: cassette / alt-5′ / alt-3′ / IR / alt-terminal / mutex
 ```
 
