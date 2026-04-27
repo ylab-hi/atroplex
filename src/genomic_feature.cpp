@@ -46,7 +46,7 @@ exon_feature exon_feature::from_gff_entry(
     }
     // Gene identity interned but not stored on the exon — gene_idx lives
     // only on segments. The intern() call ensures the gene is registered.
-    gene_registry::instance().intern(gid, gname, gbiotype);
+    (void)gene_registry::instance().intern(gid, gname, gbiotype);
 
     // Transcript information
     std::string transcript_id = get_attribute(attributes, "transcript_id");
@@ -296,7 +296,7 @@ void gene_registry::deserialize_into(std::istream& is) {
         std::string gene_id = read_string(is);
         std::string gene_name = read_string(is);
         std::string gene_biotype = read_string(is);
-        intern(gene_id, gene_name, gene_biotype);
+        (void)intern(gene_id, gene_name, gene_biotype);
     }
 }
 
@@ -312,7 +312,7 @@ void source_registry::deserialize_into(std::istream& is) {
     uint32_t n = read_pod<uint32_t>(is);
     for (uint32_t i = 0; i < n; ++i) {
         std::string s = read_string(is);
-        intern(s);
+        (void)intern(s);
     }
 }
 
@@ -328,6 +328,6 @@ void transcript_registry::deserialize_into(std::istream& is) {
     uint32_t n = read_pod<uint32_t>(is);
     for (uint32_t i = 0; i < n; ++i) {
         std::string s = read_string(is);
-        intern(s);
+        (void)intern(s);
     }
 }
