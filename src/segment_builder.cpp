@@ -106,15 +106,8 @@ void segment_builder::create_segment(
         return;
     }
 
-    // Spatial candidate lookup — find all segments overlapping this
-    // transcript's span. Replaces the gene_segment_index lookup so
-    // absorption works across gene_ids (issue #40).
-    struct spatial_candidate {
-        key_ptr segment;
-        std::vector<key_ptr> exon_chain;
-    };
+    // Spatial candidate lookup for absorption rules
     std::vector<spatial_candidate> candidates;
-
     if (absorb && exon_chain.size() >= 2) {
         gdt::genomic_coordinate query_coord(strand, span_start, span_end);
         auto result = grove.intersect(query_coord, seqid);
@@ -129,125 +122,31 @@ void segment_builder::create_segment(
         }
     }
 
-    // Step 2: Rule 5 — Terminal variant (same intron chain, TSS/TES <50bp)
-    if (absorb && exon_chain.size() >= 2) {
-        for (const auto& cand : candidates) {
-            if (cand.exon_chain.size() != exon_chain.size()) continue;
-
-            if (has_same_intron_chain(exon_chain, cand.exon_chain) &&
-                terminal_boundaries_within_tolerance(exon_chain, cand.exon_chain, TERMINAL_TOLERANCE_BP)) {
-                merge_into_segment(cand.segment, transcript_id, sample_id,
-                                  gff_source, expression_value, transcript_biotype,
-                                  sidecar_writer);
-                get_segment(cand.segment->get_data()).absorbed_count++;
-                counters.merged_transcripts++;
-                return;
-            }
-        }
+    // Step 2: Rule 5 — Terminal variant
+    if (absorb && exon_chain.size() >= 2 &&
+        try_terminal_variant_merge(exon_chain, candidates, transcript_id, sample_id,
+                                   gff_source, expression_value, transcript_biotype,
+                                   sidecar_writer, counters)) {
+        return;
     }
 
-    // Step 3: Rules 6/7/8 — Mono-exon handling.
-    // Annotation transcripts skip these rules — they ARE the reference
-    // and must create segments so sample mono-exons can be classified
-    // against them later.
-    if (exon_chain.size() == 1 && !is_annotation_sample(sample_id)) {
-        if (!absorb) return;
-
-        auto& mono_coord = exon_chain.front()->get_value();
-        auto mono_class = classify_mono_exon(mono_coord, grove, seqid);
-
-        switch (mono_class) {
-            case mono_exon_class::INTRON_RETENTION:
-                break;
-            case mono_exon_class::GENE_OVERLAP:
-                counters.discarded_transcripts++;
-                return;
-            case mono_exon_class::INTERGENIC:
-                counters.discarded_transcripts++;
-                return;
-        }
+    // Step 3: Rules 6/7/8 — Mono-exon handling
+    if (handle_mono_exon(exon_chain, sample_id, absorb, grove, seqid, counters)) {
+        return;
     }
 
     // Step 4: Rules 0(fuzzy)/1/2/3/4 — Subsequence matching
-    if (absorb && exon_chain.size() >= 2) {
-        key_ptr best_parent = nullptr;
-        size_t best_exon_count = 0;
-        subsequence_type best_match = subsequence_type::NONE;
-
-        for (const auto& cand : candidates) {
-            if (cand.exon_chain.size() < exon_chain.size()) continue;
-
-            const auto& parent_first = cand.exon_chain.front()->get_value();
-            const auto& parent_last = cand.exon_chain.back()->get_value();
-            if (span_start + fuzzy_tolerance < parent_first.get_start()) continue;
-            if (span_end > parent_last.get_end() + fuzzy_tolerance) continue;
-
-            auto match = classify_subsequence(exon_chain, cand.exon_chain);
-            if (match == subsequence_type::NONE) {
-                match = fuzzy_classify_subsequence(exon_chain, cand.exon_chain, fuzzy_tolerance);
-            }
-
-            if (match == subsequence_type::NONE) continue;
-            if (match == subsequence_type::ISM_5PRIME) continue;
-
-            if (match == subsequence_type::FSM) {
-                merge_into_segment(cand.segment, transcript_id, sample_id,
-                                  gff_source, expression_value, transcript_biotype,
-                                  sidecar_writer);
-                get_segment(cand.segment->get_data()).absorbed_count++;
-                counters.merged_transcripts++;
-                return;
-            }
-
-            if (cand.exon_chain.size() > best_exon_count) {
-                best_parent = cand.segment;
-                best_exon_count = cand.exon_chain.size();
-                best_match = match;
-            }
-        }
-
-        if (best_parent != nullptr) {
-            if (best_match == subsequence_type::ISM_3PRIME) {
-                merge_into_segment(best_parent, transcript_id, sample_id,
-                                  gff_source, expression_value, transcript_biotype,
-                                  sidecar_writer);
-                get_segment(best_parent->get_data()).absorbed_count++;
-                counters.merged_transcripts++;
-                return;
-            }
-
-            if (is_parent_annotation(best_parent)) {
-                counters.discarded_transcripts++;
-                return;
-            }
-        }
+    if (absorb && exon_chain.size() >= 2 &&
+        try_subsequence_absorption(exon_chain, candidates, span_start, span_end,
+                                    fuzzy_tolerance, transcript_id, sample_id,
+                                    gff_source, expression_value, transcript_biotype,
+                                    sidecar_writer, counters)) {
+        return;
     }
 
-    // Gene_idx inheritance: sample transcripts that overlap an annotation
-    // segment always inherit its gene_idx so novel isoforms at known loci
-    // don't inflate the gene count with sample-specific gene_ids (MSTRG.*,
-    // ENCLB*, etc.). Not gated behind --annotated-loci-only — this is
-    // always the right behavior when an annotation overlap exists.
-    // Only for sample transcripts — annotations keep their own gene_idx.
-    // Without this guard, overlapping annotation genes on the same strand
-    // would steal each other's gene_idx.
-    bool overlaps_annotation = false;
-    if (!is_annotation_sample(sample_id)) {
-        for (const auto& cand : candidates) {
-            if (is_parent_annotation(cand.segment)) {
-                gene_idx = get_segment(cand.segment->get_data()).gene_idx;
-                overlaps_annotation = true;
-                break;
-            }
-        }
-    }
-
-    // Annotated-loci-only filter: if the flag is set and this is a
-    // SAMPLE transcript with no annotation overlap, discard it.
-    // Annotation transcripts always pass. Transcripts that merged into
-    // existing segments via Rules 0-5 already returned above.
-    if (annotated_loci_only && !is_annotation_sample(sample_id) && !overlaps_annotation) {
-        counters.discarded_transcripts++;
+    // Gene_idx inheritance + annotated-loci-only filter
+    if (apply_gene_idx_inheritance(candidates, sample_id, annotated_loci_only,
+                                   gene_idx, counters)) {
         return;
     }
 
@@ -297,6 +196,145 @@ void segment_builder::create_segment(
     if (absorb) {
         try_reverse_absorption(grove, seg_key, exon_chain, segment_cache, seqid, fuzzy_tolerance);
     }
+}
+
+// ========================================================================
+// Subsequence classification
+// ========================================================================
+
+// ========================================================================
+// Extracted helpers for create_segment decomposition (#59)
+// ========================================================================
+
+bool segment_builder::try_terminal_variant_merge(
+    const std::vector<key_ptr>& exon_chain,
+    const std::vector<spatial_candidate>& candidates,
+    const std::string& transcript_id, std::optional<uint32_t> sample_id,
+    const std::string& gff_source, float expression_value,
+    const std::string& transcript_biotype,
+    quant_sidecar::SampleStreamWriter* sidecar_writer,
+    build_counters& counters) {
+
+    for (const auto& cand : candidates) {
+        if (cand.exon_chain.size() != exon_chain.size()) continue;
+        if (has_same_intron_chain(exon_chain, cand.exon_chain) &&
+            terminal_boundaries_within_tolerance(exon_chain, cand.exon_chain, TERMINAL_TOLERANCE_BP)) {
+            merge_into_segment(cand.segment, transcript_id, sample_id,
+                              gff_source, expression_value, transcript_biotype,
+                              sidecar_writer);
+            get_segment(cand.segment->get_data()).absorbed_count++;
+            counters.merged_transcripts++;
+            return true;
+        }
+    }
+    return false;
+}
+
+bool segment_builder::handle_mono_exon(
+    const std::vector<key_ptr>& exon_chain,
+    std::optional<uint32_t> sample_id, bool absorb,
+    grove_type& grove, const std::string& seqid,
+    build_counters& counters) {
+
+    if (exon_chain.size() != 1 || is_annotation_sample(sample_id)) return false;
+    if (!absorb) return true;
+
+    auto& mono_coord = exon_chain.front()->get_value();
+    auto mono_class = classify_mono_exon(mono_coord, grove, seqid);
+
+    switch (mono_class) {
+        case mono_exon_class::INTRON_RETENTION:
+            return false;
+        case mono_exon_class::GENE_OVERLAP:
+        case mono_exon_class::INTERGENIC:
+            counters.discarded_transcripts++;
+            return true;
+    }
+    return false;
+}
+
+bool segment_builder::try_subsequence_absorption(
+    const std::vector<key_ptr>& exon_chain,
+    const std::vector<spatial_candidate>& candidates,
+    size_t span_start, size_t span_end, size_t fuzzy_tolerance,
+    const std::string& transcript_id, std::optional<uint32_t> sample_id,
+    const std::string& gff_source, float expression_value,
+    const std::string& transcript_biotype,
+    quant_sidecar::SampleStreamWriter* sidecar_writer,
+    build_counters& counters) {
+
+    key_ptr best_parent = nullptr;
+    size_t best_exon_count = 0;
+    subsequence_type best_match = subsequence_type::NONE;
+
+    for (const auto& cand : candidates) {
+        if (cand.exon_chain.size() < exon_chain.size()) continue;
+
+        const auto& parent_first = cand.exon_chain.front()->get_value();
+        const auto& parent_last = cand.exon_chain.back()->get_value();
+        if (span_start + fuzzy_tolerance < parent_first.get_start()) continue;
+        if (span_end > parent_last.get_end() + fuzzy_tolerance) continue;
+
+        auto match = classify_subsequence(exon_chain, cand.exon_chain);
+        if (match == subsequence_type::NONE) {
+            match = fuzzy_classify_subsequence(exon_chain, cand.exon_chain, fuzzy_tolerance);
+        }
+        if (match == subsequence_type::NONE) continue;
+        if (match == subsequence_type::ISM_5PRIME) continue;
+
+        if (match == subsequence_type::FSM) {
+            merge_into_segment(cand.segment, transcript_id, sample_id,
+                              gff_source, expression_value, transcript_biotype,
+                              sidecar_writer);
+            get_segment(cand.segment->get_data()).absorbed_count++;
+            counters.merged_transcripts++;
+            return true;
+        }
+
+        if (cand.exon_chain.size() > best_exon_count) {
+            best_parent = cand.segment;
+            best_exon_count = cand.exon_chain.size();
+            best_match = match;
+        }
+    }
+
+    if (best_parent != nullptr) {
+        if (best_match == subsequence_type::ISM_3PRIME) {
+            merge_into_segment(best_parent, transcript_id, sample_id,
+                              gff_source, expression_value, transcript_biotype,
+                              sidecar_writer);
+            get_segment(best_parent->get_data()).absorbed_count++;
+            counters.merged_transcripts++;
+            return true;
+        }
+        if (is_parent_annotation(best_parent)) {
+            counters.discarded_transcripts++;
+            return true;
+        }
+    }
+    return false;
+}
+
+bool segment_builder::apply_gene_idx_inheritance(
+    const std::vector<spatial_candidate>& candidates,
+    std::optional<uint32_t> sample_id, bool annotated_loci_only,
+    uint32_t& gene_idx, build_counters& counters) {
+
+    bool overlaps_annotation = false;
+    if (!is_annotation_sample(sample_id)) {
+        for (const auto& cand : candidates) {
+            if (is_parent_annotation(cand.segment)) {
+                gene_idx = get_segment(cand.segment->get_data()).gene_idx;
+                overlaps_annotation = true;
+                break;
+            }
+        }
+    }
+    if (annotated_loci_only && !is_annotation_sample(sample_id) && !overlaps_annotation) {
+        counters.discarded_transcripts++;
+        return true;
+    }
+    return false;
 }
 
 // ========================================================================

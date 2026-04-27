@@ -176,6 +176,46 @@ public:
 
     /** Check if the parent segment belongs to a reference annotation */
     [[nodiscard]] static bool is_parent_annotation(key_ptr parent_seg);
+
+private:
+    struct spatial_candidate {
+        key_ptr segment;
+        std::vector<key_ptr> exon_chain;
+    };
+
+    /** Rule 5: try merging as terminal variant (same intron chain, TSS/TES <50bp) */
+    [[nodiscard]] static bool try_terminal_variant_merge(
+        const std::vector<key_ptr>& exon_chain,
+        const std::vector<spatial_candidate>& candidates,
+        const std::string& transcript_id, std::optional<uint32_t> sample_id,
+        const std::string& gff_source, float expression_value,
+        const std::string& transcript_biotype,
+        quant_sidecar::SampleStreamWriter* sidecar_writer,
+        build_counters& counters);
+
+    /** Rules 6/7/8: handle mono-exon sample transcripts. Returns true if handled (dropped or kept). */
+    [[nodiscard]] static bool handle_mono_exon(
+        const std::vector<key_ptr>& exon_chain,
+        std::optional<uint32_t> sample_id, bool absorb,
+        grove_type& grove, const std::string& seqid,
+        build_counters& counters);
+
+    /** Rules 0(fuzzy)/1/2/3/4: try subsequence absorption. Returns true if absorbed. */
+    [[nodiscard]] static bool try_subsequence_absorption(
+        const std::vector<key_ptr>& exon_chain,
+        const std::vector<spatial_candidate>& candidates,
+        size_t span_start, size_t span_end, size_t fuzzy_tolerance,
+        const std::string& transcript_id, std::optional<uint32_t> sample_id,
+        const std::string& gff_source, float expression_value,
+        const std::string& transcript_biotype,
+        quant_sidecar::SampleStreamWriter* sidecar_writer,
+        build_counters& counters);
+
+    /** Gene_idx inheritance + annotated-loci-only filter. Returns true if discarded. */
+    [[nodiscard]] static bool apply_gene_idx_inheritance(
+        const std::vector<spatial_candidate>& candidates,
+        std::optional<uint32_t> sample_id, bool annotated_loci_only,
+        uint32_t& gene_idx, build_counters& counters);
 };
 
 #endif //ATROPLEX_SEGMENT_BUILDER_HPP
