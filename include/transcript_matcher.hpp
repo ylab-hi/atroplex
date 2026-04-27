@@ -238,21 +238,12 @@ private:
     config cfg_;
     stats stats_;
 
-    // Two-level lookup: seqid → set of positions. Eliminates per-lookup
-    // string copies and redundant chromosome name storage (#15).
-    std::unordered_map<std::string, std::unordered_set<size_t>> known_donor_sites_;
-    std::unordered_map<std::string, std::unordered_set<size_t>> known_acceptor_sites_;
-
     /**
-     * Build index of known splice sites by walking the grove
+     * Check if a splice site is known within the given candidate set (within tolerance).
+     * Replaces the global index — splice sites are derived from spatial candidates
+     * already found during match(), avoiding a full grove traversal at startup.
      */
-    void index_splice_sites();
-
-    /**
-     * Check if a splice site is known (within tolerance)
-     */
-    bool is_known_donor(const std::string& seqid, size_t position) const;
-    bool is_known_acceptor(const std::string& seqid, size_t position) const;
+    bool is_known_site(const std::unordered_set<size_t>& sites, size_t position) const;
 
     /**
      * Find candidate segments via spatial query
@@ -297,7 +288,9 @@ private:
     /**
      * Analyze splice sites in query for known/novel classification
      */
-    void analyze_splice_sites(match_result& result, const read_cluster& cluster);
+    void analyze_splice_sites(match_result& result, const read_cluster& cluster,
+                              const std::unordered_set<size_t>& candidate_donors,
+                              const std::unordered_set<size_t>& candidate_acceptors);
 
     /**
      * Check for intron retention events
