@@ -50,16 +50,8 @@ static bool chromosome_compare(const std::string& a, const std::string& b) {
 
 build_summary builder::build_from_samples(grove_type& grove,
                                   const std::vector<sample_info>& samples,
-                                  uint32_t threads,
-                                  const expression_filters& filters,
-                                  bool absorb,
-                                  size_t fuzzy_tolerance,
-                                  bool prune_tombstones,
-                                  bool include_scaffolds,
-                                  const std::string& qtx_path,
-                                  chromosome_exon_caches* out_exon_caches,
-                                  bool annotated_loci_only,
-                                  const std::unordered_set<std::string>& chromosomes_filter) {
+                                  const build_options& opts,
+                                  chromosome_exon_caches* out_exon_caches) {
     if (samples.empty()) {
         logging::warning("No samples provided to build genogrove");
         return {};
@@ -68,7 +60,7 @@ build_summary builder::build_from_samples(grove_type& grove,
     // Per-build counters threaded through build_gff / build_bam / segment_builder
     build_counters counters;
 
-    if (threads > 1) {
+    if (opts.threads > 1) {
         logging::info("Note: Multi-threading for build not yet optimized, using single thread");
     }
 
@@ -86,9 +78,9 @@ build_summary builder::build_from_samples(grove_type& grove,
     // merge_to_qtx's own atomic-rename scratch file.)
     std::filesystem::path qtx_output_path;
     std::filesystem::path qtx_temp_dir;
-    bool sidecar_enabled = !qtx_path.empty();
+    bool sidecar_enabled = !opts.qtx_path.empty();
     if (sidecar_enabled) {
-        qtx_output_path = qtx_path;
+        qtx_output_path = opts.qtx_path;
         // Use `.streams` suffix rather than `.tmp` to avoid collision
         // with merge_to_qtx's own atomic-rename scratch file, which
         // sits at `{qtx_path}.tmp`. The streams directory holds per-
@@ -190,7 +182,7 @@ build_summary builder::build_from_samples(grove_type& grove,
             open_sidecar(registry_id);
 
             // Build with persistent caches for cross-file deduplication
-            build_gff::build(grove, filepath, registry_id, exon_caches, segment_caches, segment_count, threads, filters, absorb, fuzzy_tolerance, include_scaffolds, counters, sidecar.get(), annotated_loci_only, chromosomes_filter);
+            build_gff::build(grove, filepath, registry_id, exon_caches, segment_caches, segment_count, opts, counters, sidecar.get());
         } else if (ftype == gio::filetype::BAM || ftype == gio::filetype::SAM) {
             logging::info("[" + std::to_string(current) + "/" + std::to_string(total) + "] Processing BAM: " + filepath.filename().string() +
                          (info.id.empty() ? "" : " (id: " + info.id + ")"));
@@ -199,8 +191,7 @@ build_summary builder::build_from_samples(grove_type& grove,
             open_sidecar(registry_id);
 
             build_bam::build(grove, filepath, registry_id, exon_caches, segment_caches,
-                            segment_count, filters, absorb, fuzzy_tolerance, include_scaffolds, counters, sidecar.get(),
-                            annotated_loci_only, chromosomes_filter);
+                            segment_count, opts, counters, sidecar.get());
         } else {
             logging::warning("Unsupported file type for: " + filepath.string());
         }
@@ -236,7 +227,7 @@ build_summary builder::build_from_samples(grove_type& grove,
     std::unordered_set<uint64_t> tombstoned_seg_indices;
     std::unordered_map<uint64_t, uint64_t> tombstone_remap;
     counters.absorbed_segments = remove_tombstones(
-        grove, segment_caches, prune_tombstones,
+        grove, segment_caches, opts.prune_tombstones,
         &tombstoned_seg_indices, &tombstone_remap);
 
     size_t live_segments = (segment_count >= counters.absorbed_segments)
@@ -245,7 +236,7 @@ build_summary builder::build_from_samples(grove_type& grove,
     std::string tombstone_note;
     if (counters.absorbed_segments > 0) {
         tombstone_note = " (" + std::to_string(counters.absorbed_segments)
-            + (prune_tombstones ? " tombstones pruned)" : " tombstones)");
+            + (opts.prune_tombstones ? " tombstones pruned)" : " tombstones)");
     }
     logging::info("Grove construction complete: " + std::to_string(live_segments)
         + " segments" + tombstone_note);
@@ -443,5 +434,7 @@ build_summary builder::build_from_files(grove_type& grove,
         samples.push_back(std::move(info));
     }
 
-    return build_from_samples(grove, samples, threads, expression_filters{}, true, 5, false, false, /*qtx_path=*/"", out_exon_caches);
+    build_options file_opts;
+    file_opts.threads = threads;
+    return build_from_samples(grove, samples, file_opts, out_exon_caches);
 }

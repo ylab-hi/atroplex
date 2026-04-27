@@ -54,9 +54,11 @@ protected:
         uint32_t sample_id = sample_registry::instance().register_data(info);
 
         build_counters counters;
+        build_options test_opts;
+        test_opts.absorb = absorb;
+        test_opts.include_scaffolds = true;
         build_gff::build(*grove, fixture, sample_id, exon_caches, segment_caches,
-                         segment_count, 0, expression_filters{}, absorb, 5,
-                         /*include_scaffolds=*/true, counters);
+                         segment_count, test_opts, counters);
 
         size_t absorbed = 0, live = 0, total_absorbed_into = 0, live_tx_count = 0;
         auto roots = grove->get_root_nodes();
@@ -109,17 +111,18 @@ protected:
         sample_info info1("sample1");
         if (file1_annotation) { info1.type = "annotation"; info1.annotation_source = "GENCODE"; }
         uint32_t sid1 = sample_registry::instance().register_data(info1);
+        build_options test_opts;
+        test_opts.absorb = absorb;
+        test_opts.include_scaffolds = true;
         build_gff::build(*grove, fix1, sid1, exon_caches, segment_caches,
-                         segment_count, 0, expression_filters{}, absorb, 5,
-                         /*include_scaffolds=*/true, counters);
+                         segment_count, test_opts, counters);
 
         // File 2
         sample_info info2("sample2");
         if (file2_annotation) { info2.type = "annotation"; info2.annotation_source = "GENCODE"; }
         uint32_t sid2 = sample_registry::instance().register_data(info2);
         build_gff::build(*grove, fix2, sid2, exon_caches, segment_caches,
-                         segment_count, 0, expression_filters{}, absorb, 5,
-                         /*include_scaffolds=*/true, counters);
+                         segment_count, test_opts, counters);
 
         size_t absorbed = 0, live = 0, total_absorbed_into = 0, live_tx_count = 0;
         auto roots = grove->get_root_nodes();

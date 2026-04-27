@@ -55,14 +55,9 @@ public:
                       chromosome_exon_caches& exon_caches,
                       chromosome_segment_caches& segment_caches,
                       size_t& segment_count,
-                      const expression_filters& filters,
-                      bool absorb,
-                      size_t fuzzy_tolerance,
-                      bool include_scaffolds,
+                      const build_options& opts,
                       build_counters& counters,
-                      quant_sidecar::SampleStreamWriter* sidecar_writer = nullptr,
-                      bool annotated_loci_only = false,
-                      const std::unordered_set<std::string>& chromosomes_filter = {});
+                      quant_sidecar::SampleStreamWriter* sidecar_writer = nullptr);
 
     /**
      * Parse BAM header to extract sample metadata.

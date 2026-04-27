@@ -216,29 +216,31 @@ void subcall::setup_grove(const cxxopts::ParseResult& args) {
 
     // Build grove if we have samples
     if (!all_samples.empty()) {
-        expression_filters filters;
-        filters.min_counts = args["min-counts"].as<float>();
-        filters.min_TPM    = args["min-TPM"].as<float>();
-        filters.min_FPKM   = args["min-FPKM"].as<float>();
-        filters.min_RPKM   = args["min-RPKM"].as<float>();
-        filters.min_cov    = args["min-cov"].as<float>();
+        build_options opts;
+        opts.threads = threads;
+        opts.filters.min_counts = args["min-counts"].as<float>();
+        opts.filters.min_TPM    = args["min-TPM"].as<float>();
+        opts.filters.min_FPKM   = args["min-FPKM"].as<float>();
+        opts.filters.min_RPKM   = args["min-RPKM"].as<float>();
+        opts.filters.min_cov    = args["min-cov"].as<float>();
+        opts.absorb = !args.count("no-absorb");
+        opts.fuzzy_tolerance = args["fuzzy-tolerance"].as<size_t>();
+        opts.prune_tombstones = args.count("prune-tombstones") > 0;
+        opts.include_scaffolds = include_scaffolds;
+        opts.annotated_loci_only = args.count("annotated-loci-only") > 0;
+        opts.chromosomes_filter = chromosomes_filter;
 
-        bool absorb = !args.count("no-absorb");
-        size_t fuzzy_tol = args["fuzzy-tolerance"].as<size_t>();
-        bool prune_tombstones = args.count("prune-tombstones") > 0;
         logging::info("Creating grove with order: " + std::to_string(order));
 
-        if (filters.any_active()) {
+        if (opts.filters.any_active()) {
             std::string note = "Expression filters:";
-            if (filters.min_counts >= 0) note += " counts>=" + std::to_string(filters.min_counts);
-            if (filters.min_TPM    >= 0) note += " TPM>="    + std::to_string(filters.min_TPM);
-            if (filters.min_FPKM   >= 0) note += " FPKM>="   + std::to_string(filters.min_FPKM);
-            if (filters.min_RPKM   >= 0) note += " RPKM>="   + std::to_string(filters.min_RPKM);
-            if (filters.min_cov    >= 0) note += " cov>="    + std::to_string(filters.min_cov);
+            if (opts.filters.min_counts >= 0) note += " counts>=" + std::to_string(opts.filters.min_counts);
+            if (opts.filters.min_TPM    >= 0) note += " TPM>="    + std::to_string(opts.filters.min_TPM);
+            if (opts.filters.min_FPKM   >= 0) note += " FPKM>="   + std::to_string(opts.filters.min_FPKM);
+            if (opts.filters.min_RPKM   >= 0) note += " RPKM>="   + std::to_string(opts.filters.min_RPKM);
+            if (opts.filters.min_cov    >= 0) note += " cov>="    + std::to_string(opts.filters.min_cov);
             logging::info(note);
 
-            // Warn if a filter is set but no sample declares that attribute
-            // in its manifest `expression_attribute` column.
             auto any_sample_declares = [&](const std::string& attr) {
                 for (const auto& s : all_samples) {
                     for (const auto& a : s.expression_attributes) {
@@ -254,42 +256,40 @@ void subcall::setup_grove(const cxxopts::ParseResult& args) {
                         "` in its expression_attribute column — filter has no effect");
                 }
             };
-            check("counts", filters.min_counts);
-            check("TPM",    filters.min_TPM);
-            check("FPKM",   filters.min_FPKM);
-            check("RPKM",   filters.min_RPKM);
-            check("cov",    filters.min_cov);
+            check("counts", opts.filters.min_counts);
+            check("TPM",    opts.filters.min_TPM);
+            check("FPKM",   opts.filters.min_FPKM);
+            check("RPKM",   opts.filters.min_RPKM);
+            check("cov",    opts.filters.min_cov);
         }
 
-        if (!absorb) {
+        if (!opts.absorb) {
             logging::info("ISM segment absorption disabled");
-        } else if (fuzzy_tol > 0) {
-            logging::info("Fuzzy absorption tolerance: " + std::to_string(fuzzy_tol) + "bp");
+        } else if (opts.fuzzy_tolerance > 0) {
+            logging::info("Fuzzy absorption tolerance: " + std::to_string(opts.fuzzy_tolerance) + "bp");
         }
-        if (prune_tombstones) {
+        if (opts.prune_tombstones) {
             logging::info("Physical tombstone removal enabled (--prune-tombstones)");
         }
-        if (include_scaffolds) {
+        if (opts.include_scaffolds) {
             logging::info("Scaffold filter disabled (--include-scaffolds): all seqids retained");
         } else {
             logging::info("Scaffold filter active: main chromosomes only (chr1..chr22, chrX, chrY, chrM)");
         }
-        if (!chromosomes_filter.empty()) {
+        if (!opts.chromosomes_filter.empty()) {
             std::string chr_list;
-            for (const auto& c : chromosomes_filter) {
+            for (const auto& c : opts.chromosomes_filter) {
                 if (!chr_list.empty()) chr_list += ", ";
                 chr_list += c;
             }
             logging::info("Chromosome filter active: " + chr_list);
         }
+        if (opts.annotated_loci_only) {
+            logging::info("Annotated-loci-only mode: sample transcripts at novel loci will be discarded");
+        }
         grove = std::make_unique<grove_type>(order);
 
-        // Derive the final single-file quantification sidecar path. We
-        // reuse the resolved output_dir + prefix so the .qtx lands next
-        // to the .ggx and is self-identifying. Per-sample temp streams
-        // are written under `{qtx_path}.tmp/` by build_from_samples and
-        // K-way merged into this single file at end of build.
-        std::string qtx_path;
+        // Derive the final single-file quantification sidecar path.
         {
             std::string fallback_for_outdir;
             if (args.count("manifest")) {
@@ -300,51 +300,47 @@ void subcall::setup_grove(const cxxopts::ParseResult& args) {
             auto out_dir = resolve_output_dir(args, fallback_for_outdir);
             std::string prefix = resolve_prefix(args);
             if (!out_dir.empty()) {
-                qtx_path = (out_dir / (prefix + ".qtx")).string();
+                opts.qtx_path = (out_dir / (prefix + ".qtx")).string();
             }
         }
 
         auto build_start = std::chrono::steady_clock::now();
-        bool annotated_only = args.count("annotated-loci-only") > 0;
-        if (annotated_only) {
-            logging::info("Annotated-loci-only mode: sample transcripts at novel loci will be discarded");
-        }
-        build_stats = builder::build_from_samples(*grove, all_samples, threads, filters, absorb, fuzzy_tol, prune_tombstones, include_scaffolds, qtx_path, &exon_caches_, annotated_only, chromosomes_filter);
+        build_stats = builder::build_from_samples(*grove, all_samples, opts, &exon_caches_);
         auto build_elapsed = std::chrono::duration<double>(std::chrono::steady_clock::now() - build_start).count();
         build_stats->build_time_seconds = build_elapsed;
 
         // Record build parameters for summary provenance
         build_stats->build_parameters["order"] = std::to_string(order);
-        build_stats->build_parameters["absorb"] = absorb ? "yes" : "no";
-        if (absorb && fuzzy_tol > 0)
-            build_stats->build_parameters["fuzzy_tolerance"] = std::to_string(fuzzy_tol) + "bp";
-        build_stats->build_parameters["include_scaffolds"] = include_scaffolds ? "yes" : "no";
-        build_stats->build_parameters["annotated_loci_only"] = annotated_only ? "yes" : "no";
-        if (!chromosomes_filter.empty()) {
+        build_stats->build_parameters["absorb"] = opts.absorb ? "yes" : "no";
+        if (opts.absorb && opts.fuzzy_tolerance > 0)
+            build_stats->build_parameters["fuzzy_tolerance"] = std::to_string(opts.fuzzy_tolerance) + "bp";
+        build_stats->build_parameters["include_scaffolds"] = opts.include_scaffolds ? "yes" : "no";
+        build_stats->build_parameters["annotated_loci_only"] = opts.annotated_loci_only ? "yes" : "no";
+        if (!opts.chromosomes_filter.empty()) {
             std::string chr_list;
-            for (const auto& c : chromosomes_filter) {
+            for (const auto& c : opts.chromosomes_filter) {
                 if (!chr_list.empty()) chr_list += ",";
                 chr_list += c;
             }
             build_stats->build_parameters["chromosomes"] = chr_list;
         }
-        if (filters.min_counts >= 0)
-            build_stats->build_parameters["min_counts"] = std::to_string(static_cast<int>(filters.min_counts));
-        if (filters.min_TPM >= 0)
-            build_stats->build_parameters["min_TPM"] = std::to_string(static_cast<int>(filters.min_TPM));
-        if (filters.min_FPKM >= 0)
-            build_stats->build_parameters["min_FPKM"] = std::to_string(static_cast<int>(filters.min_FPKM));
-        if (filters.min_RPKM >= 0)
-            build_stats->build_parameters["min_RPKM"] = std::to_string(static_cast<int>(filters.min_RPKM));
-        if (filters.min_cov >= 0)
-            build_stats->build_parameters["min_cov"] = std::to_string(static_cast<int>(filters.min_cov));
+        if (opts.filters.min_counts >= 0)
+            build_stats->build_parameters["min_counts"] = std::to_string(static_cast<int>(opts.filters.min_counts));
+        if (opts.filters.min_TPM >= 0)
+            build_stats->build_parameters["min_TPM"] = std::to_string(static_cast<int>(opts.filters.min_TPM));
+        if (opts.filters.min_FPKM >= 0)
+            build_stats->build_parameters["min_FPKM"] = std::to_string(static_cast<int>(opts.filters.min_FPKM));
+        if (opts.filters.min_RPKM >= 0)
+            build_stats->build_parameters["min_RPKM"] = std::to_string(static_cast<int>(opts.filters.min_RPKM));
+        if (opts.filters.min_cov >= 0)
+            build_stats->build_parameters["min_cov"] = std::to_string(static_cast<int>(opts.filters.min_cov));
 
         logging::info("Grove ready with spatial index and graph structure");
 
         // Open the qtx reader we just produced so the subclass execute()
         // can use it directly without reloading from disk.
-        if (!qtx_path.empty()) {
-            try_open_qtx_for(qtx_path, qtx_reader);
+        if (!opts.qtx_path.empty()) {
+            try_open_qtx_for(opts.qtx_path, qtx_reader);
         }
     }
 }

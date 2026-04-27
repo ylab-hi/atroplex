@@ -148,11 +148,7 @@ TEST_F(BuilderPipelineTest, BuilderFullPipeline_CountersPopulated) {
     samples.back().type = "sample";
 
     grove_type grove(3);
-    auto summary = builder::build_from_samples(
-        grove, samples,
-        /*threads=*/1, /*filters=*/expression_filters{}, /*absorb=*/true,
-        /*fuzzy_tolerance=*/5,
-        /*prune_tombstones=*/false);
+    auto summary = builder::build_from_samples(grove, samples);
 
     // 2 transcripts read from the two files
     EXPECT_EQ(summary.counters.input_transcripts, 2u);
@@ -193,11 +189,7 @@ TEST_F(BuilderPipelineTest, RemoveTombstones_DefaultKeepsInTree) {
 
     grove_type grove(3);
     // prune_tombstones = false (default)
-    auto summary = builder::build_from_samples(
-        grove, samples,
-        /*threads=*/1, /*filters=*/expression_filters{}, /*absorb=*/true,
-        /*fuzzy_tolerance=*/5,
-        /*prune_tombstones=*/false);
+    auto summary = builder::build_from_samples(grove, samples);
 
     ASSERT_EQ(summary.counters.absorbed_segments, 1u)
         << "Fixture must produce exactly one tombstone";
@@ -236,11 +228,9 @@ TEST_F(BuilderPipelineTest, RemoveTombstones_PruneFlagPhysicallyRemoves) {
     samples.back().type = "sample";
 
     grove_type grove(3);
-    auto summary = builder::build_from_samples(
-        grove, samples,
-        /*threads=*/1, /*filters=*/expression_filters{}, /*absorb=*/true,
-        /*fuzzy_tolerance=*/5,
-        /*prune_tombstones=*/true);
+    build_options prune_opts;
+    prune_opts.prune_tombstones = true;
+    auto summary = builder::build_from_samples(grove, samples, prune_opts);
 
     ASSERT_EQ(summary.counters.absorbed_segments, 1u);
 
@@ -274,11 +264,9 @@ TEST_F(BuilderPipelineTest, RemoveTombstones_PruneFlagDropsOrphanEdges) {
         samples.back().type = "sample";
 
         grove_type grove(3);
-        auto summary = builder::build_from_samples(
-            grove, samples,
-            /*threads=*/1, /*filters=*/expression_filters{}, /*absorb=*/true,
-            /*fuzzy_tolerance=*/5,
-            /*prune_tombstones=*/true);
+        build_options prune_opts;
+        prune_opts.prune_tombstones = true;
+        auto summary = builder::build_from_samples(grove, samples, prune_opts);
         ASSERT_EQ(summary.counters.absorbed_segments, 1u);
         pruned_edge_count = grove.edge_count();
     }
@@ -298,11 +286,7 @@ TEST_F(BuilderPipelineTest, RemoveTombstones_PruneFlagDropsOrphanEdges) {
         samples.back().type = "sample";
 
         grove_type grove(3);
-        auto summary = builder::build_from_samples(
-            grove, samples,
-            /*threads=*/1, /*filters=*/expression_filters{}, /*absorb=*/true,
-            /*fuzzy_tolerance=*/5,
-            /*prune_tombstones=*/false);
+        auto summary = builder::build_from_samples(grove, samples);
         ASSERT_EQ(summary.counters.absorbed_segments, 1u);
         default_edge_count = grove.edge_count();
     }
@@ -329,11 +313,7 @@ TEST_F(BuilderPipelineTest, BuildSummary_WrittenFileContainsCounters) {
     samples.back().type = "sample";
 
     grove_type grove(3);
-    auto summary = builder::build_from_samples(
-        grove, samples,
-        /*threads=*/1, /*filters=*/expression_filters{}, /*absorb=*/true,
-        /*fuzzy_tolerance=*/5,
-        /*prune_tombstones=*/false);
+    auto summary = builder::build_from_samples(grove, samples);
 
     fs::path summary_path = tmp_dir / "test.ggx.summary";
     summary.write_summary(summary_path.string());
@@ -389,11 +369,10 @@ TEST_F(BuilderPipelineTest, ReverseAbsorption_QtxRemap) {
 
     std::string qtx_path = (tmp_dir / "test.qtx").string();
     grove_type grove(3);
-    auto summary = builder::build_from_samples(
-        grove, samples,
-        /*threads=*/1, /*filters=*/expression_filters{}, /*absorb=*/true,
-        /*fuzzy_tolerance=*/5, /*prune_tombstones=*/false,
-        /*include_scaffolds=*/true, qtx_path);
+    build_options qtx_opts;
+    qtx_opts.include_scaffolds = true;
+    qtx_opts.qtx_path = qtx_path;
+    auto summary = builder::build_from_samples(grove, samples, qtx_opts);
 
     ASSERT_EQ(summary.counters.absorbed_segments, 1u)
         << "rep1's 3-exon segment should be reverse-absorbed into rep2's 4-exon parent";
@@ -480,11 +459,10 @@ TEST_F(BuilderPipelineTest, TransitiveChain_QtxRemap) {
 
     std::string qtx_path = (tmp_dir / "chain.qtx").string();
     grove_type grove(3);
-    auto summary = builder::build_from_samples(
-        grove, samples,
-        /*threads=*/1, /*filters=*/expression_filters{}, /*absorb=*/true,
-        /*fuzzy_tolerance=*/5, /*prune_tombstones=*/false,
-        /*include_scaffolds=*/true, qtx_path);
+    build_options qtx_opts;
+    qtx_opts.include_scaffolds = true;
+    qtx_opts.qtx_path = qtx_path;
+    auto summary = builder::build_from_samples(grove, samples, qtx_opts);
 
     EXPECT_GE(summary.counters.absorbed_segments, 2u)
         << "Both A and B should be absorbed (A→B→C chain)";

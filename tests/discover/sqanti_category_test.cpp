@@ -52,9 +52,12 @@ protected:
 
         // absorb=false to keep all segments as separate candidates
         build_counters counters;
+        build_options test_opts;
+        test_opts.absorb = false;
+        test_opts.include_scaffolds = true;
+
         build_gff::build(*grove, fixture, sample_id, exon_caches, segment_caches,
-                         segment_count, 0, expression_filters{}, false, 5,
-                         /*include_scaffolds=*/true, counters);
+                         segment_count, test_opts, counters);
 
         ASSERT_GT(segment_count, 0) << "No segments built from fixture";
     }
@@ -382,9 +385,12 @@ protected:
         uint32_t sample_id = sample_registry::instance().register_data(info);
 
         build_counters counters;
+        build_options test_opts;
+        test_opts.absorb = false;
+        test_opts.include_scaffolds = true;
+
         build_gff::build(*grove, gtf, sample_id, exon_caches, segment_caches,
-                         segment_count, 0, expression_filters{}, false, 5,
-                         /*include_scaffolds=*/true, counters);
+                         segment_count, test_opts, counters);
     }
 
     std::unique_ptr<grove_type> grove;

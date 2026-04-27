@@ -25,6 +25,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`--annotated-loci-only` build filter** (#43): drops sample transcripts that don't spatially overlap any annotation segment on the same strand. Novel isoforms at annotated loci inherit the annotation's `gene_idx`, so sample-specific gene_ids (MSTRG.*, ENCLB*) no longer inflate the gene count. Annotation transcripts always pass. Docker CI now pushes PR images tagged `pr-<N>` for HPC testing; build log shows per-file segment delta; overview renames `transcripts` to `source_transcript_ids`.
 
 ### Changed
+- **Consolidate build parameters into `build_options` struct** ([#67](https://github.com/ylab-hi/atroplex/pull/67), closes [#57](https://github.com/ylab-hi/atroplex/issues/57)): replaces 13-15 individual parameters on `build_from_samples`, `build_gff::build`, `build_bam::build`, `process_gene`, and `process_transcript` with a single struct. Net -63 lines.
 - **Gene_idx inheritance always applied** ([#63](https://github.com/ylab-hi/atroplex/pull/63)): sample transcripts that spatially overlap an annotation segment now always inherit its gene_idx, regardless of `--annotated-loci-only`. Previously this was gated behind the flag, causing 19M inflated gene counts on 21K-sample builds without it (each StringTie gene_id created a separate gene entry). `--annotated-loci-only` now only controls whether novel-locus transcripts are kept or dropped.
 
 ### Fixed

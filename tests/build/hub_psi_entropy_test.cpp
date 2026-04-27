@@ -145,9 +145,12 @@ TEST_F(HubPsiEntropyTest, PsiAndEntropyCorrectForKnownHub) {
     size_t segment_count = 0;
     build_counters counters;
 
+    build_options test_opts;
+    test_opts.absorb = false;
+    test_opts.include_scaffolds = true;
+
     build_gff::build(grove, gtf_path, sample_id, exon_caches, segment_caches,
-                     segment_count, 0, expression_filters{}, false, 5,
-                     /*include_scaffolds=*/true, counters);
+                     segment_count, test_opts, counters);
 
     // Verify we got the expected number of segments: 12 hub-using + 1 non-hub = 13
     ASSERT_EQ(segment_count, 13u) << "Expected 13 segments (12 through hub + 1 bypass)";
