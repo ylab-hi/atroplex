@@ -125,9 +125,9 @@ void transcript_matcher::index_splice_sites() {
                 auto* current = first_exons.front();
                 while (current) {
                     auto& coord = current->get_value();
-                    known_donor_sites_.insert({seqid, coord.get_end()});
+                    known_donor_sites_[seqid].insert(coord.get_end());
                     ++donor_count;
-                    known_acceptor_sites_.insert({seqid, coord.get_start()});
+                    known_acceptor_sites_[seqid].insert(coord.get_start());
                     ++acceptor_count;
 
                     auto next = grove_.get_neighbors_if(current,
@@ -148,25 +148,25 @@ void transcript_matcher::index_splice_sites() {
 }
 
 bool transcript_matcher::is_known_donor(const std::string& seqid, size_t position) const {
+    auto it = known_donor_sites_.find(seqid);
+    if (it == known_donor_sites_.end()) return false;
     size_t lo = (static_cast<size_t>(cfg_.splice_site_window) <= position)
               ? position - cfg_.splice_site_window : 0;
     size_t hi = position + cfg_.splice_site_window;
     for (size_t pos = lo; pos <= hi; ++pos) {
-        if (known_donor_sites_.count({seqid, pos})) {
-            return true;
-        }
+        if (it->second.count(pos)) return true;
     }
     return false;
 }
 
 bool transcript_matcher::is_known_acceptor(const std::string& seqid, size_t position) const {
+    auto it = known_acceptor_sites_.find(seqid);
+    if (it == known_acceptor_sites_.end()) return false;
     size_t lo = (static_cast<size_t>(cfg_.splice_site_window) <= position)
               ? position - cfg_.splice_site_window : 0;
     size_t hi = position + cfg_.splice_site_window;
     for (size_t pos = lo; pos <= hi; ++pos) {
-        if (known_acceptor_sites_.count({seqid, pos})) {
-            return true;
-        }
+        if (it->second.count(pos)) return true;
     }
     return false;
 }
