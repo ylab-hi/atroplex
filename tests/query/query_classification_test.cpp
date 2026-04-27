@@ -66,10 +66,12 @@ protected:
         annotation_id = sample_registry::instance().register_data(anno_info);
 
         build_counters counters;
+        build_options test_opts;
+        test_opts.absorb = false;
+        test_opts.include_scaffolds = true;
+
         build_gff::build(*grove, anno_path, annotation_id, exon_caches,
-                         segment_caches, segment_count,
-                         0, expression_filters{}, false, 5,
-                         /*include_scaffolds=*/true, counters);
+                         segment_caches, segment_count, test_opts, counters);
 
         // Register and build sample
         sample_info sample_info_obj("TEST_SAMPLE");
@@ -77,9 +79,7 @@ protected:
         sample_id = sample_registry::instance().register_data(sample_info_obj);
 
         build_gff::build(*grove, sample_path, sample_id, exon_caches,
-                         segment_caches, segment_count,
-                         0, expression_filters{}, false, 5,
-                         /*include_scaffolds=*/true, counters);
+                         segment_caches, segment_count, test_opts, counters);
 
         ASSERT_GT(segment_count, 0);
     }
