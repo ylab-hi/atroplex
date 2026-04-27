@@ -52,16 +52,8 @@ public:
     static build_summary build_from_samples(
         grove_type& grove,
         const std::vector<sample_info>& samples,
-        uint32_t threads,
-        const expression_filters& filters,
-        bool absorb,
-        size_t fuzzy_tolerance,
-        bool prune_tombstones,
-        bool include_scaffolds = false,
-        const std::string& qtx_path = "",
-        chromosome_exon_caches* out_exon_caches = nullptr,
-        bool annotated_loci_only = false,
-        const std::unordered_set<std::string>& chromosomes_filter = {}
+        const build_options& opts = {},
+        chromosome_exon_caches* out_exon_caches = nullptr
     );
 
     /**

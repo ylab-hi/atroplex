@@ -24,14 +24,9 @@ void build_bam::build(grove_type& grove,
     chromosome_exon_caches& exon_caches,
     chromosome_segment_caches& segment_caches,
     size_t& segment_count,
-    const expression_filters& filters,
-    bool absorb,
-    size_t fuzzy_tolerance,
-    bool include_scaffolds,
+    const build_options& opts,
     build_counters& counters,
-    quant_sidecar::SampleStreamWriter* sidecar_writer,
-    bool annotated_loci_only,
-    const std::unordered_set<std::string>& chromosomes_filter) {
+    quant_sidecar::SampleStreamWriter* sidecar_writer) {
 
     const size_t segment_count_before = segment_count;
 
@@ -60,13 +55,13 @@ void build_bam::build(grove_type& grove,
         // cluster represents one transcript-level unit, so we count
         // it against scaffold_filtered_transcripts and bail before
         // bumping input_transcripts.
-        if (!is_main_chromosome(cluster.seqid, include_scaffolds)) {
+        if (!is_main_chromosome(cluster.seqid, opts.include_scaffolds)) {
             counters.scaffold_filtered_transcripts++;
             continue;
         }
 
-        if (!chromosomes_filter.empty() &&
-            chromosomes_filter.find(normalize_chromosome(cluster.seqid)) == chromosomes_filter.end()) {
+        if (!opts.chromosomes_filter.empty() &&
+            opts.chromosomes_filter.find(normalize_chromosome(cluster.seqid)) == opts.chromosomes_filter.end()) {
             continue;
         }
 
@@ -76,7 +71,7 @@ void build_bam::build(grove_type& grove,
         // only have a read-count signal, so only `--min-counts` applies.
         // Other attribute thresholds (TPM/FPKM/cov) are a no-op for BAM.
         float read_count = static_cast<float>(cluster.read_count());
-        if (filters.min_counts >= 0 && read_count < filters.min_counts) {
+        if (opts.filters.min_counts >= 0 && read_count < opts.filters.min_counts) {
             counters.discarded_transcripts++;
             continue;
         }
@@ -123,8 +118,8 @@ void build_bam::build(grove_type& grove,
             segment_caches[seqid], seg_gene_idx,
             sample_id, "BAM", segment_count,
             read_count, "",
-            absorb, fuzzy_tolerance,
-            counters, sidecar_writer, annotated_loci_only
+            opts.absorb, opts.fuzzy_tolerance,
+            counters, sidecar_writer, opts.annotated_loci_only
         );
     }
 

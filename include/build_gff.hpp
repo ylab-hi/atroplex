@@ -62,15 +62,9 @@ public:
                       chromosome_exon_caches& exon_caches,
                       chromosome_segment_caches& segment_caches,
                       size_t& segment_count,
-                      uint32_t num_threads,
-                      const expression_filters& filters,
-                      bool absorb,
-                      size_t fuzzy_tolerance,
-                      bool include_scaffolds,
+                      const build_options& opts,
                       build_counters& counters,
-                      quant_sidecar::SampleStreamWriter* sidecar_writer = nullptr,
-                      bool annotated_loci_only = false,
-                      const std::unordered_set<std::string>& chromosomes_filter = {});
+                      quant_sidecar::SampleStreamWriter* sidecar_writer = nullptr);
 
     /**
      * Parse GTF/GFF header to extract sample metadata
@@ -121,12 +115,9 @@ public:
         segment_cache_type& segment_cache,
         std::optional<uint32_t> sample_id,
         size_t& segment_count,
-        const expression_filters& filters,
-        bool absorb,
-        size_t fuzzy_tolerance,
+        const build_options& opts,
         build_counters& counters,
-        quant_sidecar::SampleStreamWriter* sidecar_writer = nullptr,
-        bool annotated_loci_only = false
+        quant_sidecar::SampleStreamWriter* sidecar_writer = nullptr
     );
 
 private:
@@ -139,12 +130,9 @@ private:
         std::unordered_map<std::string, key_ptr>& segment_keys,
         std::optional<uint32_t> sample_id,
         size_t& segment_count,
-        const expression_filters& filters,
-        bool absorb,
-        size_t fuzzy_tolerance,
+        const build_options& opts,
         build_counters& counters,
-        quant_sidecar::SampleStreamWriter* sidecar_writer = nullptr,
-        bool annotated_loci_only = false
+        quant_sidecar::SampleStreamWriter* sidecar_writer = nullptr
     );
 
     /**

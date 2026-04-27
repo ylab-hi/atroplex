@@ -28,15 +28,9 @@ void build_gff::build(grove_type& grove,
     chromosome_exon_caches& exon_caches,
     chromosome_segment_caches& segment_caches,
     size_t& segment_count,
-    uint32_t /*num_threads*/,
-    const expression_filters& filters,
-    bool absorb,
-    size_t fuzzy_tolerance,
-    bool include_scaffolds,
+    const build_options& opts,
     build_counters& counters,
-    quant_sidecar::SampleStreamWriter* sidecar_writer,
-    bool annotated_loci_only,
-    const std::unordered_set<std::string>& chromosomes_filter) {
+    quant_sidecar::SampleStreamWriter* sidecar_writer) {
 
     gio::gff_reader reader(filepath.string());
     const size_t segment_count_before = segment_count;
@@ -67,15 +61,15 @@ void build_gff::build(grove_type& grove,
         // the filter for non-human/non-mouse use cases. We only count the
         // transcript-level entries so `scaffold_filtered_transcripts`
         // mirrors the `input_transcripts` semantics.
-        if (!is_main_chromosome(entry.seqid, include_scaffolds)) {
+        if (!is_main_chromosome(entry.seqid, opts.include_scaffolds)) {
             if (entry.type == "transcript") {
                 counters.scaffold_filtered_transcripts++;
             }
             continue;
         }
 
-        if (!chromosomes_filter.empty() &&
-            chromosomes_filter.find(normalize_chromosome(entry.seqid)) == chromosomes_filter.end()) {
+        if (!opts.chromosomes_filter.empty() &&
+            opts.chromosomes_filter.find(normalize_chromosome(entry.seqid)) == opts.chromosomes_filter.end()) {
             continue;
         }
 
@@ -90,8 +84,7 @@ void build_gff::build(grove_type& grove,
         if (!current_gene_id.empty() && gene_id.value() != current_gene_id) {
             process_gene(grove, grove_mutex, current_gene_entries,
                 exon_caches[current_chrom], segment_caches[current_chrom],
-                sample_id, segment_count, filters, absorb, fuzzy_tolerance, counters,
-                sidecar_writer, annotated_loci_only);
+                sample_id, segment_count, opts, counters, sidecar_writer);
             current_gene_entries.clear();
         }
 
@@ -103,8 +96,7 @@ void build_gff::build(grove_type& grove,
     if (!current_gene_entries.empty()) {
         process_gene(grove, grove_mutex, current_gene_entries,
             exon_caches[current_chrom], segment_caches[current_chrom],
-            sample_id, segment_count, filters, absorb, fuzzy_tolerance, counters,
-            sidecar_writer, annotated_loci_only);
+            sample_id, segment_count, opts, counters, sidecar_writer);
     }
 
     logging::progress_done(segment_count, segment_count - segment_count_before,
@@ -119,12 +111,9 @@ void build_gff::process_gene(
     segment_cache_type& segment_cache,
     std::optional<uint32_t> sample_id,
     size_t& segment_count,
-    const expression_filters& filters,
-    bool absorb,
-    size_t fuzzy_tolerance,
+    const build_options& opts,
     build_counters& counters,
-    quant_sidecar::SampleStreamWriter* sidecar_writer,
-    bool annotated_loci_only
+    quant_sidecar::SampleStreamWriter* sidecar_writer
 ) {
     std::unordered_map<std::string, std::vector<gio::gff_entry>> transcripts;
     for (const auto& entry : gene_entries) {
@@ -155,7 +144,7 @@ void build_gff::process_gene(
     for (const auto& transcript_id : tx_order) {
         process_transcript(grove, grove_mutex, transcript_id, transcripts[transcript_id],
             exon_cache, segment_cache, sample_id, segment_count,
-            filters, absorb, fuzzy_tolerance, counters, sidecar_writer, annotated_loci_only);
+            opts, counters, sidecar_writer);
     }
 }
 
@@ -168,12 +157,9 @@ void build_gff::process_transcript(
     std::unordered_map<std::string, key_ptr>& segment_cache,
     std::optional<uint32_t> sample_id,
     size_t& segment_count,
-    const expression_filters& filters,
-    bool absorb,
-    size_t fuzzy_tolerance,
+    const build_options& opts,
     build_counters& counters,
-    quant_sidecar::SampleStreamWriter* sidecar_writer,
-    bool annotated_loci_only
+    quant_sidecar::SampleStreamWriter* sidecar_writer
 ) {
     // Step 1: Extract and sort exons in 5'→3' biological order
     std::vector<gio::gff_entry> sorted_exons = extract_sorted_exons(transcript_entries);
@@ -242,7 +228,7 @@ void build_gff::process_transcript(
                 // Evaluate the filter for this attribute (AND semantics):
                 // skip if the CLI threshold is set and the transcript's
                 // value is below it.
-                float threshold = filters.for_attribute(attr);
+                float threshold = opts.filters.for_attribute(attr);
                 if (threshold >= 0 && value < threshold) {
                     drop_by_filter = true;
                 }
@@ -310,8 +296,8 @@ void build_gff::process_transcript(
         grove, grove_mutex, transcript_id, seqid, strand,
         min_it->start, max_it->end, static_cast<int>(sorted_exons.size()),
         exon_coords, exon_chain, segment_cache, gene_idx, sample_id,
-        gff_source, segment_count, expression_value, transcript_biotype, absorb, fuzzy_tolerance,
-        counters, sidecar_writer, annotated_loci_only
+        gff_source, segment_count, expression_value, transcript_biotype,
+        opts.absorb, opts.fuzzy_tolerance, counters, sidecar_writer, opts.annotated_loci_only
     );
 }
 

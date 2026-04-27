@@ -14,9 +14,11 @@
 #include <cstddef>
 #include <map>
 #include <string>
+#include <unordered_set>
 #include <vector>
 
 #include "genomic_feature.hpp"
+#include "sample_info.hpp"
 
 /**
  * Lightweight counters tracking transcript disposition during grove build.
@@ -50,6 +52,18 @@ struct build_counters {
     size_t absorbed_segments = 0;
     size_t discarded_transcripts = 0;
     size_t scaffold_filtered_transcripts = 0;
+};
+
+struct build_options {
+    uint32_t threads = 1;
+    expression_filters filters;
+    bool absorb = true;
+    size_t fuzzy_tolerance = 5;
+    bool prune_tombstones = false;
+    bool include_scaffolds = false;
+    std::string qtx_path;
+    bool annotated_loci_only = false;
+    std::unordered_set<std::string> chromosomes_filter;
 };
 
 /**
