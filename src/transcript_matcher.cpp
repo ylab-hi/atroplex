@@ -82,91 +82,15 @@ std::string match_result::category_string() const {
 
 transcript_matcher::transcript_matcher(grove_type& grove, const config& cfg)
     : grove_(grove), cfg_(cfg) {
-    index_splice_sites();
 }
 
-void transcript_matcher::index_splice_sites() {
-    size_t donor_count = 0;
-    size_t acceptor_count = 0;
-    size_t chromosomes = 0;
-
-    // Walk grove segments and traverse exon chains to collect splice sites
-    auto roots = grove_.get_root_nodes();
-    for (auto& [seqid, root] : roots) {
-        if (!root) continue;
-        chromosomes++;
-
-        auto* node = root;
-        while (!node->get_is_leaf()) {
-            auto& children = node->get_children();
-            if (children.empty()) break;
-            node = children[0];
-        }
-
-        while (node) {
-            for (auto* key : node->get_keys()) {
-                auto& feature = key->get_data();
-                if (!is_segment(feature)) continue;
-
-                auto& seg = get_segment(feature);
-                if (seg.absorbed) continue;
-
-                size_t edge_id = seg.segment_index;
-
-                // Walk SEGMENT_TO_EXON → EXON_TO_EXON chain
-                auto first_exons = grove_.get_neighbors_if(key,
-                    [edge_id](const edge_metadata& e) {
-                        return e.type == edge_metadata::edge_type::SEGMENT_TO_EXON
-                            && e.id == edge_id;
-                    });
-
-                if (first_exons.empty()) continue;
-
-                auto* current = first_exons.front();
-                while (current) {
-                    auto& coord = current->get_value();
-                    known_donor_sites_.insert({seqid, coord.get_end()});
-                    ++donor_count;
-                    known_acceptor_sites_.insert({seqid, coord.get_start()});
-                    ++acceptor_count;
-
-                    auto next = grove_.get_neighbors_if(current,
-                        [edge_id](const edge_metadata& e) {
-                            return e.type == edge_metadata::edge_type::EXON_TO_EXON
-                                && e.id == edge_id;
-                        });
-                    current = next.empty() ? nullptr : next.front();
-                }
-            }
-            node = node->get_next();
-        }
-    }
-
-    logging::info("Indexed " + std::to_string(donor_count) + " donor and " +
-                  std::to_string(acceptor_count) + " acceptor splice sites from " +
-                  std::to_string(chromosomes) + " chromosome(s)");
-}
-
-bool transcript_matcher::is_known_donor(const std::string& seqid, size_t position) const {
+bool transcript_matcher::is_known_site(const std::unordered_set<size_t>& sites,
+                                        size_t position) const {
     size_t lo = (static_cast<size_t>(cfg_.splice_site_window) <= position)
               ? position - cfg_.splice_site_window : 0;
     size_t hi = position + cfg_.splice_site_window;
     for (size_t pos = lo; pos <= hi; ++pos) {
-        if (known_donor_sites_.count({seqid, pos})) {
-            return true;
-        }
-    }
-    return false;
-}
-
-bool transcript_matcher::is_known_acceptor(const std::string& seqid, size_t position) const {
-    size_t lo = (static_cast<size_t>(cfg_.splice_site_window) <= position)
-              ? position - cfg_.splice_site_window : 0;
-    size_t hi = position + cfg_.splice_site_window;
-    for (size_t pos = lo; pos <= hi; ++pos) {
-        if (known_acceptor_sites_.count({seqid, pos})) {
-            return true;
-        }
+        if (sites.count(pos)) return true;
     }
     return false;
 }
@@ -244,8 +168,21 @@ match_result transcript_matcher::match(const read_cluster& cluster) {
     result.total_ref_junctions = best->ref_junctions;
     result.matching_junctions = static_cast<int>(best->score * result.total_query_junctions + 0.5);
 
-    // Analyze splice sites for NIC/NNC classification
-    analyze_splice_sites(result, cluster);
+    // Collect splice sites from all spatial candidates for NIC/NNC classification.
+    // Replaces the global grove-walk index — sites are derived from candidates
+    // already found by find_candidate_segments(), avoiding a full B+ tree
+    // traversal at matcher construction time.
+    std::unordered_set<size_t> candidate_donors;
+    std::unordered_set<size_t> candidate_acceptors;
+    for (const auto& sc : scored) {
+        for (const auto* exon_key : sc.exon_chain) {
+            auto& coord = exon_key->get_value();
+            candidate_donors.insert(coord.get_end());
+            candidate_acceptors.insert(coord.get_start());
+        }
+    }
+
+    analyze_splice_sites(result, cluster, candidate_donors, candidate_acceptors);
 
     // Find novel junctions
     result.novel_junctions = find_novel_junctions(cluster, best->exon_chain);
@@ -404,22 +341,22 @@ nnc_subcategory transcript_matcher::classify_nnc(const match_result& result) {
 }
 
 void transcript_matcher::analyze_splice_sites(match_result& result,
-                                               const read_cluster& cluster) {
+                                               const read_cluster& cluster,
+                                               const std::unordered_set<size_t>& candidate_donors,
+                                               const std::unordered_set<size_t>& candidate_acceptors) {
     result.known_donors = 0;
     result.known_acceptors = 0;
     result.novel_donors = 0;
     result.novel_acceptors = 0;
 
     for (const auto& junction : cluster.consensus_junctions) {
-        // Donor = 5' end of intron (end of exon)
-        if (is_known_donor(cluster.seqid, junction.donor)) {
+        if (is_known_site(candidate_donors, junction.donor)) {
             result.known_donors++;
         } else {
             result.novel_donors++;
         }
 
-        // Acceptor = 3' end of intron (start of next exon)
-        if (is_known_acceptor(cluster.seqid, junction.acceptor)) {
+        if (is_known_site(candidate_acceptors, junction.acceptor)) {
             result.known_acceptors++;
         } else {
             result.novel_acceptors++;

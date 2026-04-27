@@ -238,39 +238,12 @@ private:
     config cfg_;
     stats stats_;
 
-    // Known splice sites from reference (populated during construction)
-    // Keyed by (seqid, position) to avoid hash collisions across chromosomes.
-    struct splice_site {
-        std::string seqid;
-        size_t position;
-
-        bool operator==(const splice_site& o) const {
-            return position == o.position && seqid == o.seqid;
-        }
-    };
-
-    struct splice_site_hash {
-        size_t operator()(const splice_site& s) const {
-            size_t h = std::hash<std::string>{}(s.seqid);
-            // boost::hash_combine equivalent
-            h ^= std::hash<size_t>{}(s.position) + 0x9e3779b9 + (h << 6) + (h >> 2);
-            return h;
-        }
-    };
-
-    std::unordered_set<splice_site, splice_site_hash> known_donor_sites_;
-    std::unordered_set<splice_site, splice_site_hash> known_acceptor_sites_;
-
     /**
-     * Build index of known splice sites by walking the grove
+     * Check if a splice site is known within the given candidate set (within tolerance).
+     * Replaces the global index — splice sites are derived from spatial candidates
+     * already found during match(), avoiding a full grove traversal at startup.
      */
-    void index_splice_sites();
-
-    /**
-     * Check if a splice site is known (within tolerance)
-     */
-    bool is_known_donor(const std::string& seqid, size_t position) const;
-    bool is_known_acceptor(const std::string& seqid, size_t position) const;
+    bool is_known_site(const std::unordered_set<size_t>& sites, size_t position) const;
 
     /**
      * Find candidate segments via spatial query
@@ -315,7 +288,9 @@ private:
     /**
      * Analyze splice sites in query for known/novel classification
      */
-    void analyze_splice_sites(match_result& result, const read_cluster& cluster);
+    void analyze_splice_sites(match_result& result, const read_cluster& cluster,
+                              const std::unordered_set<size_t>& candidate_donors,
+                              const std::unordered_set<size_t>& candidate_acceptors);
 
     /**
      * Check for intron retention events

@@ -37,42 +37,56 @@ processed_read processed_read::from_sam_entry(const gio::sam_entry& entry) {
 }
 
 std::string processed_read::get_splice_signature() const {
-    std::ostringstream ss;
-    ss << seqid << ":" << strand << ":";
+    std::string sig;
+    sig.reserve(seqid.size() + 3 + junctions.size() * 20);
+    sig += seqid;
+    sig += ':';
+    sig += strand;
+    sig += ':';
 
     if (junctions.empty()) {
-        // Single-exon read - use position as signature
-        ss << "SINGLE:" << interval.get_start() << "-" << interval.get_end();
+        sig += "SINGLE:";
+        sig += std::to_string(interval.get_start());
+        sig += '-';
+        sig += std::to_string(interval.get_end());
     } else {
         for (size_t i = 0; i < junctions.size(); ++i) {
-            if (i > 0) ss << ",";
-            ss << junctions[i].donor << "-" << junctions[i].acceptor;
+            if (i > 0) sig += ',';
+            sig += std::to_string(junctions[i].donor);
+            sig += '-';
+            sig += std::to_string(junctions[i].acceptor);
         }
     }
-
-    return ss.str();
+    return sig;
 }
 
 std::string processed_read::get_binned_signature(int bin_size) const {
-    std::ostringstream ss;
-    ss << seqid << ":" << strand << ":";
+    std::string sig;
+    sig.reserve(seqid.size() + 3 + junctions.size() * 20);
+    sig += seqid;
+    sig += ':';
+    sig += strand;
+    sig += ':';
 
     if (junctions.empty()) {
-        // Single-exon reads use larger bins
-        int se_bin = bin_size * 10;  // 100bp default for single-exon
+        int se_bin = bin_size * 10;
         size_t binned_start = (interval.get_start() / se_bin) * se_bin;
         size_t binned_end = (interval.get_end() / se_bin) * se_bin;
-        ss << "SINGLE:" << binned_start << "-" << binned_end;
+        sig += "SINGLE:";
+        sig += std::to_string(binned_start);
+        sig += '-';
+        sig += std::to_string(binned_end);
     } else {
         for (size_t i = 0; i < junctions.size(); ++i) {
-            if (i > 0) ss << ",";
+            if (i > 0) sig += ',';
             size_t binned_donor = (junctions[i].donor / bin_size) * bin_size;
             size_t binned_acceptor = (junctions[i].acceptor / bin_size) * bin_size;
-            ss << binned_donor << "-" << binned_acceptor;
+            sig += std::to_string(binned_donor);
+            sig += '-';
+            sig += std::to_string(binned_acceptor);
         }
     }
-
-    return ss.str();
+    return sig;
 }
 
 // ============================================================================
