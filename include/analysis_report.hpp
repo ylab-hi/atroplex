@@ -251,6 +251,70 @@ struct analysis_report {
      * Rows: total, exclusive, shared, conserved.
      */
     void write_segment_sharing(const std::string& path) const;
+
+private:
+    // ── Internal types (moved from collect() for method extraction) ──
+
+    struct pending_hub {
+        key_ptr exon = nullptr;
+        std::vector<key_ptr> targets;
+        size_t chain_pos = 0;
+        size_t chain_total = 0;
+    };
+
+    struct gene_acc {
+        uint32_t gene_idx = 0;
+        std::string biotype;
+        size_t segment_count = 0;
+        sample_bitset sample_bits;
+        std::vector<size_t> sample_tx;
+        std::vector<size_t> segment_tx_counts;
+        std::unordered_map<key_ptr, size_t> exon_seg_counts;
+        std::vector<key_ptr> first_visit_exons;
+        std::vector<pending_hub> pending_hubs;
+        size_t max_hub_targets_in_gene = 0;
+        std::vector<segment_chain_entry> segments_in_gene;
+        uint16_t sources_seen_in_gene = 0;
+    };
+
+    using exon_expr_map_t = std::unordered_map<key_ptr,
+                                               std::unordered_map<uint32_t, float>>;
+
+    // ── Per-chromosome state (cleared at chromosome boundary) ───────
+    std::unordered_map<uint32_t, gene_acc> active_genes_;
+    exon_expr_map_t exon_expr_sum_;
+
+    // ── Hub tally buffers (allocated once, reused across hubs) ───────
+    std::vector<size_t> hub_branches_;
+    std::vector<size_t> hub_shared_;
+    std::vector<size_t> hub_unique_;
+    std::vector<size_t> hub_psi_num_;
+    std::vector<size_t> hub_psi_den_;
+    std::vector<size_t> branch_counts_;
+
+    // ── Traversal state ─────────────────────────────────────────────
+    std::unordered_set<const void*> visited_exons_;
+    size_t num_samples_ = 0;
+    size_t total_samples_for_conserved_ = 0;
+    quant_sidecar::Reader* qtx_reader_ = nullptr;
+
+    // ── Extracted helpers from collect() ─────────────────────────────
+
+    void finalize_gene_stats(gene_acc& acc, const std::string& seqid);
+    void finalize_gene_diversity(gene_acc& acc);
+    void emit_hub_rows(gene_acc& acc, const std::string& seqid);
+    void emit_event_rows(gene_acc& acc, const std::string& seqid,
+                         grove_type& grove);
+
+    void accumulate_segment_stats(const segment_feature& seg);
+    std::vector<quant_sidecar::Reader::ValueRecord> lookup_segment_expression(
+        const segment_feature& seg);
+    void accumulate_gene(const segment_feature& seg, gene_acc& acc);
+    void process_exon_visit(key_ptr exon_key, const segment_feature& seg,
+                            const std::string& seqid, gene_acc& acc,
+                            const std::vector<quant_sidecar::Reader::ValueRecord>& expr_records,
+                            size_t chain_pos, size_t chain_total,
+                            grove_type& grove);
 };
 
 #endif // ATROPLEX_ANALYSIS_REPORT_HPP
