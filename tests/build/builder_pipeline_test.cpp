@@ -18,6 +18,7 @@
 #include <string>
 #include <vector>
 
+#include "analysis_report.hpp"
 #include "build_summary.hpp"
 #include "builder.hpp"
 #include "genomic_feature.hpp"
@@ -502,4 +503,58 @@ TEST_F(BuilderPipelineTest, TransitiveChain_QtxRemap) {
                 << "sc's expression should be on C directly";
         }
     }
+}
+
+// ── Tier 3.1: --min-samples counts samples only, keeps annotations ───────
+//
+// Build with one annotation (3 exons) and one sample (different 3 exons
+// at a different locus). With min_samples=2, the annotation-only segment
+// must survive (annotation presence = always keep) while the sample-only
+// segment (in 1 sample) is filtered out.
+TEST_F(BuilderPipelineTest, MinSamples_KeepsAnnotations_FiltersSingletons) {
+    auto anno_path = write_gtf("anno.gtf",
+        "##type: annotation\n"
+        "chr1\tTEST\tgene\t1000\t3800\t.\t+\t.\tgene_id \"G1\"; gene_name \"TestGene\"; gene_biotype \"protein_coding\";\n"
+        "chr1\tTEST\ttranscript\t1000\t3800\t.\t+\t.\tgene_id \"G1\"; transcript_id \"TX_ANNO\";\n"
+        "chr1\tTEST\texon\t1000\t1200\t.\t+\t.\tgene_id \"G1\"; transcript_id \"TX_ANNO\";\n"
+        "chr1\tTEST\texon\t2000\t2300\t.\t+\t.\tgene_id \"G1\"; transcript_id \"TX_ANNO\";\n"
+        "chr1\tTEST\texon\t3500\t3800\t.\t+\t.\tgene_id \"G1\"; transcript_id \"TX_ANNO\";\n");
+
+    auto sample_path = write_gtf("samp.gtf",
+        "chr1\tTALON\tgene\t10000\t13800\t.\t+\t.\tgene_id \"G2\"; gene_name \"SampleGene\";\n"
+        "chr1\tTALON\ttranscript\t10000\t13800\t.\t+\t.\tgene_id \"G2\"; transcript_id \"TX_SAMP\";\n"
+        "chr1\tTALON\texon\t10000\t10200\t.\t+\t.\tgene_id \"G2\"; transcript_id \"TX_SAMP\";\n"
+        "chr1\tTALON\texon\t12000\t12300\t.\t+\t.\tgene_id \"G2\"; transcript_id \"TX_SAMP\";\n"
+        "chr1\tTALON\texon\t13500\t13800\t.\t+\t.\tgene_id \"G2\"; transcript_id \"TX_SAMP\";\n");
+
+    std::vector<sample_info> samples;
+    samples.emplace_back("anno", anno_path);
+    samples.back().type = "annotation";
+    samples.emplace_back("samp", sample_path);
+    samples.back().type = "sample";
+
+    grove_type grove(3);
+    build_options opts;
+    opts.include_scaffolds = true;
+    auto summary = builder::build_from_samples(grove, samples, opts);
+
+    ASSERT_EQ(summary.total_segments, 2u) << "Should have 2 live segments before filtering";
+
+    // Run analysis_report::collect with min_samples=2
+    analysis_report report;
+    report.collect(grove, nullptr, /*min_samples=*/2);
+
+    // Count segments that made it through collect (reflected in per_sample stats)
+    size_t anno_segments = 0, samp_segments = 0;
+    auto& reg = sample_registry::instance();
+    for (size_t i = 0; i < reg.size(); ++i) {
+        const auto& info = reg.get(static_cast<uint32_t>(i));
+        if (info.type == "annotation") anno_segments = report.per_sample[i].segments;
+        else if (info.type == "sample") samp_segments = report.per_sample[i].segments;
+    }
+
+    EXPECT_GT(anno_segments, 0u)
+        << "Annotation-only segments must survive --min-samples 2";
+    EXPECT_EQ(samp_segments, 0u)
+        << "Sample-only segment in 1 sample should be filtered at --min-samples 2";
 }

@@ -126,7 +126,9 @@ struct analysis_report {
     // ── Counters not derivable from per-sample ────────────────────────
     size_t total_transcripts = 0;  // sum of transcript_ids.size() across all segments
     size_t total_exons = 0;        // unique exons (pointer-deduplicated)
-    size_t total_edges = 0;
+    size_t total_edges = 0;            // grove-level total (unfiltered)
+    size_t segment_to_exon_edges = 0;   // one per segment with an exon chain
+    size_t exon_to_exon_edges = 0;      // exon chain links
     // Note: the absorbed-segment count lives on build_summary::counters,
     // not here. By default tombstones stay physically in the grove and
     // analysis_report skips them via the `if (seg.absorbed) continue;`

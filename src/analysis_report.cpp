@@ -509,7 +509,16 @@ void analysis_report::collect(grove_type& grove,
 
                 auto& seg = get_segment(feature);
                 if (seg.absorbed) continue;
-                if (min_samples > 0 && seg.sample_count() < min_samples) continue;
+                if (min_samples > 0) {
+                    bool has_annotation = false;
+                    size_t n_samples = 0;
+                    seg.sample_idx.for_each([&](uint32_t sid) {
+                        const auto& info = sample_registry::instance().get(sid);
+                        if (info.type == "annotation") has_annotation = true;
+                        else if (info.type == "sample") n_samples++;
+                    });
+                    if (!has_annotation && n_samples < min_samples) continue;
+                }
                 chr_segments++;
 
                 // ── Segment → per-sample ────────────────────────────
@@ -614,6 +623,7 @@ void analysis_report::collect(grove_type& grove,
                     });
 
                 if (!first_exons.empty()) {
+                    segment_to_exon_edges++;
                     auto* current = first_exons.front();
                     size_t chain_pos = 1;
                     size_t chain_total = static_cast<size_t>(seg.exon_count);
@@ -741,6 +751,7 @@ void analysis_report::collect(grove_type& grove,
                                 return e.type == edge_metadata::edge_type::EXON_TO_EXON
                                     && e.id == edge_id;
                             });
+                        if (!next.empty()) exon_to_exon_edges++;
                         current = next.empty() ? nullptr : next.front();
                         chain_pos++;
                     }
@@ -816,22 +827,23 @@ void analysis_report::write_overview(const std::string& path) const {
         single_exon = static_cast<size_t>(std::count(epsg.begin(), epsg.end(), size_t{1}));
     }
 
-    out << "metric\tvalue\n" << std::fixed;
-    out << "samples\t" << per_sample.size() << "\n";
-    out << "genes\t" << total_genes << "\n";
-    out << "source_transcript_ids\t" << total_transcripts << "\n";
-    out << "segments/isoforms\t" << total_segments << "\n";
-    out << "exons\t" << total_exons << "\n";
-    out << "graph_edges\t" << total_edges << "\n";
-    out << "single_exon_segments\t" << single_exon << "\n";
-    out << "single_isoform_genes\t" << single_iso << "\n";
-    out << "multi_isoform_genes\t" << multi_iso << "\n";
-    out << "mean_segments_per_gene\t" << std::setprecision(2) << mean_tpg << "\n";
-    out << "median_segments_per_gene\t" << med_tpg << "\n";
-    out << "max_segments_per_gene\t" << max_tpg << "\n";
-    out << "mean_exons_per_segment\t" << mean_eps << "\n";
-    out << "median_exons_per_segment\t" << med_eps << "\n";
-    out << "max_exons_per_segment\t" << max_eps << "\n";
+    out << "metric\tvalue\tnote\n" << std::fixed;
+    out << "samples\t" << per_sample.size() << "\t\n";
+    out << "genes\t" << total_genes << "\t\n";
+    out << "source_transcript_ids\t" << total_transcripts << "\t\n";
+    out << "segments/isoforms\t" << total_segments << "\t\n";
+    out << "exons\t" << total_exons << "\t\n";
+    out << "graph_edges\t" << total_edges << "\tgrove-level (unfiltered)\n";
+    out << "exon_links\t" << exon_to_exon_edges << "\t\n";
+    out << "single_exon_segments\t" << single_exon << "\t\n";
+    out << "single_isoform_genes\t" << single_iso << "\t\n";
+    out << "multi_isoform_genes\t" << multi_iso << "\t\n";
+    out << "mean_segments_per_gene\t" << std::setprecision(2) << mean_tpg << "\t\n";
+    out << "median_segments_per_gene\t" << med_tpg << "\t\n";
+    out << "max_segments_per_gene\t" << max_tpg << "\t\n";
+    out << "mean_exons_per_segment\t" << mean_eps << "\t\n";
+    out << "median_exons_per_segment\t" << med_eps << "\t\n";
+    out << "max_exons_per_segment\t" << max_eps << "\t\n";
 
     logging::info("Overview written to: " + path);
 }
