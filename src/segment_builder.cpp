@@ -327,6 +327,8 @@ bool segment_builder::apply_gene_idx_inheritance(
         // collapse on spatial overlap instead of accumulating one gene_idx per
         // input file (StringTie/TALON otherwise produce ~one new gene_id per
         // sample at every novel locus).
+        // "First" is in spatial intersect order (B+ tree leaf order). Given a
+        // stable manifest, the result is reproducible across runs.
         const spatial_candidate* sample_fallback = nullptr;
         for (const auto& cand : candidates) {
             if (is_parent_annotation(cand.segment)) {

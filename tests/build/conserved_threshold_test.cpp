@@ -245,3 +245,70 @@ TEST_F(ConservedThresholdTest, ConservedSegmentsTsv_RelaxedIncludesDropout) {
     EXPECT_GE(data_rows, 1u)
         << "At fraction=0.75 the 3/4-shared structure should appear as conserved";
 }
+
+// ── exon_feature::is_conserved mirrors segment_feature::is_conserved ──
+
+TEST_F(ConservedThresholdTest, ExonIsConserved_GreaterEqualThreshold) {
+    // Same 3-shared-sample build; walk to find an exon shared by all 3.
+    auto grove = build_with(/*shared=*/3, /*distinct=*/0);
+
+    const exon_feature* shared_exon = nullptr;
+    auto roots = grove.get_root_nodes();
+    for (auto& [seqid, root] : roots) {
+        if (!root) continue;
+        auto* node = root;
+        while (!node->get_is_leaf()) {
+            auto& children = node->get_children();
+            if (children.empty()) break;
+            node = children[0];
+        }
+        while (node) {
+            for (auto* key : node->get_keys()) {
+                auto& feature = key->get_data();
+                if (!is_exon(feature)) continue;
+                auto& exon = get_exon(feature);
+                if (exon.sample_count() == 3 && shared_exon == nullptr) {
+                    shared_exon = &exon;
+                }
+            }
+            node = node->get_next();
+        }
+    }
+    ASSERT_NE(shared_exon, nullptr) << "Expected a shared exon with 3 samples";
+
+    EXPECT_TRUE (shared_exon->is_conserved(1));
+    EXPECT_TRUE (shared_exon->is_conserved(2));
+    EXPECT_TRUE (shared_exon->is_conserved(3));
+    EXPECT_FALSE(shared_exon->is_conserved(4));
+}
+
+// ── Regression guard: header and row column counts must agree ───────
+
+TEST_F(ConservedThresholdTest, ConservedSegmentsTsv_HeaderRowColumnCountsMatch) {
+    // Triggered by a previous bug where begin_conserved_segment_stream
+    // gated the header on the local parameter but the row writer gated
+    // on the member, producing a mismatched-width TSV when the two
+    // openers were called with differing flags.
+    auto grove = build_with(/*shared=*/3, /*distinct=*/0);
+
+    fs::path tsv = tmp_dir / "header_row_match.conserved_segments.tsv";
+    {
+        analysis_report report;
+        report.begin_conserved_segment_stream(tsv.string(), /*emit_expression=*/false);
+        report.collect(grove);
+    }
+
+    std::ifstream in(tsv);
+    std::string header_line;
+    std::string row_line;
+    ASSERT_TRUE(std::getline(in, header_line)) << "No header line";
+    ASSERT_TRUE(std::getline(in, row_line)) << "No data row line";
+
+    auto count_tabs = [](const std::string& s) {
+        return static_cast<size_t>(std::count(s.begin(), s.end(), '\t'));
+    };
+    EXPECT_EQ(count_tabs(header_line), count_tabs(row_line))
+        << "Header and row column counts must match.\n"
+        << "  header: " << header_line << "\n"
+        << "  row:    " << row_line;
+}

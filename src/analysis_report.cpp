@@ -1189,7 +1189,11 @@ void analysis_report::set_conserved_fraction(double fraction) {
 
 void analysis_report::begin_conserved_segment_stream(const std::string& path,
                                                      bool emit_expression_columns) {
-    conserved_emit_expression = conserved_emit_expression || emit_expression_columns;
+    // Direct assignment (not OR) for symmetry with begin_conserved_exon_stream:
+    // the last opener wins. Without this, mixed-flag opener calls would leave
+    // the runtime gating (conserved_emit_expression, member) and the header
+    // gating disagreeing, producing a corrupt TSV with header_cols < row_cols.
+    conserved_emit_expression = emit_expression_columns;
     auto& registry = sample_registry::instance();
 
     // Reuse the sample-id vectors prepared by begin_conserved_exon_stream
@@ -1215,7 +1219,7 @@ void analysis_report::begin_conserved_segment_stream(const std::string& path,
     out << std::fixed;
     out << "segment_id\tgene_id\tgene_name\tgene_biotype\tchromosome\tcoordinate"
            "\texon_count\tn_transcripts\tn_samples\tsources";
-    if (emit_expression_columns) {
+    if (conserved_emit_expression) {
         for (size_t i = 0; i < conserved_stream_sample_ids.size(); ++i) {
             if (!conserved_stream_is_sample[i]) continue;
             const auto& info = registry.get(conserved_stream_sample_ids[i]);
