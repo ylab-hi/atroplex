@@ -249,37 +249,19 @@ TEST_F(ConservedThresholdTest, ConservedSegmentsTsv_RelaxedIncludesDropout) {
 // ── exon_feature::is_conserved mirrors segment_feature::is_conserved ──
 
 TEST_F(ConservedThresholdTest, ExonIsConserved_GreaterEqualThreshold) {
-    // Same 3-shared-sample build; walk to find an exon shared by all 3.
-    auto grove = build_with(/*shared=*/3, /*distinct=*/0);
+    // Construct directly: exons live as external keys (not in B+ tree leaves)
+    // so a grove walk can't find them by iterating leaves. The semantics under
+    // test are pure bitset count vs threshold — no grove round-trip needed.
+    exon_feature ex;
+    ex.sample_idx.set(0);
+    ex.sample_idx.set(1);
+    ex.sample_idx.set(2);
+    ASSERT_EQ(ex.sample_count(), 3u);
 
-    const exon_feature* shared_exon = nullptr;
-    auto roots = grove.get_root_nodes();
-    for (auto& [seqid, root] : roots) {
-        if (!root) continue;
-        auto* node = root;
-        while (!node->get_is_leaf()) {
-            auto& children = node->get_children();
-            if (children.empty()) break;
-            node = children[0];
-        }
-        while (node) {
-            for (auto* key : node->get_keys()) {
-                auto& feature = key->get_data();
-                if (!is_exon(feature)) continue;
-                auto& exon = get_exon(feature);
-                if (exon.sample_count() == 3 && shared_exon == nullptr) {
-                    shared_exon = &exon;
-                }
-            }
-            node = node->get_next();
-        }
-    }
-    ASSERT_NE(shared_exon, nullptr) << "Expected a shared exon with 3 samples";
-
-    EXPECT_TRUE (shared_exon->is_conserved(1));
-    EXPECT_TRUE (shared_exon->is_conserved(2));
-    EXPECT_TRUE (shared_exon->is_conserved(3));
-    EXPECT_FALSE(shared_exon->is_conserved(4));
+    EXPECT_TRUE (ex.is_conserved(1));
+    EXPECT_TRUE (ex.is_conserved(2));
+    EXPECT_TRUE (ex.is_conserved(3));
+    EXPECT_FALSE(ex.is_conserved(4));
 }
 
 // ── Regression guard: header and row column counts must agree ───────
