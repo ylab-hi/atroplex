@@ -486,8 +486,15 @@ struct exon_feature {
         return static_cast<float>(sample_idx.count()) / static_cast<float>(total_samples);
     }
 
-    bool is_conserved(size_t total_samples) const {
-        return sample_idx.count() == total_samples;
+    /**
+     * Conservation check. `min_required` is the inclusive sample-count
+     * threshold (e.g., total sample-typed entries × conserved_fraction,
+     * rounded up). Default callers pass the full sample count for the
+     * strict "in every sample" definition; relaxed thresholds let
+     * dropout-tolerant cores be enumerated.
+     */
+    bool is_conserved(size_t min_required) const {
+        return sample_idx.count() >= min_required;
     }
 
     bool is_sample_specific() const {
@@ -595,9 +602,10 @@ struct segment_feature {
         return static_cast<float>(sample_idx.count()) / static_cast<float>(total_samples);
     }
 
-    // Check if feature is conserved (present in all samples)
-    bool is_conserved(size_t total_samples) const {
-        return sample_idx.count() == total_samples;
+    // Conservation check. `min_required` is the inclusive sample-count
+    // threshold (total sample-typed entries × conserved_fraction, rounded up).
+    bool is_conserved(size_t min_required) const {
+        return sample_idx.count() >= min_required;
     }
 
     // Check if feature is sample-specific (only in one sample)

@@ -10,6 +10,7 @@
 #include <gtest/gtest.h>
 #include <filesystem>
 #include <memory>
+#include <set>
 
 #include "genomic_feature.hpp"
 #include "build_gff.hpp"
@@ -317,4 +318,47 @@ TEST_F(AbsorptionTest, NoAbsorb_KeepsAll) {
     EXPECT_EQ(result.live_segments, 2)
         << "Without absorption, all multi-exon segments should be kept";
     EXPECT_EQ(result.total_absorbed_into, 0);
+}
+
+// ── Cross-sample gene_idx inheritance via spatial overlap ───────────
+
+TEST_F(AbsorptionTest, CrossSampleInheritance_NovelLocus) {
+    // Two non-annotation samples each contribute a novel transcript with a
+    // distinct gene_id ("NOVEL_A" / "NOVEL_B") at spatially overlapping loci
+    // (chr1:10000-13000 and chr1:10500-12800). Exon coordinates are disjoint
+    // so neither dedup nor absorption fires, but spatial intersect returns
+    // A's segment as a candidate when B is inserted. With the inheritance
+    // fix, B's segment adopts A's gene_idx; without the fix, the two
+    // segments accumulate two separate gene_idx entries.
+    auto result = build_two_fixtures("cross_sample_novel_a.gtf", false,
+                                     "cross_sample_novel_b.gtf", false);
+
+    ASSERT_EQ(result.live_segments, 2)
+        << "Expected 2 distinct live segments (different exon chains, no absorption).";
+
+    std::set<uint32_t> distinct_gene_idx;
+    auto roots = result.grove->get_root_nodes();
+    for (auto& [seqid, root] : roots) {
+        if (!root) continue;
+        auto* node = root;
+        while (!node->get_is_leaf()) {
+            auto& children = node->get_children();
+            if (children.empty()) break;
+            node = children[0];
+        }
+        while (node) {
+            for (auto* key : node->get_keys()) {
+                auto& feature = key->get_data();
+                if (!is_segment(feature)) continue;
+                auto& seg = get_segment(feature);
+                if (!seg.absorbed) distinct_gene_idx.insert(seg.gene_idx);
+            }
+            node = node->get_next();
+        }
+    }
+
+    EXPECT_EQ(distinct_gene_idx.size(), 1u)
+        << "Sample B's novel locus should inherit Sample A's gene_idx via "
+        << "spatial overlap, but found " << distinct_gene_idx.size()
+        << " distinct gene_idx values.";
 }

@@ -1,0 +1,10 @@
+##id: cross_sample_novel_b
+##description: Sample B novel locus (gene_id NOVEL_B) at chr1:10500-12800.
+##description: Spatially overlaps sample A's locus (chr1:10000-13000) but uses
+##description: entirely distinct exon coordinates so no dedup/absorption fires.
+##description: With the inheritance fix, B's segment should adopt A's gene_idx
+##description: via spatial overlap; without the fix, B keeps its own gene_idx.
+chr1	TEST	transcript	10500	12800	.	+	.	gene_id "NOVEL_B"; transcript_id "TX_B1";
+chr1	TEST	exon	10500	10700	.	+	.	gene_id "NOVEL_B"; transcript_id "TX_B1"; exon_number "1";
+chr1	TEST	exon	11500	11700	.	+	.	gene_id "NOVEL_B"; transcript_id "TX_B1"; exon_number "2";
+chr1	TEST	exon	12500	12800	.	+	.	gene_id "NOVEL_B"; transcript_id "TX_B1"; exon_number "3";
