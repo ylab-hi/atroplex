@@ -322,12 +322,27 @@ bool segment_builder::apply_gene_idx_inheritance(
 
     bool overlaps_annotation = false;
     if (!is_annotation_sample(sample_id)) {
+        // Prefer annotation parents (curated gene metadata). Fall back to the
+        // first overlapping sample-derived segment so cross-sample novel loci
+        // collapse on spatial overlap instead of accumulating one gene_idx per
+        // input file (StringTie/TALON otherwise produce ~one new gene_id per
+        // sample at every novel locus).
+        // "First" is in spatial intersect order (B+ tree leaf order). Given a
+        // stable manifest, the result is reproducible across runs.
+        const spatial_candidate* sample_fallback = nullptr;
         for (const auto& cand : candidates) {
             if (is_parent_annotation(cand.segment)) {
                 gene_idx = get_segment(cand.segment->get_data()).gene_idx;
                 overlaps_annotation = true;
+                sample_fallback = nullptr;
                 break;
             }
+            if (sample_fallback == nullptr) {
+                sample_fallback = &cand;
+            }
+        }
+        if (!overlaps_annotation && sample_fallback != nullptr) {
+            gene_idx = get_segment(sample_fallback->segment->get_data()).gene_idx;
         }
     }
     if (annotated_loci_only && !is_annotation_sample(sample_id) && !overlaps_annotation) {

@@ -141,6 +141,7 @@ struct analysis_report {
     // inline during the single grove traversal in collect(). Nothing is
     // accumulated in memory beyond the flat counters above.
     std::unique_ptr<std::ofstream> conserved_exon_stream;
+    std::unique_ptr<std::ofstream> conserved_segment_stream;
     std::vector<uint32_t> conserved_stream_sample_ids;  // sample IDs to emit columns for
     std::vector<bool> conserved_stream_is_sample;       // parallel: true if type=="sample"
     bool conserved_emit_expression = false;             // emit per-sample expression columns when qtx reader available
@@ -157,6 +158,31 @@ struct analysis_report {
      */
     void begin_conserved_exon_stream(const std::string& path,
                                      bool emit_expression_columns = false);
+
+    /**
+     * Open the conserved-segments TSV, write its header, and arm inline
+     * streaming inside the next collect() call. Segments whose sample_count
+     * equals the number of non-replicate sample/annotation entries are
+     * written when first visited during the grove traversal. Reuses the
+     * sample-id vectors prepared by begin_conserved_exon_stream() if it
+     * was called first; otherwise builds them now.
+     *
+     * Each row carries gene info, span coordinate, exon count, transcript
+     * count, sample count, sources, biotype, and (if a .qtx reader is
+     * attached) per-sample expression columns for entries with
+     * type=="sample".
+     */
+    void begin_conserved_segment_stream(const std::string& path,
+                                        bool emit_expression_columns = false);
+
+    /**
+     * Set the conservation threshold as a fraction in (0, 1] of sample-typed
+     * registry entries. The minimum sample count required for a segment or
+     * exon to be classified as conserved is ceil(total_sample_entries × frac).
+     * Default is 1.0 (strict: present in every sample). Must be called
+     * before collect(). Annotations don't count toward the denominator.
+     */
+    void set_conserved_fraction(double fraction);
 
     // ── Phase 8.3: splicing hub streams ─────────────────────────────
     //
@@ -296,6 +322,8 @@ private:
     std::unordered_set<const void*> visited_exons_;
     size_t num_samples_ = 0;
     size_t total_samples_for_conserved_ = 0;
+    size_t min_required_for_conserved_ = 0;  // ceil(total * conserved_fraction_); set in collect()
+    double conserved_fraction_ = 1.0;        // (0,1]; default 1.0 = strict "in every sample"
     quant_sidecar::Reader* qtx_reader_ = nullptr;
 
     // ── Extracted helpers from collect() ─────────────────────────────
@@ -315,6 +343,12 @@ private:
                             const std::vector<quant_sidecar::Reader::ValueRecord>& expr_records,
                             size_t chain_pos, size_t chain_total,
                             grove_type& grove);
+
+    void stream_conserved_segment_row(
+        const segment_feature& seg,
+        const std::string& seqid,
+        key_ptr seg_key,
+        const std::vector<quant_sidecar::Reader::ValueRecord>& seg_expr_records);
 };
 
 #endif // ATROPLEX_ANALYSIS_REPORT_HPP

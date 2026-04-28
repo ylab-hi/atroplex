@@ -27,6 +27,12 @@ cxxopts::Options inspect::parse_args(int argc, char** argv) {
         ("min-samples", "Only include segments present in >= N samples. "
             "Applied non-destructively during traversal — the grove is not modified.",
             cxxopts::value<size_t>()->default_value("0"))
+        ("conserved-fraction", "Fraction of sample-typed entries (0,1] a segment "
+            "or exon must appear in to be classified as conserved. Default 1.0 = "
+            "strict (must be in every sample). Relaxing (e.g. 0.95) yields a "
+            "dropout-tolerant 'conserved core' for both per-sample counts and "
+            "the conserved_segments / conserved_exons TSVs.",
+            cxxopts::value<double>()->default_value("1.0"))
         ;
 
     options.add_options("Output")
@@ -59,6 +65,14 @@ void inspect::validate(const cxxopts::ParseResult& args) {
             }
         }
     }
+
+    if (args.count("conserved-fraction")) {
+        double f = args["conserved-fraction"].as<double>();
+        if (!(f > 0.0 && f <= 1.0)) {
+            throw std::runtime_error(
+                "--conserved-fraction must be in (0, 1]; got " + std::to_string(f));
+        }
+    }
 }
 
 void inspect::execute(const cxxopts::ParseResult& args) {
@@ -88,6 +102,7 @@ void inspect::execute(const cxxopts::ParseResult& args) {
     std::filesystem::create_directories(overview_dir);
 
     analysis_report report;
+    report.set_conserved_fraction(args["conserved-fraction"].as<double>());
 
     // Whether to include per-sample expression columns in hub / branch
     // / conserved-exon / sample_stats outputs. Enabled when a .qtx
@@ -100,6 +115,9 @@ void inspect::execute(const cxxopts::ParseResult& args) {
     std::filesystem::create_directories(sharing_dir);
     report.begin_conserved_exon_stream(
         (sharing_dir / (basename + ".conserved_exons.tsv")).string(),
+        emit_expression_cols);
+    report.begin_conserved_segment_stream(
+        (sharing_dir / (basename + ".conserved_segments.tsv")).string(),
         emit_expression_cols);
 
     // Phase 8.3: open splicing hub streams before collect() — rows are

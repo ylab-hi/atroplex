@@ -1,0 +1,9 @@
+##id: cross_sample_novel_a
+##description: Sample A novel locus (gene_id NOVEL_A) at chr1:10000-13000.
+##description: Three exons; exon coords are entirely distinct from sample B fixture
+##description: so no dedup or absorption fires. Spans overlap so spatial intersect
+##description: returns A's segment as a candidate when B is later inserted.
+chr1	TEST	transcript	10000	13000	.	+	.	gene_id "NOVEL_A"; transcript_id "TX_A1";
+chr1	TEST	exon	10000	10200	.	+	.	gene_id "NOVEL_A"; transcript_id "TX_A1"; exon_number "1";
+chr1	TEST	exon	11000	11200	.	+	.	gene_id "NOVEL_A"; transcript_id "TX_A1"; exon_number "2";
+chr1	TEST	exon	12000	13000	.	+	.	gene_id "NOVEL_A"; transcript_id "TX_A1"; exon_number "3";

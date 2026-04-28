@@ -55,7 +55,7 @@ double compute_median(std::vector<size_t>& values) {
 void analysis_report::accumulate_segment_stats(const segment_feature& seg) {
     size_t seg_sample_count = seg.sample_count();
     bool seg_exclusive = (seg_sample_count == 1);
-    bool seg_conserved = seg.is_conserved(total_samples_for_conserved_);
+    bool seg_conserved = seg.is_conserved(min_required_for_conserved_);
 
     exons_per_segment.push_back(static_cast<size_t>(seg.exon_count));
 
@@ -178,7 +178,7 @@ void analysis_report::process_exon_visit(key_ptr exon_key,
         auto& exon = get_exon(exon_key->get_data());
         size_t exon_sample_count = exon.sample_count();
         bool exon_exclusive = (exon_sample_count == 1);
-        bool exon_conserved = exon.is_conserved(total_samples_for_conserved_);
+        bool exon_conserved = exon.is_conserved(min_required_for_conserved_);
 
         for (uint32_t sid : exon.sample_idx) {
             auto& sc = per_sample[sid];
@@ -624,6 +624,19 @@ void analysis_report::collect(grove_type& grove,
         const auto& info = sample_registry::instance().get(static_cast<uint32_t>(i));
         if (info.type == "sample") total_samples_for_conserved_++;
     }
+    // Translate the configured fraction (default 1.0) into a concrete
+    // sample-count threshold. ceil so that fractions just below 1.0 still
+    // require nearly every sample; floor at 1 so a tiny fraction or empty
+    // sample set never silently classifies everything as conserved.
+    min_required_for_conserved_ = static_cast<size_t>(std::ceil(
+        static_cast<double>(total_samples_for_conserved_) * conserved_fraction_));
+    if (min_required_for_conserved_ < 1) min_required_for_conserved_ = 1;
+    if (total_samples_for_conserved_ > 0 && conserved_fraction_ < 1.0) {
+        logging::info("Conservation threshold: " +
+                      std::to_string(min_required_for_conserved_) + " / " +
+                      std::to_string(total_samples_for_conserved_) +
+                      " samples (fraction=" + std::to_string(conserved_fraction_) + ")");
+    }
 
     // Phase 8.3: single set of per-sample tally buffers, allocated once and
     // reused across every hub in every gene. std::fill-reset before each hub.
@@ -696,6 +709,13 @@ void analysis_report::collect(grove_type& grove,
 
                 // ── Quantification (sidecar read) ───────────────────
                 auto seg_expr_records = lookup_segment_expression(seg);
+
+                // ── Stream conserved-segment row inline (Phase 8.5) ─
+                if (conserved_segment_stream
+                    && conserved_segment_stream->is_open()
+                    && seg.is_conserved(min_required_for_conserved_)) {
+                    stream_conserved_segment_row(seg, seqid, key, seg_expr_records);
+                }
 
                 // ── Gene accumulation ───────────────────────────────
                 uint32_t gidx = seg.gene_idx;
@@ -1154,6 +1174,119 @@ void analysis_report::begin_conserved_exon_stream(const std::string& path,
     out << "\n";
 
     logging::info("Conserved exons streaming to: " + path);
+}
+
+void analysis_report::set_conserved_fraction(double fraction) {
+    if (!(fraction > 0.0 && fraction <= 1.0)) {
+        logging::warning("Invalid --conserved-fraction (" +
+                         std::to_string(fraction) +
+                         "); must be in (0, 1]. Using 1.0 (strict).");
+        conserved_fraction_ = 1.0;
+        return;
+    }
+    conserved_fraction_ = fraction;
+}
+
+void analysis_report::begin_conserved_segment_stream(const std::string& path,
+                                                     bool emit_expression_columns) {
+    // Direct assignment (not OR) for symmetry with begin_conserved_exon_stream:
+    // the last opener wins. Without this, mixed-flag opener calls would leave
+    // the runtime gating (conserved_emit_expression, member) and the header
+    // gating disagreeing, producing a corrupt TSV with header_cols < row_cols.
+    conserved_emit_expression = emit_expression_columns;
+    auto& registry = sample_registry::instance();
+
+    // Reuse the sample-id vectors prepared by begin_conserved_exon_stream
+    // if it ran first; otherwise build them here so this stream works
+    // standalone.
+    if (conserved_stream_sample_ids.empty()) {
+        for (size_t i = 0; i < registry.size(); ++i) {
+            const auto& info = registry.get(static_cast<uint32_t>(i));
+            if (info.type == "replicate") continue;
+            conserved_stream_sample_ids.push_back(static_cast<uint32_t>(i));
+            conserved_stream_is_sample.push_back(info.type == "sample");
+        }
+    }
+
+    conserved_segment_stream = std::make_unique<std::ofstream>(path);
+    if (!conserved_segment_stream->is_open()) {
+        logging::error("Cannot open conserved segments file: " + path);
+        conserved_segment_stream.reset();
+        return;
+    }
+
+    auto& out = *conserved_segment_stream;
+    out << std::fixed;
+    out << "segment_id\tgene_id\tgene_name\tgene_biotype\tchromosome\tcoordinate"
+           "\texon_count\tn_transcripts\tn_samples\tsources";
+    if (conserved_emit_expression) {
+        for (size_t i = 0; i < conserved_stream_sample_ids.size(); ++i) {
+            if (!conserved_stream_is_sample[i]) continue;
+            const auto& info = registry.get(conserved_stream_sample_ids[i]);
+            std::string label = info.id.empty()
+                ? std::to_string(conserved_stream_sample_ids[i]) : info.id;
+            out << "\t" << label << "." << expr_type_label(info.expr_type);
+        }
+    }
+    out << "\n";
+
+    logging::info("Conserved segments streaming to: " + path);
+}
+
+void analysis_report::stream_conserved_segment_row(
+    const segment_feature& seg,
+    const std::string& seqid,
+    key_ptr seg_key,
+    const std::vector<quant_sidecar::Reader::ValueRecord>& seg_expr_records) {
+
+    auto& out = *conserved_segment_stream;
+
+    // Resolve sources bitfield to a semicolon-joined string.
+    std::string sources_str;
+    source_registry::instance().for_each(seg.sources,
+        [&](const std::string& src) {
+            if (!sources_str.empty()) sources_str += ";";
+            sources_str += src;
+        });
+
+    out << seg.segment_index
+        << "\t" << seg.gene_id()
+        << "\t" << seg.gene_name()
+        << "\t" << seg.gene_biotype()
+        << "\t" << seqid
+        << "\t" << format_coordinate(seqid, seg_key->get_value())
+        << "\t" << static_cast<size_t>(seg.exon_count)
+        << "\t" << seg.transcript_ids.size()
+        << "\t" << seg.sample_count()
+        << "\t" << sources_str;
+
+    if (conserved_emit_expression) {
+        // seg_expr_records is sorted by sample_id; walk in lockstep with
+        // conserved_stream_sample_ids (which is also registry-order
+        // ascending) for sample-typed entries only.
+        size_t rec_idx = 0;
+        for (size_t i = 0; i < conserved_stream_sample_ids.size(); ++i) {
+            if (!conserved_stream_is_sample[i]) continue;
+            uint32_t sid = conserved_stream_sample_ids[i];
+            // Sum all records for this sample (multiple source transcripts
+            // can collapse into one segment for the same sample).
+            double v = 0.0;
+            bool any = false;
+            while (rec_idx < seg_expr_records.size()
+                   && seg_expr_records[rec_idx].sample_id < sid) {
+                ++rec_idx;
+            }
+            while (rec_idx < seg_expr_records.size()
+                   && seg_expr_records[rec_idx].sample_id == sid) {
+                v += seg_expr_records[rec_idx].value;
+                any = true;
+                ++rec_idx;
+            }
+            if (any) out << "\t" << v;
+            else     out << "\t.";
+        }
+    }
+    out << "\n";
 }
 
 // ── Sharing TSVs (Phase 8.2) ────────────────────────────────────────
