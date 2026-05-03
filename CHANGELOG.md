@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-05-02
+
+First tagged release. Subcommand architecture (`build`, `inspect`,
+`discover`, `query`, `export`); variant-based feature model with spatial
+ISM absorption (Rules 0–8); ENCODE-aligned manifest with sample/annotation
+distinction; `.qtx` segment-major expression sidecar (no expression in
+grove); streaming `analysis_report` for inspect (single-pass, no per-sample
+matrices); splicing-hub PSI + entropy + branch fan-out; conserved-core
+output and `--conserved-fraction`; cross-sample `gene_idx` inheritance;
+`--annotated-loci-only`, `--chromosomes`, `--include-scaffolds`,
+`--min-samples` filters; SQANTI-like classification + chi-squared DTU on
+the `group` axis; `.ggx` serialization with tombstone remap; per-sample
+GTF reconstruction via `export`. Cohort-scale validation on a 21,006-sample
+ENCODE/GTEx/TCGA pan-transcriptome (2.32 B input transcripts → 22.65 M
+segments / 18.65 M unique exons).
+
 ### Removed
 - **Build-time replicate merging** (#47): `--min-replicates` and `--min-replicate-fraction` removed from the build path. The `merge_replicates()` function destructively cleared individual sample bits and replaced them with group bits, losing per-sample information needed for within-group analysis (e.g., boxplots). It also didn't save memory (bitset size unchanged) or remove dead segments. Replaced by inspect-time `--min-samples` (#48).
 
