@@ -23,6 +23,7 @@
 #include "subcall/query.hpp"
 #include "subcall/inspect.hpp"
 #include "subcall/export_gtf.hpp"
+#include "subcall/compact.hpp"
 
 std::unique_ptr<subcall::subcall> create_subcall(const std::string& name) {
     if (name == "discover") {
@@ -35,6 +36,8 @@ std::unique_ptr<subcall::subcall> create_subcall(const std::string& name) {
         return std::make_unique<subcall::inspect>();
     } else if (name == "export") {
         return std::make_unique<subcall::export_gtf>();
+    } else if (name == "compact") {
+        return std::make_unique<subcall::compact>();
     }
     return nullptr;
 }
@@ -54,6 +57,7 @@ void print_general_help(cxxopts::Options& options) {
     std::cout << "\tdiscover\tDiscover novel transcripts from long-read data\n";
     std::cout << "\tquery\t\tClassify transcripts against the pan-transcriptome index\n";
     std::cout << "\texport\t\tExport per-sample GTF files from a genogrove index\n";
+    std::cout << "\tcompact\t\tCompact a genogrove index by physically removing absorbed segments\n";
     std::cout << "\nFor subcommand help: atroplex <subcommand> --help\n";
 }
 
