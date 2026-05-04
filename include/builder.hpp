@@ -72,11 +72,6 @@ public:
         chromosome_exon_caches* out_exon_caches = nullptr
     );
 
-    // Future extension methods for Phase 2/3:
-    // static void add_discovered_transcripts(grove_type& grove, const std::vector<alignment_entry>& reads);
-    // static void add_fusion_segments(grove_type& grove, const fusion_data& fusions);
-
-private:
     /// Handle absorbed (tombstoned) segments after the build.
     /// Always counts tombstones, prunes them from segment_caches and
     /// gene_indices, and returns the count.
@@ -88,6 +83,11 @@ private:
     /// is O(E) per call), which can block for minutes to hours on
     /// realistic indices. Default `false` — tombstones stay in the tree
     /// and every consumer already filters them defensively.
+    ///
+    /// `segment_caches` is the build-time cache used by build_from_samples
+    /// to dedupe segments by ordered-exon-coordinate hash. The `compact`
+    /// subcommand operates on a loaded grove without that cache; pass an
+    /// empty map and the cache-cleanup phase becomes a no-op.
     ///
     /// When `out_tombstoned_segment_indices` is non-null, the set of
     /// segment_index values for tombstoned segments is written there
@@ -110,6 +110,10 @@ private:
         std::unordered_set<uint64_t>* out_tombstoned_segment_indices = nullptr,
         std::unordered_map<uint64_t, uint64_t>* out_tombstone_remap = nullptr
     );
+
+    // Future extension methods for Phase 2/3:
+    // static void add_discovered_transcripts(grove_type& grove, const std::vector<alignment_entry>& reads);
+    // static void add_fusion_segments(grove_type& grove, const fusion_data& fusions);
 };
 
 #endif //ATROPLEX_GENOGROVE_BUILDER_HPP
