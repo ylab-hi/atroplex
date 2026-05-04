@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **`compact` subcommand** ([#78](https://github.com/ylab-hi/atroplex/pull/78)): post-build maintenance command that physically removes absorbed (tombstoned) segments from an existing `.ggx`, producing a smaller index without changing query semantics. Loads the grove, calls `grove.remove_key()` on every `absorbed == true` segment, drops orphan EXON_TO_EXON edges, and re-serializes to a separate output directory. The companion `.qtx` is already remapped against live segments by `merge_to_qtx` at build time, so it is copied through unchanged alongside `.ggx.summary`. Validate fails fast if no `.qtx` is present alongside the input — pass `--no-qtx` to opt out for structure-only indices. Refuses to write back to the input directory so a partial write can never overwrite the original. `builder::remove_tombstones` moves from private to public for reuse; signature unchanged.
+
 ## [0.1.0] - 2026-05-02
 
 First tagged release. Subcommand architecture (`build`, `inspect`,
