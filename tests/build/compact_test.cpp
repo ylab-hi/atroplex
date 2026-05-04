@@ -107,8 +107,13 @@ protected:
         opts.qtx_path = (index_dir / (stem + ".qtx")).string();
         auto summary = builder::build_from_samples(grove, samples, opts);
 
-        EXPECT_EQ(summary.counters.absorbed_segments, 1u)
-            << "Fixture must produce exactly one tombstone";
+        // ASSERT (not EXPECT) — a fixture without a tombstone would let
+        // every test that uses this helper proceed against a malformed
+        // grove and surface a confusing downstream failure.
+        [&] {
+            ASSERT_EQ(summary.counters.absorbed_segments, 1u)
+                << "Fixture must produce exactly one tombstone";
+        }();
 
         // Mirror subcall::save_grove
         fs::path ggx_path = index_dir / (stem + ".ggx");
@@ -290,6 +295,35 @@ TEST_F(CompactSubcallTest, Validate_NoQtxOptOutSucceedsAndSkipsCopy) {
     EXPECT_TRUE(fs::exists(output_dir / (stem + ".ggx")));
     EXPECT_FALSE(fs::exists(output_dir / (stem + ".qtx")))
         << "--no-qtx must not produce or copy a .qtx";
+}
+
+// ── Validation: --no-qtx wins when a .qtx is present — the warning ───
+// fires (not asserted here) and the sidecar is intentionally NOT carried
+// into the output, so the compacted index is structure-only.
+TEST_F(CompactSubcallTest, Execute_NoQtxWithExistingSidecarSkipsCopy) {
+    fs::path input_dir = tmp_dir / "in";
+    fs::path output_dir = tmp_dir / "out";
+    std::string stem = build_index_with_tombstone(input_dir, "test");
+    ASSERT_TRUE(fs::exists(input_dir / (stem + ".qtx")))
+        << "Pre-condition: input directory must have a .qtx";
+
+    transcript_registry::reset();
+    gene_registry::reset();
+    source_registry::reset();
+    sample_registry::reset();
+
+    run_compact({
+        "atroplex compact",
+        "-g", input_dir.string(),
+        "-o", output_dir.string(),
+        "--no-qtx",
+    });
+
+    EXPECT_TRUE(fs::exists(output_dir / (stem + ".ggx")));
+    EXPECT_FALSE(fs::exists(output_dir / (stem + ".qtx")))
+        << "--no-qtx must skip the .qtx copy even when the input has one";
+    EXPECT_TRUE(fs::exists(input_dir / (stem + ".qtx")))
+        << "--no-qtx is not destructive — the input .qtx must remain untouched";
 }
 
 // ── Validation: refuses to write the compacted index back into the ───
