@@ -59,6 +59,9 @@ atroplex discover -i reads.bam -m manifest.tsv -o results/
 
 # Export per-sample GTF files from a built index
 atroplex export -g index.ggx -o export/
+
+# Compact a built index by physically removing absorbed segments
+atroplex compact -g index_dir/ -o compacted/
 ```
 
 ## Subcommands
@@ -162,6 +165,22 @@ atroplex export -g index_dir/ --min-samples 3 --source HAVANA
 ```
 
 Export-specific options: `--sample`, `--gene`, `--region chr:start-end`, `--min-samples`, `--conserved-only`, `--biotype`, `--source` (all filters are AND'd).
+
+### `atroplex compact` — Compact a built index
+
+Physically removes absorbed (tombstoned) segments from an existing `.ggx`, producing a smaller index without changing query semantics. Use this when an index was built without `--prune-tombstones` and you want to reclaim space later. The companion `.qtx` is already remapped against live segments at build time, so it is copied through unchanged alongside `.ggx.summary`.
+
+```bash
+# Compact an existing index into a separate output directory
+atroplex compact -g index_dir/ -o compacted/
+
+# Compact a structure-only index (no .qtx alongside the .ggx)
+atroplex compact -g index_dir/ -o compacted/ --no-qtx
+```
+
+By default, `compact` fails fast if no `.qtx` is found alongside the input `.ggx` — pass `--no-qtx` to opt out. It also refuses to write to the input directory, so a partial write can never overwrite the original.
+
+Compact-specific options: `--no-qtx`.
 
 ### Common Options
 
