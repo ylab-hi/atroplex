@@ -33,6 +33,12 @@ cxxopts::Options inspect::parse_args(int argc, char** argv) {
             "dropout-tolerant 'conserved core' for both per-sample counts and "
             "the conserved_segments / conserved_exons TSVs.",
             cxxopts::value<double>()->default_value("1.0"))
+        ("min-hub-branches", "Minimum number of unique downstream exon targets "
+            "an exon must have to register as a splicing hub (must be >= 2). "
+            "Default 10 keeps the catalog focused on highly-branched decision "
+            "points; raise to narrow it further when hubs are abundant, lower "
+            "to surface less-branched events.",
+            cxxopts::value<size_t>()->default_value("10"))
         ;
 
     options.add_options("Output")
@@ -73,6 +79,14 @@ void inspect::validate(const cxxopts::ParseResult& args) {
                 "--conserved-fraction must be in (0, 1]; got " + std::to_string(f));
         }
     }
+
+    if (args.count("min-hub-branches")) {
+        size_t n = args["min-hub-branches"].as<size_t>();
+        if (n < 2) {
+            throw std::runtime_error(
+                "--min-hub-branches must be >= 2; got " + std::to_string(n));
+        }
+    }
 }
 
 void inspect::execute(const cxxopts::ParseResult& args) {
@@ -103,6 +117,7 @@ void inspect::execute(const cxxopts::ParseResult& args) {
 
     analysis_report report;
     report.set_conserved_fraction(args["conserved-fraction"].as<double>());
+    report.set_hub_min_branches(args["min-hub-branches"].as<size_t>());
 
     // Whether to include per-sample expression columns in hub / branch
     // / conserved-exon / sample_stats outputs. Enabled when a .qtx

@@ -1,0 +1,15 @@
+##id: rule7_intron_retention_neg_strand
+##description: Rule 7 - Mono-exon intron retention on the negative strand.
+##description: Multi-exon parent on `-` strand at chr1:1000-3800 with an
+##description: intron between [1200,2000]. A mono-exon transcript at
+##description: chr1:1100-2100 spans that intron and so should classify as
+##description: INTRON_RETENTION (kept) regardless of strand — the classifier
+##description: looks for "exon → next exon across an intron" purely in
+##description: genomic coordinates and is not strand-asymmetric here.
+chr1	TEST	gene	1000	5000	.	-	.	gene_id "G1"; gene_name "TestGene"; gene_biotype "protein_coding";
+chr1	TEST	transcript	1000	5000	.	-	.	gene_id "G1"; transcript_id "PARENT"; gene_name "TestGene"; gene_biotype "protein_coding";
+chr1	TEST	exon	1000	1200	.	-	.	gene_id "G1"; transcript_id "PARENT"; exon_number "1";
+chr1	TEST	exon	2000	2300	.	-	.	gene_id "G1"; transcript_id "PARENT"; exon_number "2";
+chr1	TEST	exon	3500	3800	.	-	.	gene_id "G1"; transcript_id "PARENT"; exon_number "3";
+chr1	TEST	transcript	1100	2100	.	-	.	gene_id "G1"; transcript_id "MONO_IR"; gene_name "TestGene"; gene_biotype "protein_coding";
+chr1	TEST	exon	1100	2100	.	-	.	gene_id "G1"; transcript_id "MONO_IR"; exon_number "1";

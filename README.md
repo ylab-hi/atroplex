@@ -120,11 +120,14 @@ atroplex inspect -m manifest.tsv -o results/ --min-samples 5
 # Relax the conservation threshold: conserved == present in >= 95% of samples
 atroplex inspect -m manifest.tsv -o results/ --conserved-fraction 0.95
 
+# Narrow the hub catalog (only exons with >= 20 distinct downstream targets)
+atroplex inspect -m manifest.tsv -o results/ --min-hub-branches 20
+
 # Include splicing event catalog (cassette, alt-5'/3', IR, etc.)
 atroplex inspect -m manifest.tsv -o results/ --events
 ```
 
-Inspect-specific options: `--min-samples` (skip segments in < N samples, annotations always kept), `--conserved-fraction <(0,1]>` (fraction of sample-typed entries a feature must appear in to be classified as conserved; default `1.0` = strict "in every sample"; relax for a dropout-tolerant conserved core), `--events` (write per-gene splicing event catalog, off by default)
+Inspect-specific options: `--min-samples` (skip segments in < N samples, annotations always kept), `--conserved-fraction <(0,1]>` (fraction of sample-typed entries a feature must appear in to be classified as conserved; default `1.0` = strict "in every sample"; relax for a dropout-tolerant conserved core), `--min-hub-branches <N>` (minimum unique downstream targets for an exon to register as a splicing hub; must be `>= 2`; default `10`; raise to narrow the catalog when hubs are abundant, lower to surface less-branched events), `--events` (write per-gene splicing event catalog, off by default)
 
 ### `atroplex query` — Classify transcripts against the index
 
@@ -343,7 +346,7 @@ subcommands):
     {basename}.segment_sharing.tsv   Segment sharing summary (metrics × samples)
     {basename}.conserved_exons.tsv   Per-exon detail for exons meeting the conservation threshold (`--conserved-fraction`, default = all samples)
   splicing_hubs/
-    {basename}.splicing_hubs.tsv     Hub exons (>10 downstream branches) with per-sample PSI + entropy
+    {basename}.splicing_hubs.tsv     Hub exons (≥10 downstream branches) with per-sample PSI + entropy
     {basename}.branch_details.tsv    Per-(hub × target) branch fraction + expression
   splicing_events/                   (only with --events)
     {basename}.splicing_events.tsv   Classified events: cassette / alt-5′ / alt-3′ / IR / alt-terminal / mutex
@@ -372,7 +375,7 @@ One row per exon present in **all samples**. Per-sample columns include transcri
 
 #### Splicing Hubs (`.splicing_hubs.tsv`)
 
-Exons with more than 10 unique downstream exon targets, indicating complex alternative splicing decision points. Per-sample columns include branch counts, shared/unique classification, transcript counts, Shannon entropy, PSI, and expression.
+Exons with at least 10 unique downstream exon targets, indicating complex alternative splicing decision points. Per-sample columns include branch counts, shared/unique classification, transcript counts, Shannon entropy, PSI, and expression.
 
 #### Branch Details (`.branch_details.tsv`)
 

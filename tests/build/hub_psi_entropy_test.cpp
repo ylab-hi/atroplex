@@ -61,9 +61,9 @@ protected:
     }
 
     // Build a GTF with 12 transcripts through a hub exon E1[1000-1200],
-    // each fanning to a unique downstream exon (triggering hub detection
-    // at >10 unique targets), plus 1 transcript that bypasses the hub
-    // entirely so PSI < 1.
+    // each fanning to a unique downstream exon (well above the
+    // MIN_HUB_BRANCHES=10 hub threshold), plus 1 transcript that bypasses
+    // the hub entirely so PSI < 1.
     fs::path write_hub_fixture() {
         std::ostringstream gtf;
 
@@ -173,7 +173,7 @@ TEST_F(HubPsiEntropyTest, PsiAndEntropyCorrectForKnownHub) {
     // Parse the TSV
     auto [header, rows] = parse_tsv(hubs_path);
 
-    // Should have exactly 1 hub row (only E1 qualifies with >10 targets)
+    // Should have exactly 1 hub row (only E1 qualifies with ≥10 targets)
     ASSERT_EQ(rows.size(), 1u) << "Expected exactly 1 hub row";
 
     // Find the sample's .psi and .entropy columns
@@ -217,4 +217,167 @@ TEST_F(HubPsiEntropyTest, PsiAndEntropyCorrectForKnownHub) {
     ASSERT_GE(total_branches_col, 0);
     EXPECT_EQ(std::stoi(rows[0][total_branches_col]), 12)
         << "Hub should have 12 total downstream targets";
+}
+
+// ── Hub threshold helpers (#61) ─────────────────────────────────────
+//
+// Build a GTF where one common 5' exon fans out to `n_targets` unique
+// downstream exons (so the common exon has exactly that many branches).
+// Used by the boundary tests below.
+namespace {
+fs::path build_n_target_fixture(const fs::path& dir,
+                                const std::string& filename,
+                                int n_targets) {
+    std::ostringstream gtf;
+    gtf << "chr1\tTEST\tgene\t1000\t" << (2000 + n_targets * 1000) << "\t.\t+\t.\t"
+        << "gene_id \"G1\"; gene_name \"BoundaryGene\"; gene_biotype \"protein_coding\";\n";
+    for (int i = 0; i < n_targets; ++i) {
+        std::string tid = "T" + std::to_string(i + 1);
+        size_t e2_start = 2000 + static_cast<size_t>(i) * 1000;
+        size_t e2_end = e2_start + 200;
+        gtf << "chr1\tTEST\ttranscript\t1000\t" << e2_end << "\t.\t+\t.\t"
+            << "gene_id \"G1\"; transcript_id \"" << tid << "\";\n";
+        gtf << "chr1\tTEST\texon\t1000\t1200\t.\t+\t.\t"
+            << "gene_id \"G1\"; transcript_id \"" << tid << "\"; exon_number \"1\";\n";
+        gtf << "chr1\tTEST\texon\t" << e2_start << "\t" << e2_end << "\t.\t+\t.\t"
+            << "gene_id \"G1\"; transcript_id \"" << tid << "\"; exon_number \"2\";\n";
+    }
+    fs::path p = dir / filename;
+    std::ofstream out(p, std::ios::binary | std::ios::trunc);
+    out << gtf.str();
+    out.close();
+    return p;
+}
+
+// Build a single-sample grove from `gtf_path`. Returns the constructed
+// grove plus the segment_count so the caller can ASSERT on it.
+std::pair<std::unique_ptr<grove_type>, size_t> build_grove_from_gtf(
+    const fs::path& gtf_path, const std::string& sample_id_label
+) {
+    sample_info info(sample_id_label);
+    info.type = "sample";
+    uint32_t sample_id = sample_registry::instance().register_data(info);
+
+    auto grove = std::make_unique<grove_type>(3);
+    chromosome_exon_caches exon_caches;
+    chromosome_segment_caches segment_caches;
+    size_t segment_count = 0;
+    build_counters counters;
+    build_options test_opts;
+    test_opts.absorb = false;
+    test_opts.include_scaffolds = true;
+    build_gff::build(*grove, gtf_path, sample_id, exon_caches, segment_caches,
+                     segment_count, test_opts, counters);
+    return {std::move(grove), segment_count};
+}
+} // anonymous namespace
+
+// ── Hub threshold boundary at the default of 10 (#61) ──────────────
+//
+// Default `hub_min_branches_` is `DEFAULT_HUB_MIN_BRANCHES` (= 10) and
+// the qualification check is `unique_targets.size() >= hub_min_branches_`,
+// so an exon with exactly 10 distinct downstream targets DOES register
+// as a hub. Pins this boundary against an accidental flip to `>` (which
+// would silently exclude every locus sitting at the threshold).
+TEST_F(HubPsiEntropyTest, IsAHub_AtExactlyTenTargets) {
+    fs::path gtf_path = build_n_target_fixture(tmp_dir, "ten_targets.gtf", 10);
+    auto [grove, segment_count] = build_grove_from_gtf(gtf_path, "boundary_sample");
+    ASSERT_EQ(segment_count, 10u) << "Fixture must produce exactly 10 segments";
+
+    fs::path hubs_path = tmp_dir / "boundary_hubs.tsv";
+    fs::path branches_path = tmp_dir / "boundary_branches.tsv";
+    {
+        analysis_report report;
+        report.begin_splicing_hub_streams(hubs_path.string(), branches_path.string());
+        report.collect(*grove);
+    }
+
+    auto [header, rows] = parse_tsv(hubs_path);
+    ASSERT_EQ(rows.size(), 1u)
+        << "Exon with exactly 10 targets must register at the default threshold.";
+
+    int total_branches_col = find_col(header, "total_branches");
+    ASSERT_GE(total_branches_col, 0);
+    EXPECT_EQ(std::stoi(rows[0][total_branches_col]), 10);
+}
+
+// ── Configurable hub threshold (#61) ───────────────────────────────
+//
+// `analysis_report::set_hub_min_branches(n)` is wired to the
+// `--min-hub-branches` flag on inspect. With 5 targets and the threshold
+// raised to 6, no hub should appear; lower the threshold to 5 (exactly
+// the target count) and the same fixture must yield one hub row.
+TEST_F(HubPsiEntropyTest, ConfigurableThreshold_NarrowAndExpand) {
+    fs::path gtf_path = build_n_target_fixture(tmp_dir, "five_targets.gtf", 5);
+
+    // Threshold above the fan-out → no hubs.
+    {
+        // Reset the registry so the second build below starts cleanly.
+        sample_registry::reset();
+        auto [grove, segment_count] = build_grove_from_gtf(gtf_path, "narrow_sample");
+        ASSERT_EQ(segment_count, 5u);
+
+        fs::path hubs_path = tmp_dir / "narrow_hubs.tsv";
+        fs::path branches_path = tmp_dir / "narrow_branches.tsv";
+        {
+            analysis_report report;
+            report.set_hub_min_branches(6);
+            report.begin_splicing_hub_streams(hubs_path.string(), branches_path.string());
+            report.collect(*grove);
+        }
+        auto [_, rows] = parse_tsv(hubs_path);
+        EXPECT_TRUE(rows.empty())
+            << "5-target fixture with --min-hub-branches=6 must produce no hub rows.";
+    }
+
+    // Threshold equal to the fan-out → exactly one hub.
+    {
+        // Same fixture, fresh grove + registry so segment_index counters reset.
+        sample_registry::reset();
+        gene_registry::reset();
+        transcript_registry::reset();
+        source_registry::reset();
+        auto [grove, segment_count] = build_grove_from_gtf(gtf_path, "expand_sample");
+        ASSERT_EQ(segment_count, 5u);
+
+        fs::path hubs_path = tmp_dir / "expand_hubs.tsv";
+        fs::path branches_path = tmp_dir / "expand_branches.tsv";
+        {
+            analysis_report report;
+            report.set_hub_min_branches(5);
+            report.begin_splicing_hub_streams(hubs_path.string(), branches_path.string());
+            report.collect(*grove);
+        }
+        auto [header, rows] = parse_tsv(hubs_path);
+        ASSERT_EQ(rows.size(), 1u)
+            << "5-target fixture with --min-hub-branches=5 must register one hub.";
+        int total_branches_col = find_col(header, "total_branches");
+        ASSERT_GE(total_branches_col, 0);
+        EXPECT_EQ(std::stoi(rows[0][total_branches_col]), 5);
+    }
+}
+
+// ── Validation: --min-hub-branches < 2 is clamped to the default ────
+//
+// `set_hub_min_branches(0|1)` warns and falls back to
+// `DEFAULT_HUB_MIN_BRANCHES` because anything below 2 isn't branching.
+// A 5-target fixture with the bogus value must therefore behave like
+// the default-threshold case (no hubs, since 5 < 10).
+TEST_F(HubPsiEntropyTest, ConfigurableThreshold_BelowTwoFallsBackToDefault) {
+    fs::path gtf_path = build_n_target_fixture(tmp_dir, "five_targets_clamp.gtf", 5);
+    auto [grove, segment_count] = build_grove_from_gtf(gtf_path, "clamp_sample");
+    ASSERT_EQ(segment_count, 5u);
+
+    fs::path hubs_path = tmp_dir / "clamp_hubs.tsv";
+    fs::path branches_path = tmp_dir / "clamp_branches.tsv";
+    {
+        analysis_report report;
+        report.set_hub_min_branches(1);  // invalid → silently uses default 10
+        report.begin_splicing_hub_streams(hubs_path.string(), branches_path.string());
+        report.collect(*grove);
+    }
+    auto [_, rows] = parse_tsv(hubs_path);
+    EXPECT_TRUE(rows.empty())
+        << "Invalid --min-hub-branches must clamp to the default; with 5 < 10 "
+           "the fixture should produce no hub rows.";
 }
