@@ -444,23 +444,29 @@ TEST_F(HubPsiEntropyTest, BranchDetails_SchemaAndRowCount) {
            "(12 distinct targets in the fixture).";
 
     // Hub fields must be identical across all branch rows (one hub).
+    // We assert per-target distinctness on `target_coordinate` rather than
+    // `target_exon_id` because `exon_feature::id` is populated from the
+    // GFF `ID`/`exon_id` attribute, which the fixture doesn't set —
+    // every exon's id is the empty string. The coordinate column is
+    // populated by `format_coordinate(seqid, exon)` and is the right
+    // signal of "12 distinct targets."
     int hub_exon_id_col = find_col(header, "hub_exon_id");
     int hub_coord_col = find_col(header, "hub_coordinate");
-    int target_id_col = find_col(header, "target_exon_id");
+    int target_coord_col = find_col(header, "target_coordinate");
     ASSERT_GE(hub_exon_id_col, 0);
     ASSERT_GE(hub_coord_col, 0);
-    ASSERT_GE(target_id_col, 0);
+    ASSERT_GE(target_coord_col, 0);
 
     std::set<std::string> hub_exon_ids;
     std::set<std::string> hub_coords;
-    std::set<std::string> target_exon_ids;
+    std::set<std::string> target_coords;
     for (const auto& row : rows) {
         ASSERT_LT(static_cast<size_t>(hub_exon_id_col), row.size());
         ASSERT_LT(static_cast<size_t>(hub_coord_col), row.size());
-        ASSERT_LT(static_cast<size_t>(target_id_col), row.size());
+        ASSERT_LT(static_cast<size_t>(target_coord_col), row.size());
         hub_exon_ids.insert(row[hub_exon_id_col]);
         hub_coords.insert(row[hub_coord_col]);
-        target_exon_ids.insert(row[target_id_col]);
+        target_coords.insert(row[target_coord_col]);
 
         // The single registered sample passes every transcript through
         // the hub so every target is `.present == "1"`.
@@ -472,7 +478,7 @@ TEST_F(HubPsiEntropyTest, BranchDetails_SchemaAndRowCount) {
         << "All 12 branch rows must share one hub_exon_id.";
     EXPECT_EQ(hub_coords.size(), 1u)
         << "All 12 branch rows must share one hub_coordinate.";
-    EXPECT_EQ(target_exon_ids.size(), 12u)
-        << "Each branch row must reference a distinct target_exon_id "
-           "(12 targets, 12 unique IDs).";
+    EXPECT_EQ(target_coords.size(), 12u)
+        << "Each branch row must reference a distinct target_coordinate "
+           "(12 targets at 12 distinct downstream exon coords).";
 }

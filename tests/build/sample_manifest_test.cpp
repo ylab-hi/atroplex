@@ -124,7 +124,7 @@ TEST_F(SampleManifestTest, FieldWhitespaceTrimmed) {
     touch("a.gtf");
     auto path = write_file("manifest.tsv",
         "file\tid\tassay\n"
-        "a.gtf\t  SAMPLE_A  \t\tRNA-seq \n");
+        "a.gtf\t  SAMPLE_A  \t  RNA-seq  \n");
 
     sample_manifest manifest(path);
     ASSERT_EQ(manifest.size(), 1u);
