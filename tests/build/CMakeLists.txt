@@ -108,3 +108,14 @@ target_link_libraries(export_conserved_fraction_tests PRIVATE
 )
 
 gtest_discover_tests(export_conserved_fraction_tests WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+
+# Sample manifest parser edge cases (#61): required-column enforcement,
+# header / field whitespace tolerance, '.' empty marker, auto-inferred
+# id and replicate group, expression-attribute splitting.
+add_executable(sample_manifest_tests sample_manifest_test.cpp)
+target_link_libraries(sample_manifest_tests PRIVATE
+    atroplex_core
+    gtest gtest_main
+)
+
+gtest_discover_tests(sample_manifest_tests WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
