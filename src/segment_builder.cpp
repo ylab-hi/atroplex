@@ -106,16 +106,22 @@ void segment_builder::create_segment(
         return;
     }
 
-    // Spatial candidate lookup for absorption rules
+    // Spatial candidate lookup. Used by both the absorption rules
+    // (terminal variant, subsequence) AND gene_idx inheritance, so it
+    // must run for every transcript regardless of `absorb` or exon count
+    // — gating it on `absorb && size >= 2` previously left mono-exon
+    // sample transcripts and `--no-absorb` builds without an inheritance
+    // donor, inflating singleton-gene counts. Mono-exon candidates are
+    // valid donors of `gene_idx`; the absorption helpers skip them
+    // internally via size-mismatch checks.
     std::vector<spatial_candidate> candidates;
-    if (absorb && exon_chain.size() >= 2) {
+    {
         gdt::genomic_coordinate query_coord(strand, span_start, span_end);
         auto result = grove.intersect(query_coord, seqid);
         for (auto* candidate_key : result.get_keys()) {
             if (!is_segment(candidate_key->get_data())) continue;
             auto& seg = get_segment(candidate_key->get_data());
             if (seg.absorbed) continue;
-            if (seg.exon_count < 2) continue;
             auto chain = walk_exon_chain(grove, candidate_key, seg.segment_index);
             if (chain.empty()) continue;
             candidates.push_back({candidate_key, std::move(chain)});
