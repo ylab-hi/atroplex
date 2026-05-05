@@ -137,7 +137,7 @@ void segment_builder::create_segment(
     }
 
     // Step 3: Rules 6/7/8 — Mono-exon handling
-    if (handle_mono_exon(exon_chain, sample_id, absorb, grove, seqid, counters)) {
+    if (handle_mono_exon(exon_chain, sample_id, absorb, candidates, counters)) {
         return;
     }
 
@@ -198,9 +198,13 @@ void segment_builder::create_segment(
 
     segment_cache[structure_key] = seg_key;
 
-    // Step 6: Reverse absorption (spatial — no gene_index needed)
+    // Step 6: Reverse absorption (spatial — no gene_index needed). The
+    // candidate set we already gathered is the right input here too —
+    // the new segment we just inserted is identified by `seg_key` and
+    // skipped during the sweep, so we don't need a fresh intersect.
     if (absorb) {
-        try_reverse_absorption(grove, seg_key, exon_chain, segment_cache, seqid, fuzzy_tolerance);
+        try_reverse_absorption(grove, seg_key, exon_chain, candidates,
+                               segment_cache, seqid, fuzzy_tolerance);
     }
 }
 
@@ -239,14 +243,14 @@ bool segment_builder::try_terminal_variant_merge(
 bool segment_builder::handle_mono_exon(
     const std::vector<key_ptr>& exon_chain,
     std::optional<uint32_t> sample_id, bool absorb,
-    grove_type& grove, const std::string& seqid,
+    const std::vector<spatial_candidate>& candidates,
     build_counters& counters) {
 
     if (exon_chain.size() != 1 || is_annotation_sample(sample_id)) return false;
     if (!absorb) return true;
 
     auto& mono_coord = exon_chain.front()->get_value();
-    auto mono_class = classify_mono_exon(mono_coord, grove, seqid);
+    auto mono_class = classify_mono_exon(mono_coord, candidates);
 
     switch (mono_class) {
         case mono_exon_class::INTRON_RETENTION:
@@ -471,6 +475,7 @@ void segment_builder::try_reverse_absorption(
     grove_type& grove,
     key_ptr new_seg,
     const std::vector<key_ptr>& new_exon_chain,
+    const std::vector<spatial_candidate>& candidates,
     segment_cache_type& segment_cache,
     const std::string& seqid,
     size_t fuzzy_tolerance
@@ -483,19 +488,22 @@ void segment_builder::try_reverse_absorption(
     // Use min/max — on minus strand, front() has higher genomic coords than back()
     size_t new_start = std::min(new_first.get_start(), new_last.get_start());
     size_t new_end   = std::max(new_first.get_end(),   new_last.get_end());
-    char strand = new_first.get_strand();
 
-    gdt::genomic_coordinate query_coord(strand, new_start, new_end);
-    auto result = grove.intersect(query_coord, seqid);
-
-    for (auto* candidate_key : result.get_keys()) {
+    // Iterate the candidates `create_segment` already gathered (and walked
+    // chains for) at the same locus rather than re-issuing a fresh
+    // `grove.intersect()` post-insertion. The new segment we just inserted
+    // is excluded by key match below — `new_seg` was created after the
+    // gather and is not present in `candidates`, but the explicit check
+    // keeps the function correct under any future caller that does
+    // include the new segment.
+    for (const auto& cand : candidates) {
+        key_ptr candidate_key = cand.segment;
         if (candidate_key == new_seg) continue;
-        if (!is_segment(candidate_key->get_data())) continue;
 
         auto& candidate_seg = get_segment(candidate_key->get_data());
         if (candidate_seg.absorbed) continue;
 
-        auto cand_chain = walk_exon_chain(grove, candidate_key, candidate_seg.segment_index);
+        const auto& cand_chain = cand.exon_chain;
         if (cand_chain.empty()) continue;
 
         // Compute structure key for cache erasure on absorption
@@ -603,20 +611,19 @@ bool segment_builder::terminal_boundaries_within_tolerance(
 
 segment_builder::mono_exon_class segment_builder::classify_mono_exon(
     const gdt::genomic_coordinate& mono_coord,
-    grove_type& grove,
-    const std::string& seqid
+    const std::vector<spatial_candidate>& candidates
 ) {
-    // Spatial lookup: find all segments overlapping the mono-exon
-    auto result = grove.intersect(mono_coord, seqid);
+    // For mono-exon transcripts the create_segment gather coord equals
+    // the mono coord, so `candidates` is exactly the overlap set this
+    // classifier needs — no separate `grove.intersect()` is required.
     bool overlaps_gene = false;
 
-    for (auto* candidate_key : result.get_keys()) {
-        if (!is_segment(candidate_key->get_data())) continue;
-        auto& candidate_seg = get_segment(candidate_key->get_data());
+    for (const auto& cand : candidates) {
+        auto& candidate_seg = get_segment(cand.segment->get_data());
         if (candidate_seg.absorbed) continue;
         if (candidate_seg.exon_count < 2) continue;
 
-        auto chain = walk_exon_chain(grove, candidate_key, candidate_seg.segment_index);
+        const auto& chain = cand.exon_chain;
         if (chain.size() < 2) continue;
 
         // Check if mono-exon spans from one exon across an intron into the next
