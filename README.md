@@ -117,11 +117,14 @@ atroplex inspect -b gencode.gtf -b sample1.gtf -o results/
 # Filter to segments in >= 5 samples (annotations always kept)
 atroplex inspect -m manifest.tsv -o results/ --min-samples 5
 
+# Relax the conservation threshold: conserved == present in >= 95% of samples
+atroplex inspect -m manifest.tsv -o results/ --conserved-fraction 0.95
+
 # Include splicing event catalog (cassette, alt-5'/3', IR, etc.)
 atroplex inspect -m manifest.tsv -o results/ --events
 ```
 
-Inspect-specific options: `--min-samples` (skip segments in < N samples, annotations always kept), `--events` (write per-gene splicing event catalog, off by default)
+Inspect-specific options: `--min-samples` (skip segments in < N samples, annotations always kept), `--conserved-fraction <(0,1]>` (fraction of sample-typed entries a feature must appear in to be classified as conserved; default `1.0` = strict "in every sample"; relax for a dropout-tolerant conserved core), `--events` (write per-gene splicing event catalog, off by default)
 
 ### `atroplex query` — Classify transcripts against the index
 
@@ -160,11 +163,14 @@ atroplex export -g index_dir/ --sample HL60_M1_rep1 --biotype protein_coding
 # Export conserved features in a genomic region
 atroplex export -g index_dir/ --region chr22:10000000-15000000 --conserved-only
 
+# Export the dropout-tolerant conserved core (segments in >= 95% of samples)
+atroplex export -g index_dir/ --conserved-only --conserved-fraction 0.95
+
 # Export features present in at least 3 samples, from HAVANA
 atroplex export -g index_dir/ --min-samples 3 --source HAVANA
 ```
 
-Export-specific options: `--sample`, `--gene`, `--region chr:start-end`, `--min-samples`, `--conserved-only`, `--biotype`, `--source` (all filters are AND'd).
+Export-specific options: `--sample`, `--gene`, `--region chr:start-end`, `--min-samples`, `--conserved-only`, `--conserved-fraction <(0,1]>` (sample-typed-entry fraction the segment must hit for `--conserved-only`; default `1.0` = strict; mirrors the inspect convention with annotations excluded from the denominator), `--biotype`, `--source` (all filters are AND'd).
 
 ### `atroplex compact` — Compact a built index
 
@@ -229,7 +235,7 @@ strtie1.gtf	STRTIE_01	sample	RNA-seq	brain	healthy	Homo sapiens	Illumina NovaSeq
 - Optional `group` column for replicate grouping; if absent, groups are auto-inferred by stripping `_repNN` suffix from sample IDs
 - Optional `expression_attribute` column declares which GFF attributes carry quantitative expression for this sample: `counts`, `TPM`, `FPKM`, `RPKM`, `cov`, or a comma-separated list like `cov,TPM` for StringTie samples that carry multiple quantifications. Empty or `.` means no expression filtering for the sample. The FIRST declared attribute is what gets stored per-feature and appears in per-sample output column headers (e.g., `SAMPLE1.counts`, `STRTIE_01.cov`)
 
-The `type` field matters: only entries with `type = "sample"` count toward "conserved" thresholds (features present in ALL samples). Reference annotations participate in structural analysis but don't inflate sample counts.
+The `type` field matters: only entries with `type = "sample"` count toward "conserved" thresholds. By default a feature is conserved when it is present in every sample-typed entry; relax with `--conserved-fraction` (e.g. `0.95` for a dropout-tolerant core). Reference annotations participate in structural analysis but don't inflate sample counts.
 
 ### GFF/GTF Files
 
@@ -335,7 +341,7 @@ subcommands):
   sharing/
     {basename}.exon_sharing.tsv      Exon sharing summary (metrics × samples)
     {basename}.segment_sharing.tsv   Segment sharing summary (metrics × samples)
-    {basename}.conserved_exons.tsv   Per-exon detail for exons conserved in all samples
+    {basename}.conserved_exons.tsv   Per-exon detail for exons meeting the conservation threshold (`--conserved-fraction`, default = all samples)
   splicing_hubs/
     {basename}.splicing_hubs.tsv     Hub exons (>10 downstream branches) with per-sample PSI + entropy
     {basename}.branch_details.tsv    Per-(hub × target) branch fraction + expression
@@ -352,7 +358,7 @@ Metrics as rows, samples as columns, plus a `total` column:
 | `total` | Total exons in this sample |
 | `exclusive` | Exons only in this sample |
 | `shared` | Exons in 2+ but not all samples |
-| `conserved` | Exons in ALL samples |
+| `conserved` | Exons meeting the conservation threshold (`--conserved-fraction`, default = all samples) |
 | `constitutive` | Exons in all transcripts of their gene |
 | `alternative` | Exons in only some transcripts of their gene |
 
