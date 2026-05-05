@@ -1,0 +1,15 @@
+##id: rule0_fsm_neg_strand
+##description: Rule 0 - FSM (identical exon structure) on the negative strand.
+##description: Two transcripts with identical exon coordinates but on the `-`
+##description: strand. They must merge into one segment exactly like the
+##description: positive-strand variant — strand-aware spatial intersect plus
+##description: the structure-key hash should still produce a single live entry.
+chr1	TEST	gene	1000	5000	.	-	.	gene_id "G1"; gene_name "TestGene"; gene_biotype "protein_coding";
+chr1	TEST	transcript	1000	5000	.	-	.	gene_id "G1"; transcript_id "TX_A"; gene_name "TestGene"; gene_biotype "protein_coding";
+chr1	TEST	exon	1000	1200	.	-	.	gene_id "G1"; transcript_id "TX_A"; exon_number "1";
+chr1	TEST	exon	2000	2300	.	-	.	gene_id "G1"; transcript_id "TX_A"; exon_number "2";
+chr1	TEST	exon	3500	3800	.	-	.	gene_id "G1"; transcript_id "TX_A"; exon_number "3";
+chr1	TEST	transcript	1000	3800	.	-	.	gene_id "G1"; transcript_id "TX_B"; gene_name "TestGene"; gene_biotype "protein_coding";
+chr1	TEST	exon	1000	1200	.	-	.	gene_id "G1"; transcript_id "TX_B"; exon_number "1";
+chr1	TEST	exon	2000	2300	.	-	.	gene_id "G1"; transcript_id "TX_B"; exon_number "2";
+chr1	TEST	exon	3500	3800	.	-	.	gene_id "G1"; transcript_id "TX_B"; exon_number "3";

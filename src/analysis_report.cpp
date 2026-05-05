@@ -208,7 +208,7 @@ void analysis_report::process_exon_visit(key_ptr exon_key,
         // query ALL outgoing EXON_TO_EXON edges (not
         // filtered to the current segment) so we see the
         // full branching fan-out. Deduplicate targets,
-        // register as pending if size > MIN_HUB_BRANCHES.
+        // register as pending if size >= MIN_HUB_BRANCHES.
         if (hub_stream && hub_stream->is_open()) {
             auto all_next = grove.get_neighbors_if(exon_key,
                 [](const edge_metadata& e) {
@@ -216,7 +216,7 @@ void analysis_report::process_exon_visit(key_ptr exon_key,
                 });
             std::unordered_set<key_ptr> unique_targets(
                 all_next.begin(), all_next.end());
-            if (unique_targets.size() > MIN_HUB_BRANCHES) {
+            if (unique_targets.size() >= MIN_HUB_BRANCHES) {
                 pending_hub ph;
                 ph.exon = exon_key;
                 ph.targets.assign(unique_targets.begin(), unique_targets.end());

@@ -61,9 +61,9 @@ protected:
     }
 
     // Build a GTF with 12 transcripts through a hub exon E1[1000-1200],
-    // each fanning to a unique downstream exon (triggering hub detection
-    // at >10 unique targets), plus 1 transcript that bypasses the hub
-    // entirely so PSI < 1.
+    // each fanning to a unique downstream exon (well above the
+    // MIN_HUB_BRANCHES=10 hub threshold), plus 1 transcript that bypasses
+    // the hub entirely so PSI < 1.
     fs::path write_hub_fixture() {
         std::ostringstream gtf;
 
@@ -173,7 +173,7 @@ TEST_F(HubPsiEntropyTest, PsiAndEntropyCorrectForKnownHub) {
     // Parse the TSV
     auto [header, rows] = parse_tsv(hubs_path);
 
-    // Should have exactly 1 hub row (only E1 qualifies with >10 targets)
+    // Should have exactly 1 hub row (only E1 qualifies with ≥10 targets)
     ASSERT_EQ(rows.size(), 1u) << "Expected exactly 1 hub row";
 
     // Find the sample's .psi and .entropy columns
@@ -217,4 +217,71 @@ TEST_F(HubPsiEntropyTest, PsiAndEntropyCorrectForKnownHub) {
     ASSERT_GE(total_branches_col, 0);
     EXPECT_EQ(std::stoi(rows[0][total_branches_col]), 12)
         << "Hub should have 12 total downstream targets";
+}
+
+// ── Hub threshold boundary (#61) ────────────────────────────────────
+//
+// `MIN_HUB_BRANCHES = 10` paired with `unique_targets.size() >= MIN_HUB_BRANCHES`
+// means an exon with exactly 10 distinct downstream targets DOES register
+// as a hub. Pins this boundary against an accidental flip to `>` (which
+// would silently exclude every locus sitting at the threshold).
+TEST_F(HubPsiEntropyTest, IsAHub_AtExactlyTenTargets) {
+    std::ostringstream gtf;
+    gtf << "chr1\tTEST\tgene\t1000\t25000\t.\t+\t.\t"
+        << "gene_id \"G1\"; gene_name \"BoundaryGene\"; gene_biotype \"protein_coding\";\n";
+
+    // 10 transcripts through hub exon E1[1000-1200], each fanning to a
+    // distinct downstream exon → exactly 10 unique targets.
+    for (int i = 0; i < 10; ++i) {
+        std::string tid = "T" + std::to_string(i + 1);
+        size_t e2_start = 2000 + static_cast<size_t>(i) * 1000;
+        size_t e2_end = e2_start + 200;
+
+        gtf << "chr1\tTEST\ttranscript\t1000\t" << e2_end << "\t.\t+\t.\t"
+            << "gene_id \"G1\"; transcript_id \"" << tid << "\";\n";
+        gtf << "chr1\tTEST\texon\t1000\t1200\t.\t+\t.\t"
+            << "gene_id \"G1\"; transcript_id \"" << tid << "\"; exon_number \"1\";\n";
+        gtf << "chr1\tTEST\texon\t" << e2_start << "\t" << e2_end << "\t.\t+\t.\t"
+            << "gene_id \"G1\"; transcript_id \"" << tid << "\"; exon_number \"2\";\n";
+    }
+
+    fs::path gtf_path = write_gtf("ten_targets.gtf", gtf.str());
+
+    sample_info info("boundary_sample");
+    info.type = "sample";
+    uint32_t sample_id = sample_registry::instance().register_data(info);
+
+    grove_type grove(3);
+    chromosome_exon_caches exon_caches;
+    chromosome_segment_caches segment_caches;
+    size_t segment_count = 0;
+    build_counters counters;
+    build_options test_opts;
+    test_opts.absorb = false;
+    test_opts.include_scaffolds = true;
+
+    build_gff::build(grove, gtf_path, sample_id, exon_caches, segment_caches,
+                     segment_count, test_opts, counters);
+    ASSERT_EQ(segment_count, 10u) << "Fixture must produce exactly 10 segments";
+
+    fs::path hubs_path = tmp_dir / "boundary_hubs.tsv";
+    fs::path branches_path = tmp_dir / "boundary_branches.tsv";
+
+    {
+        analysis_report report;
+        report.begin_splicing_hub_streams(hubs_path.string(), branches_path.string());
+        report.collect(grove);
+    }
+
+    ASSERT_TRUE(fs::exists(hubs_path));
+    auto [header, rows] = parse_tsv(hubs_path);
+    ASSERT_EQ(rows.size(), 1u)
+        << "Exon with exactly MIN_HUB_BRANCHES (10) targets must register "
+        << "as a hub — the qualification check is `>= MIN_HUB_BRANCHES`. "
+        << "Got " << rows.size() << " hub row(s).";
+
+    int total_branches_col = find_col(header, "total_branches");
+    ASSERT_GE(total_branches_col, 0);
+    EXPECT_EQ(std::stoi(rows[0][total_branches_col]), 10)
+        << "The boundary hub must report exactly 10 downstream branches.";
 }

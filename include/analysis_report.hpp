@@ -186,7 +186,7 @@ struct analysis_report {
 
     // ── Phase 8.3: splicing hub streams ─────────────────────────────
     //
-    // Hub exons (>MIN_HUB_BRANCHES unique downstream exons) are detected
+    // Hub exons (≥MIN_HUB_BRANCHES unique downstream exons) are detected
     // on the exon chain walk and buffered per-gene in gene_acc; rows are
     // written at gene finalization. Temporary per-sample vectors are
     // reused across hubs so peak memory stays at O(num_samples), not

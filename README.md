@@ -343,7 +343,7 @@ subcommands):
     {basename}.segment_sharing.tsv   Segment sharing summary (metrics × samples)
     {basename}.conserved_exons.tsv   Per-exon detail for exons meeting the conservation threshold (`--conserved-fraction`, default = all samples)
   splicing_hubs/
-    {basename}.splicing_hubs.tsv     Hub exons (>10 downstream branches) with per-sample PSI + entropy
+    {basename}.splicing_hubs.tsv     Hub exons (≥10 downstream branches) with per-sample PSI + entropy
     {basename}.branch_details.tsv    Per-(hub × target) branch fraction + expression
   splicing_events/                   (only with --events)
     {basename}.splicing_events.tsv   Classified events: cassette / alt-5′ / alt-3′ / IR / alt-terminal / mutex
@@ -372,7 +372,7 @@ One row per exon present in **all samples**. Per-sample columns include transcri
 
 #### Splicing Hubs (`.splicing_hubs.tsv`)
 
-Exons with more than 10 unique downstream exon targets, indicating complex alternative splicing decision points. Per-sample columns include branch counts, shared/unique classification, transcript counts, Shannon entropy, PSI, and expression.
+Exons with at least 10 unique downstream exon targets, indicating complex alternative splicing decision points. Per-sample columns include branch counts, shared/unique classification, transcript counts, Shannon entropy, PSI, and expression.
 
 #### Branch Details (`.branch_details.tsv`)
 

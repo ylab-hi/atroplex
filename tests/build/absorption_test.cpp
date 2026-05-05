@@ -414,3 +414,41 @@ TEST_F(AbsorptionTest, CrossSampleInheritance_MonoExonInheritsFromMultiExon) {
         << "donor's gene_idx via spatial overlap, but found "
         << distinct_gene_idx.size() << " distinct gene_idx values.";
 }
+
+// ── Negative-strand coverage (#61) ──────────────────────────────────
+//
+// All other absorption fixtures use the `+` strand. These tests assert
+// that the rules that have no biological strand-asymmetry (Rule 0 FSM,
+// Rule 7 mono-exon intron retention) behave identically on `-` strand.
+// Rules whose 5'/3' labels depend on chain ordering (Rules 1/2/3/4)
+// are deliberately not duplicated here — the chain is genomic-
+// coordinate-ordered, so on `-` strand "ISM_5PRIME" in the classifier
+// labels what is biologically a 3'-end-aligned subsequence and vice
+// versa. That asymmetry should be addressed in a separate change.
+
+TEST_F(AbsorptionTest, Rule0_FSM_Merge_NegativeStrand) {
+    auto result = build_fixture("rule0_fsm_neg_strand.gtf");
+
+    // Identical exon structure on `-` strand should merge into one segment,
+    // exactly as it does on `+` strand.
+    EXPECT_EQ(result.live_segments, 1)
+        << "FSM on negative strand should merge into one segment";
+    EXPECT_EQ(result.live_transcript_count, 2)
+        << "Both transcript IDs should land on the merged segment";
+    EXPECT_EQ(result.total_absorbed_into, 0)
+        << "FSM merges metadata, not absorption — count must stay 0";
+}
+
+TEST_F(AbsorptionTest, Rule7_MonoExonIntronRetention_Kept_NegativeStrand) {
+    auto result = build_fixture("rule7_intron_retention_neg_strand.gtf");
+
+    // Multi-exon parent on `-` strand + a mono-exon transcript that spans
+    // its first intron → INTRON_RETENTION → kept as its own segment.
+    // classify_mono_exon walks the parent chain in genomic-coordinate
+    // order, so the same exon→intron→next-exon detection fires regardless
+    // of strand.
+    EXPECT_EQ(result.live_segments, 2)
+        << "Mono-exon spanning an intron on `-` strand should be kept";
+    EXPECT_EQ(result.total_absorbed_into, 0)
+        << "Rule 7 keeps as a separate segment, not absorbs";
+}
