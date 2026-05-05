@@ -1,0 +1,10 @@
+##id: cross_sample_mono_recipient
+##description: Sample B mono-exon recipient (gene_id NOVEL_RECIPIENT) at chr1:10500-12500.
+##description: Spans the donor's intron (chr1:11001-11999), so classify_mono_exon
+##description: returns INTRON_RETENTION and the segment is created (not dropped).
+##description: With the inheritance fix, B's segment adopts NOVEL_DONOR's gene_idx
+##description: from the spatially-overlapping multi-exon segment; without the fix,
+##description: candidates is empty for size-1 transcripts and B keeps its own
+##description: gene_idx, inflating singleton-gene counts.
+chr1	TEST	transcript	10500	12500	.	+	.	gene_id "NOVEL_RECIPIENT"; transcript_id "TX_MONO";
+chr1	TEST	exon	10500	12500	.	+	.	gene_id "NOVEL_RECIPIENT"; transcript_id "TX_MONO"; exon_number "1";
