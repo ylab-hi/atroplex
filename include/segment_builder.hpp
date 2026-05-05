@@ -134,20 +134,6 @@ public:
         quant_sidecar::SampleStreamWriter* sidecar_writer = nullptr
     );
 
-    /**
-     * Reverse absorption: apply Rules 0/2/3/4/5 to existing segments
-     * when a new (potentially longer) segment is created. Candidates
-     * are found spatially via grove.intersect(), not by gene_id.
-     */
-    static void try_reverse_absorption(
-        grove_type& grove,
-        key_ptr new_seg,
-        const std::vector<key_ptr>& new_exon_chain,
-        segment_cache_type& segment_cache,
-        const std::string& seqid,
-        size_t fuzzy_tolerance = 5
-    );
-
     // ── Absorption rule helpers ─────────────────────────────────────
 
     /** Rule 5: Check if two exon chains share the same intron chain */
@@ -163,13 +149,8 @@ public:
         size_t tolerance_bp = 50
     );
 
-    /** Rules 6/7/8: Classify a mono-exon transcript */
+    /** Mono-exon classification labels (Rules 6/7/8) */
     enum class mono_exon_class { GENE_OVERLAP, INTRON_RETENTION, INTERGENIC };
-    [[nodiscard]] static mono_exon_class classify_mono_exon(
-        const gdt::genomic_coordinate& mono_coord,
-        grove_type& grove,
-        const std::string& seqid
-    );
 
     /** Check if the given sample_id corresponds to a reference annotation */
     [[nodiscard]] static bool is_annotation_sample(std::optional<uint32_t> sample_id);
@@ -182,6 +163,35 @@ private:
         key_ptr segment;
         std::vector<key_ptr> exon_chain;
     };
+
+    /**
+     * Reverse absorption: apply Rules 0/2/3/4/5 to existing segments
+     * when a new (potentially longer) segment is created. Iterates the
+     * `candidates` vector already gathered by `create_segment` rather
+     * than re-issuing a `grove.intersect()` post-insertion — the new
+     * segment is identified by `new_seg` and skipped during the sweep.
+     */
+    static void try_reverse_absorption(
+        grove_type& grove,
+        key_ptr new_seg,
+        const std::vector<key_ptr>& new_exon_chain,
+        const std::vector<spatial_candidate>& candidates,
+        segment_cache_type& segment_cache,
+        const std::string& seqid,
+        size_t fuzzy_tolerance = 5
+    );
+
+    /**
+     * Rules 6/7/8: classify a mono-exon transcript using already-gathered
+     * spatial candidates. For mono-exon transcripts the create_segment
+     * gather coord equals the mono coord, so the candidate set is
+     * exactly the overlap set this classifier needs — no separate
+     * `grove.intersect()` is required.
+     */
+    [[nodiscard]] static mono_exon_class classify_mono_exon(
+        const gdt::genomic_coordinate& mono_coord,
+        const std::vector<spatial_candidate>& candidates
+    );
 
     /** Rule 5: try merging as terminal variant (same intron chain, TSS/TES <50bp) */
     [[nodiscard]] static bool try_terminal_variant_merge(
@@ -197,7 +207,7 @@ private:
     [[nodiscard]] static bool handle_mono_exon(
         const std::vector<key_ptr>& exon_chain,
         std::optional<uint32_t> sample_id, bool absorb,
-        grove_type& grove, const std::string& seqid,
+        const std::vector<spatial_candidate>& candidates,
         build_counters& counters);
 
     /** Rules 0(fuzzy)/1/2/3/4: try subsequence absorption. Returns true if absorbed. */
