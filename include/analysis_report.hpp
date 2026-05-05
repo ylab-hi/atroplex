@@ -184,19 +184,30 @@ struct analysis_report {
      */
     void set_conserved_fraction(double fraction);
 
+    /**
+     * Set the minimum number of unique downstream exon targets required
+     * for an exon to register as a splicing hub. Default is
+     * `DEFAULT_HUB_MIN_BRANCHES` (= 10); raise to narrow the catalog when
+     * hubs are abundant, lower to surface less-branched decision points.
+     * Validated to be >= 2 — anything below that is just a linear chain,
+     * not a branching event. Must be called before collect().
+     */
+    void set_hub_min_branches(size_t n);
+
     // ── Phase 8.3: splicing hub streams ─────────────────────────────
     //
-    // Hub exons (≥MIN_HUB_BRANCHES unique downstream exons) are detected
-    // on the exon chain walk and buffered per-gene in gene_acc; rows are
-    // written at gene finalization. Temporary per-sample vectors are
-    // reused across hubs so peak memory stays at O(num_samples), not
-    // O(num_hubs × num_samples).
+    // Hub exons (≥ hub_min_branches_ unique downstream exons) are
+    // detected on the exon chain walk and buffered per-gene in gene_acc;
+    // rows are written at gene finalization. Temporary per-sample
+    // vectors are reused across hubs so peak memory stays at
+    // O(num_samples), not O(num_hubs × num_samples).
     std::unique_ptr<std::ofstream> hub_stream;
     std::unique_ptr<std::ofstream> branch_stream;
     std::vector<uint32_t> hub_stream_sample_ids;   // parallel labels
     std::vector<bool> hub_stream_is_sample;
     bool hub_emit_expression = false;              // emit per-sample expression columns when qtx reader available
-    static constexpr size_t MIN_HUB_BRANCHES = 10;
+    static constexpr size_t DEFAULT_HUB_MIN_BRANCHES = 10;
+    size_t hub_min_branches_ = DEFAULT_HUB_MIN_BRANCHES;
 
     /**
      * Open the splicing hubs TSV and branch details TSV, write their

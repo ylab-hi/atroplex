@@ -120,11 +120,14 @@ atroplex inspect -m manifest.tsv -o results/ --min-samples 5
 # Relax the conservation threshold: conserved == present in >= 95% of samples
 atroplex inspect -m manifest.tsv -o results/ --conserved-fraction 0.95
 
+# Narrow the hub catalog (only exons with >= 20 distinct downstream targets)
+atroplex inspect -m manifest.tsv -o results/ --min-hub-branches 20
+
 # Include splicing event catalog (cassette, alt-5'/3', IR, etc.)
 atroplex inspect -m manifest.tsv -o results/ --events
 ```
 
-Inspect-specific options: `--min-samples` (skip segments in < N samples, annotations always kept), `--conserved-fraction <(0,1]>` (fraction of sample-typed entries a feature must appear in to be classified as conserved; default `1.0` = strict "in every sample"; relax for a dropout-tolerant conserved core), `--events` (write per-gene splicing event catalog, off by default)
+Inspect-specific options: `--min-samples` (skip segments in < N samples, annotations always kept), `--conserved-fraction <(0,1]>` (fraction of sample-typed entries a feature must appear in to be classified as conserved; default `1.0` = strict "in every sample"; relax for a dropout-tolerant conserved core), `--min-hub-branches <N>` (minimum unique downstream targets for an exon to register as a splicing hub; must be `>= 2`; default `10`; raise to narrow the catalog when hubs are abundant, lower to surface less-branched events), `--events` (write per-gene splicing event catalog, off by default)
 
 ### `atroplex query` — Classify transcripts against the index
 

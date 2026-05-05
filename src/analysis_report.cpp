@@ -208,7 +208,7 @@ void analysis_report::process_exon_visit(key_ptr exon_key,
         // query ALL outgoing EXON_TO_EXON edges (not
         // filtered to the current segment) so we see the
         // full branching fan-out. Deduplicate targets,
-        // register as pending if size >= MIN_HUB_BRANCHES.
+        // register as pending if size >= hub_min_branches_.
         if (hub_stream && hub_stream->is_open()) {
             auto all_next = grove.get_neighbors_if(exon_key,
                 [](const edge_metadata& e) {
@@ -216,7 +216,7 @@ void analysis_report::process_exon_visit(key_ptr exon_key,
                 });
             std::unordered_set<key_ptr> unique_targets(
                 all_next.begin(), all_next.end());
-            if (unique_targets.size() >= MIN_HUB_BRANCHES) {
+            if (unique_targets.size() >= hub_min_branches_) {
                 pending_hub ph;
                 ph.exon = exon_key;
                 ph.targets.assign(unique_targets.begin(), unique_targets.end());
@@ -1185,6 +1185,20 @@ void analysis_report::set_conserved_fraction(double fraction) {
         return;
     }
     conserved_fraction_ = fraction;
+}
+
+void analysis_report::set_hub_min_branches(size_t n) {
+    // n < 2 isn't branching — a single downstream exon is just the next
+    // node on a linear chain. Clamp to the default rather than silently
+    // accept a degenerate setting.
+    if (n < 2) {
+        logging::warning("Invalid --min-hub-branches (" + std::to_string(n) +
+                         "); must be >= 2. Using default (" +
+                         std::to_string(DEFAULT_HUB_MIN_BRANCHES) + ").");
+        hub_min_branches_ = DEFAULT_HUB_MIN_BRANCHES;
+        return;
+    }
+    hub_min_branches_ = n;
 }
 
 void analysis_report::begin_conserved_segment_stream(const std::string& path,
