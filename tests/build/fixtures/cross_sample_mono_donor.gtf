@@ -1,0 +1,9 @@
+##id: cross_sample_mono_donor
+##description: Sample A multi-exon donor (gene_id NOVEL_DONOR) at chr1:10000-13000.
+##description: Two exons with an intron between them so a mono-exon transcript
+##description: that spans the intron classifies as INTRON_RETENTION (kept), and
+##description: the multi-exon segment is then a valid spatial-overlap donor of
+##description: gene_idx for that mono-exon recipient.
+chr1	TEST	transcript	10000	13000	.	+	.	gene_id "NOVEL_DONOR"; transcript_id "TX_DONOR";
+chr1	TEST	exon	10000	11000	.	+	.	gene_id "NOVEL_DONOR"; transcript_id "TX_DONOR"; exon_number "1";
+chr1	TEST	exon	12000	13000	.	+	.	gene_id "NOVEL_DONOR"; transcript_id "TX_DONOR"; exon_number "2";

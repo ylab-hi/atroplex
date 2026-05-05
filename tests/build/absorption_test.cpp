@@ -362,3 +362,55 @@ TEST_F(AbsorptionTest, CrossSampleInheritance_NovelLocus) {
         << "spatial overlap, but found " << distinct_gene_idx.size()
         << " distinct gene_idx values.";
 }
+
+// ── Mono-exon gene_idx inheritance via spatial overlap (#75) ────────
+//
+// Before the fix, candidate gathering was gated on
+// `absorb && exon_chain.size() >= 2`, so mono-exon sample transcripts
+// hit `apply_gene_idx_inheritance` with an empty candidates list and
+// always created a fresh gene_idx. On a 21K-sample build that left
+// ~845K mono-exon segments as singleton genes that should have inherited
+// from spatially-overlapping multi-exon parents.
+//
+// Sample A: 2-exon segment at chr1:10000-13000 (NOVEL_DONOR), intron
+//           at 11001-11999.
+// Sample B: mono-exon at chr1:10500-12500 (NOVEL_RECIPIENT), spans the
+//           donor's intron → classify_mono_exon returns INTRON_RETENTION
+//           → the segment is created (not dropped).
+//
+// With the fix, B's mono-exon segment inherits NOVEL_DONOR's gene_idx;
+// without the fix, the two segments live with two separate gene_idx
+// entries.
+TEST_F(AbsorptionTest, CrossSampleInheritance_MonoExonInheritsFromMultiExon) {
+    auto result = build_two_fixtures("cross_sample_mono_donor.gtf",     false,
+                                     "cross_sample_mono_recipient.gtf", false);
+
+    ASSERT_EQ(result.live_segments, 2)
+        << "Expected 2 live segments (multi-exon donor + mono-exon recipient).";
+
+    std::set<uint32_t> distinct_gene_idx;
+    auto roots = result.grove->get_root_nodes();
+    for (auto& [seqid, root] : roots) {
+        if (!root) continue;
+        auto* node = root;
+        while (!node->get_is_leaf()) {
+            auto& children = node->get_children();
+            if (children.empty()) break;
+            node = children[0];
+        }
+        while (node) {
+            for (auto* key : node->get_keys()) {
+                auto& feature = key->get_data();
+                if (!is_segment(feature)) continue;
+                auto& seg = get_segment(feature);
+                if (!seg.absorbed) distinct_gene_idx.insert(seg.gene_idx);
+            }
+            node = node->get_next();
+        }
+    }
+
+    EXPECT_EQ(distinct_gene_idx.size(), 1u)
+        << "Mono-exon sample transcript should inherit the multi-exon "
+        << "donor's gene_idx via spatial overlap, but found "
+        << distinct_gene_idx.size() << " distinct gene_idx values.";
+}
