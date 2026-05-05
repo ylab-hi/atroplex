@@ -49,6 +49,12 @@ private:
         std::optional<region_spec> region;
         size_t min_samples = 0;
         bool conserved_only = false;
+        /// Fraction in (0, 1] of `type == "sample"` registry entries that a
+        /// segment must be present in to satisfy `--conserved-only`. Default
+        /// 1.0 = strict "in every sample". Mirrors the inspect convention
+        /// (annotations excluded from the denominator). Only consulted when
+        /// `conserved_only` is true.
+        double conserved_fraction = 1.0;
         std::unordered_set<std::string> biotypes;
         std::unordered_set<std::string> sources;
     };

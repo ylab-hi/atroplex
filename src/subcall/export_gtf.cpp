@@ -11,6 +11,7 @@
 #include "subcall/export_gtf.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <filesystem>
 #include <fstream>
 #include <map>
@@ -85,7 +86,15 @@ cxxopts::Options export_gtf::parse_args(int argc, char** argv) {
             cxxopts::value<std::string>())
         ("min-samples", "Only export features present in >= N samples",
             cxxopts::value<size_t>()->default_value("0"))
-        ("conserved-only", "Only export features present in ALL samples")
+        ("conserved-only", "Only export features satisfying the conservation "
+            "threshold. Pair with --conserved-fraction to relax the strict "
+            "default. Without --conserved-fraction this means present in every "
+            "sample-typed entry (annotations excluded).")
+        ("conserved-fraction", "Fraction of sample-typed entries (0,1] a segment "
+            "must appear in to satisfy --conserved-only. Default 1.0 = strict. "
+            "Mirrors the inspect convention so the two subcommands agree on "
+            "what 'conserved' means.",
+            cxxopts::value<double>()->default_value("1.0"))
         ("biotype", "Filter by gene biotype (e.g., protein_coding)",
             cxxopts::value<std::vector<std::string>>())
         ("source", "Filter by GFF source (e.g., HAVANA, TALON)",
@@ -104,6 +113,14 @@ void export_gtf::validate(const cxxopts::ParseResult& args) {
     if (args.count("region")) {
         [[maybe_unused]] auto _ = parse_region(args["region"].as<std::string>());
     }
+
+    if (args.count("conserved-fraction")) {
+        double f = args["conserved-fraction"].as<double>();
+        if (!(f > 0.0 && f <= 1.0)) {
+            throw std::runtime_error(
+                "--conserved-fraction must be in (0, 1]; got " + std::to_string(f));
+        }
+    }
 }
 
 void export_gtf::parse_filters(const cxxopts::ParseResult& args) {
@@ -120,6 +137,7 @@ void export_gtf::parse_filters(const cxxopts::ParseResult& args) {
     }
     filters_.min_samples = args["min-samples"].as<size_t>();
     filters_.conserved_only = args.count("conserved-only") > 0;
+    filters_.conserved_fraction = args["conserved-fraction"].as<double>();
     if (args.count("biotype")) {
         auto bt = args["biotype"].as<std::vector<std::string>>();
         filters_.biotypes.insert(bt.begin(), bt.end());
@@ -168,6 +186,11 @@ void export_gtf::execute(const cxxopts::ParseResult& args) {
 
     // Determine which samples to export
     size_t total_samples = 0;
+    // Conservation denominator — only `type == "sample"` entries count, so
+    // the threshold matches what `inspect` enforces. `total_samples` (above)
+    // also includes annotations and is kept separate for the export-iteration
+    // log message.
+    size_t sample_typed_count = 0;
     std::vector<uint32_t> export_sample_ids;
     auto& registry = sample_registry::instance();
 
@@ -175,6 +198,7 @@ void export_gtf::execute(const cxxopts::ParseResult& args) {
         const auto& info = registry.get(static_cast<uint32_t>(i));
         if (info.type == "replicate") continue;
         total_samples++;
+        if (info.type == "sample") sample_typed_count++;
 
         if (!filters_.sample_ids.empty() && !filters_.sample_ids.count(info.id))
             continue;
@@ -189,6 +213,24 @@ void export_gtf::execute(const cxxopts::ParseResult& args) {
 
     logging::info("Exporting " + std::to_string(export_sample_ids.size()) +
                   " sample(s) from index (" + std::to_string(total_samples) + " total)");
+
+    // Translate --conserved-fraction into a concrete sample-count threshold.
+    // ceil so fractions just below 1.0 still demand nearly every sample;
+    // floor at 1 so an empty sample-typed registry never silently classifies
+    // every segment as conserved (the default sample_idx.count() == 0 would
+    // otherwise satisfy is_conserved(0)).
+    size_t conserved_min_required = 0;
+    if (filters_.conserved_only) {
+        conserved_min_required = static_cast<size_t>(std::ceil(
+            static_cast<double>(sample_typed_count) * filters_.conserved_fraction));
+        if (conserved_min_required < 1) conserved_min_required = 1;
+        if (filters_.conserved_fraction < 1.0) {
+            logging::info("Conservation threshold: "
+                + std::to_string(conserved_min_required) + " / "
+                + std::to_string(sample_typed_count) + " samples (fraction="
+                + std::to_string(filters_.conserved_fraction) + ")");
+        }
+    }
 
     // Collect per-sample data in one grove walk
     // sample_id -> gene_id -> gene_entry
@@ -237,7 +279,7 @@ void export_gtf::execute(const cxxopts::ParseResult& args) {
                 // Min-samples / conserved
                 if (filters_.min_samples > 0 && seg.sample_count() < filters_.min_samples)
                     continue;
-                if (filters_.conserved_only && !seg.is_conserved(total_samples))
+                if (filters_.conserved_only && !seg.is_conserved(conserved_min_required))
                     continue;
 
                 // Biotype filter
