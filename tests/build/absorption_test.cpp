@@ -452,3 +452,89 @@ TEST_F(AbsorptionTest, Rule7_MonoExonIntronRetention_Kept_NegativeStrand) {
     EXPECT_EQ(result.total_absorbed_into, 0)
         << "Rule 7 keeps as a separate segment, not absorbs";
 }
+
+// ── Multi-gene fixture coverage (#61) ───────────────────────────────
+//
+// Existing fixtures all carry a single gene per file. These two add
+// the multi-gene cases the audit called out: distinct genes with
+// non-overlapping spans on the same strand, and distinct genes
+// overlapping at the same coordinates but on opposite strands.
+
+TEST_F(AbsorptionTest, MultiGene_Adjacent_DistinctGeneIdx) {
+    // G1 at chr1:1000-3000 and G2 at chr1:5000-7000 — both annotated,
+    // both `+` strand, spans don't overlap. Spatial intersect on G1
+    // never returns G2 (or vice versa), so each transcript keeps its
+    // own annotated gene_idx.
+    auto result = build_fixture("multi_gene_adjacent.gtf",
+                                /*absorb=*/true, /*as_annotation=*/true);
+
+    ASSERT_EQ(result.live_segments, 2)
+        << "Two non-overlapping genes must produce two distinct segments.";
+
+    std::set<uint32_t> gene_idx_set;
+    auto roots = result.grove->get_root_nodes();
+    for (auto& [seqid, root] : roots) {
+        if (!root) continue;
+        auto* node = root;
+        while (!node->get_is_leaf()) {
+            auto& children = node->get_children();
+            if (children.empty()) break;
+            node = children[0];
+        }
+        while (node) {
+            for (auto* key : node->get_keys()) {
+                auto& feature = key->get_data();
+                if (!is_segment(feature)) continue;
+                auto& seg = get_segment(feature);
+                if (!seg.absorbed) gene_idx_set.insert(seg.gene_idx);
+            }
+            node = node->get_next();
+        }
+    }
+    EXPECT_EQ(gene_idx_set.size(), 2u)
+        << "Adjacent annotated genes must have distinct gene_idx values; "
+           "got " << gene_idx_set.size() << " distinct value(s).";
+}
+
+TEST_F(AbsorptionTest, MultiGene_OppositeStrand_DistinctGeneIdx) {
+    // G1_SENSE at chr1:1000-5000/+ and G2_ANTI at chr1:1500-4500/- —
+    // both annotated, coordinates overlap but strand differs.
+    // grove.intersect is strand-aware, so neither gene appears in the
+    // other's candidate set; each keeps its own gene_idx and the
+    // antisense gene never inherits the sense gene's identity.
+    auto result = build_fixture("multi_gene_opposite_strand.gtf",
+                                /*absorb=*/true, /*as_annotation=*/true);
+
+    ASSERT_EQ(result.live_segments, 2)
+        << "Sense + antisense genes at the same locus must produce "
+           "two distinct segments.";
+
+    std::set<uint32_t> gene_idx_set;
+    std::set<char> strands_seen;
+    auto roots = result.grove->get_root_nodes();
+    for (auto& [seqid, root] : roots) {
+        if (!root) continue;
+        auto* node = root;
+        while (!node->get_is_leaf()) {
+            auto& children = node->get_children();
+            if (children.empty()) break;
+            node = children[0];
+        }
+        while (node) {
+            for (auto* key : node->get_keys()) {
+                auto& feature = key->get_data();
+                if (!is_segment(feature)) continue;
+                auto& seg = get_segment(feature);
+                if (seg.absorbed) continue;
+                gene_idx_set.insert(seg.gene_idx);
+                strands_seen.insert(key->get_value().get_strand());
+            }
+            node = node->get_next();
+        }
+    }
+    EXPECT_EQ(gene_idx_set.size(), 2u)
+        << "Opposite-strand annotated genes must have distinct gene_idx "
+           "values; got " << gene_idx_set.size() << " distinct value(s).";
+    EXPECT_EQ(strands_seen.size(), 2u)
+        << "One segment on `+`, one on `-` — both strands must appear.";
+}
