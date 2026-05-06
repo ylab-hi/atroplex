@@ -78,3 +78,17 @@ target_link_libraries(sample_manifest_tests PRIVATE
 )
 
 gtest_discover_tests(sample_manifest_tests WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+
+# Malformed GTF input tests (#61): pins current behavior on degenerate
+# inputs (empty file, missing gene_id / transcript_id, non-existent
+# path, truncated last line). Most cases silently `continue` past the
+# bad record; tests are regression markers for any future warning
+# counters or strict-mode rejection.
+add_executable(malformed_gtf_tests malformed_gtf_test.cpp)
+target_link_libraries(malformed_gtf_tests PRIVATE
+    atroplex_core
+    atroplex_test_utils
+    gtest gtest_main
+)
+
+gtest_discover_tests(malformed_gtf_tests WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
