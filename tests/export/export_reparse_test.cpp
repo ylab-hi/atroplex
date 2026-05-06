@@ -137,17 +137,14 @@ protected:
         cmd.run(parsed);
     }
 
-    /// Find the single per-sample GTF written by the export. The
-    /// export subcommand emits one .gtf per sample using the sample
-    /// id as the basename.
-    fs::path find_exported_gtf(const fs::path& output_dir,
-                                const std::string& sample_id) const {
-        fs::path expected = output_dir / (sample_id + ".gtf");
-        if (fs::exists(expected)) return expected;
-        for (const auto& entry : fs::directory_iterator(output_dir)) {
-            if (entry.path().extension() == ".gtf") return entry.path();
-        }
-        return {};
+    /// Return the per-sample GTF path the export *should* have written
+    /// at `<output_dir>/<sample_id>.gtf`. Strict on the filename — no
+    /// fallback to "any .gtf in the dir" so a future regression in the
+    /// writer's filename convention surfaces as a clear test failure
+    /// rather than silently passing against the wrong file.
+    fs::path expected_exported_gtf(const fs::path& output_dir,
+                                    const std::string& sample_id) const {
+        return output_dir / (sample_id + ".gtf");
     }
 
     /// Slurp a file's lines, dropping blanks and `#` comment lines.
@@ -239,8 +236,10 @@ TEST_F(ExportReparseTest, Schema_RequiredAttributesPresent) {
         "-o", output_dir.string(),
     });
 
-    fs::path exported = find_exported_gtf(output_dir, "rt_sample");
-    ASSERT_FALSE(exported.empty()) << "Export must produce a per-sample .gtf in " << output_dir;
+    fs::path exported = expected_exported_gtf(output_dir, "rt_sample");
+    ASSERT_TRUE(fs::exists(exported))
+        << "Export must produce " << exported
+        << " (the expected per-sample filename).";
     ASSERT_GT(fs::file_size(exported), 0u) << "Exported GTF must not be empty";
 
     auto lines = non_comment_lines(exported);
@@ -252,18 +251,32 @@ TEST_F(ExportReparseTest, Schema_RequiredAttributesPresent) {
         << "Expected three `exon` lines (input fixture has a 3-exon transcript).";
 
     // Every gene/transcript/exon line carries gene_id; transcript and
-    // exon additionally carry transcript_id.
+    // exon additionally carry transcript_id. The transcript line's
+    // start/end columns must match the input range (chr1:1000-5000)
+    // — catches a writer regression that derives transcript bounds
+    // from individual exons rather than the segment span.
+    bool saw_transcript = false;
     for (const auto& line : lines) {
         std::istringstream is(line);
         std::string seqid, source, feature;
-        is >> seqid >> source >> feature;
+        size_t start = 0, end = 0;
+        is >> seqid >> source >> feature >> start >> end;
         EXPECT_NE(line.find("gene_id \"G_RT\""), std::string::npos)
             << "Every record must carry gene_id \"G_RT\". Offending line: " << line;
         if (feature == "transcript" || feature == "exon") {
             EXPECT_NE(line.find("transcript_id \"TX_RT\""), std::string::npos)
                 << feature << " line must carry transcript_id \"TX_RT\". Line: " << line;
         }
+        if (feature == "transcript") {
+            saw_transcript = true;
+            EXPECT_EQ(start, 1000u)
+                << "Transcript start must equal the input transcript range start.";
+            EXPECT_EQ(end, 5000u)
+                << "Transcript end must equal the input transcript range end.";
+        }
     }
+    EXPECT_TRUE(saw_transcript)
+        << "Schema check expected to encounter at least one transcript line.";
 }
 
 // ── Schema: exon coordinates round-trip the original input ──────────
@@ -286,8 +299,9 @@ TEST_F(ExportReparseTest, Schema_ExonCoordinatesRoundTrip) {
         "-o", output_dir.string(),
     });
 
-    fs::path exported = find_exported_gtf(output_dir, "rt_sample");
-    ASSERT_FALSE(exported.empty());
+    fs::path exported = expected_exported_gtf(output_dir, "rt_sample");
+    ASSERT_TRUE(fs::exists(exported))
+        << "Export must produce " << exported;
 
     auto lines = non_comment_lines(exported);
     std::vector<std::pair<size_t, size_t>> exon_coords;
@@ -329,8 +343,9 @@ TEST_F(ExportReparseTest, RoundTrip_BuildFromExportedMatchesOriginal) {
         "-o", output_dir.string(),
     });
 
-    fs::path exported = find_exported_gtf(output_dir, "rt_sample");
-    ASSERT_FALSE(exported.empty());
+    fs::path exported = expected_exported_gtf(output_dir, "rt_sample");
+    ASSERT_TRUE(fs::exists(exported))
+        << "Export must produce " << exported;
 
     auto [orig_segments, exp_segments] = compare_segment_counts(input, exported);
     EXPECT_EQ(orig_segments, 1u)
