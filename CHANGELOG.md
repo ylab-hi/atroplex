@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+- **Dead/stub files** ([#87](https://github.com/ylab-hi/atroplex/pull/87), partial [#13](https://github.com/ylab-hi/atroplex/issues/13)): five header/source pairs the audit flagged as never-used or stub. Removed `include/alignment.hpp` + `src/alignment.cpp` (empty constructor stub), `include/segment_identifier.hpp` (empty class skeleton), `include/data.hpp` (placeholder `exon` / `segment` / `transcript` structs superseded by `genomic_feature.hpp`'s variant-based feature system), `include/graph_structure.hpp` (old experimental layout), and `include/index_stats.hpp` + `src/index_stats.cpp` (2233 LOC) — replaced by `analysis_report` since PR #27 and no longer wired into any subcommand or test target. Two stale `// Future extension methods` comments in `builder.hpp` referencing types that don't exist (`alignment_entry`, `fusion_data`) also dropped. Net diff: −2634 lines. `CMakeLists.txt` uses `file(GLOB)` so no build-config change was needed.
+
 ### Fixed
 - **Mono-exon transcripts now inherit `gene_idx` via spatial overlap** ([#79](https://github.com/ylab-hi/atroplex/pull/79), closes [#75](https://github.com/ylab-hi/atroplex/issues/75)): the spatial candidate gathering in `segment_builder::create_segment` was previously gated on `absorb && exon_chain.size() >= 2`, so mono-exon sample transcripts and `--no-absorb` builds always reached `apply_gene_idx_inheritance` with an empty list and minted a fresh `gene_idx` instead of adopting an overlapping segment's. The lookup is moved out of the gate (and the redundant `seg.exon_count < 2` filter on candidates is dropped — mono-exon segments are now valid donors). On the 21K-sample build this addresses ~845K of the ~1.14M singleton genes (~74%) attributable to mono-exon orphans.
 
