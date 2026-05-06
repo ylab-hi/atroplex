@@ -9,3 +9,15 @@ target_link_libraries(hub_psi_entropy_tests PRIVATE
 )
 
 gtest_discover_tests(hub_psi_entropy_tests WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+
+# Conserved-threshold tests: is_conserved >= semantics,
+# analysis_report::set_conserved_fraction validation, and end-to-end
+# verification that the conserved_segments.tsv content tracks the
+# configured fraction.
+add_executable(conserved_threshold_tests conserved_threshold_test.cpp)
+target_link_libraries(conserved_threshold_tests PRIVATE
+    atroplex_core
+    gtest gtest_main
+)
+
+gtest_discover_tests(conserved_threshold_tests WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})

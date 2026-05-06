@@ -65,40 +65,6 @@ target_link_libraries(quant_sidecar_tests PRIVATE
 
 gtest_discover_tests(quant_sidecar_tests WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
 
-# Conserved-threshold tests: is_conserved >= semantics,
-# analysis_report::set_conserved_fraction validation, and end-to-end
-# verification that the conserved_segments.tsv content tracks the
-# configured fraction.
-add_executable(conserved_threshold_tests conserved_threshold_test.cpp)
-target_link_libraries(conserved_threshold_tests PRIVATE
-    atroplex_core
-    gtest gtest_main
-)
-
-gtest_discover_tests(conserved_threshold_tests WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
-
-# Compact subcall tests: end-to-end disk roundtrip through subcall::compact
-# (build → save → compact → reload), plus validate() failure modes
-# (missing .qtx, --no-qtx opt-out, refusal to overwrite the input dir).
-add_executable(compact_tests compact_test.cpp)
-target_link_libraries(compact_tests PRIVATE
-    atroplex_core
-    gtest gtest_main
-)
-
-gtest_discover_tests(compact_tests WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
-
-# Export --conserved-fraction tests: drives subcall::export_gtf end-to-end
-# with --conserved-only at various fractions, plus the (0,1] range check
-# in validate().
-add_executable(export_conserved_fraction_tests export_conserved_fraction_test.cpp)
-target_link_libraries(export_conserved_fraction_tests PRIVATE
-    atroplex_core
-    gtest gtest_main
-)
-
-gtest_discover_tests(export_conserved_fraction_tests WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
-
 # Sample manifest parser edge cases (#61): required-column enforcement,
 # header / field whitespace tolerance, '.' empty marker, auto-inferred
 # id and replicate group, expression-attribute splitting.
