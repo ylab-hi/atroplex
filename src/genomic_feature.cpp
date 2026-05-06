@@ -170,23 +170,40 @@ edge_metadata edge_metadata::deserialize(std::istream& is) {
 }
 
 // ============================================================================
+// tracked_feature shared serialization helpers
+// ============================================================================
+//
+// Both exon_feature::serialize and segment_feature::serialize wrote the
+// three shared fields (transcript_ids, sources, sample_idx) in this exact
+// order before this refactor extracted the base class. Preserving that
+// order keeps the on-disk .ggx format byte-identical.
+
+void tracked_feature::write_tracked(std::ostream& os) const {
+    transcript_ids.serialize(os);
+    write_pod(os, sources);
+    sample_idx.serialize(os);
+}
+
+void tracked_feature::read_tracked(std::istream& is) {
+    transcript_ids = sorted_vec::deserialize(is);
+    sources = read_pod<uint16_t>(is);
+    sample_idx = sample_bitset::deserialize(is);
+}
+
+// ============================================================================
 // exon_feature serialization
 // ============================================================================
 
 void exon_feature::serialize(std::ostream& os) const {
     write_string(os, id);
-    transcript_ids.serialize(os);
-    write_pod(os, sources);
-    sample_idx.serialize(os);
+    write_tracked(os);
     write_pod(os, exon_number);
 }
 
 exon_feature exon_feature::deserialize(std::istream& is) {
     exon_feature ef;
     ef.id = read_string(is);
-    ef.transcript_ids = sorted_vec::deserialize(is);
-    ef.sources = read_pod<uint16_t>(is);
-    ef.sample_idx = sample_bitset::deserialize(is);
+    ef.read_tracked(is);
     ef.exon_number = read_pod<int>(is);
     return ef;
 }
@@ -197,9 +214,7 @@ exon_feature exon_feature::deserialize(std::istream& is) {
 
 void segment_feature::serialize(std::ostream& os) const {
     write_pod(os, gene_idx);
-    transcript_ids.serialize(os);
-    write_pod(os, sources);
-    sample_idx.serialize(os);
+    write_tracked(os);
 
     // transcript_biotypes map
     uint32_t bt_count = static_cast<uint32_t>(transcript_biotypes.size());
@@ -226,9 +241,7 @@ void segment_feature::serialize(std::ostream& os) const {
 segment_feature segment_feature::deserialize(std::istream& is) {
     segment_feature sf;
     sf.gene_idx = read_pod<uint32_t>(is);
-    sf.transcript_ids = sorted_vec::deserialize(is);
-    sf.sources = read_pod<uint16_t>(is);
-    sf.sample_idx = sample_bitset::deserialize(is);
+    sf.read_tracked(is);
 
     uint32_t bt_count = read_pod<uint32_t>(is);
     for (uint32_t i = 0; i < bt_count; ++i) {
