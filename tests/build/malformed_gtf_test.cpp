@@ -103,28 +103,24 @@ protected:
 
 // ── Empty file ──────────────────────────────────────────────────────
 //
-// A truly empty file (zero bytes) must not crash; it should produce a
-// build with zero segments and zero input transcripts. The genogrove
-// gff reader returns from its iterator immediately when there's
-// nothing to read.
-TEST_F(MalformedGtfTest, EmptyFile_ProducesEmptyGrove) {
+// genogrove's gff reader actively rejects files that yield zero
+// records, throwing `std::runtime_error("No valid GFF data found in
+// <path>")`. An accidentally-empty file gets a sharp error rather than
+// a silently-empty grove — better UX. Pinned here so a future relaxation
+// (e.g. "warn but produce empty grove") flips a single assertion.
+TEST_F(MalformedGtfTest, EmptyFile_RejectedByReader) {
     auto path = write_gtf("empty.gtf", "");
 
-    auto out = build(path);
-    EXPECT_EQ(out.segment_count, 0u)
-        << "Empty file must not produce any segments.";
-    EXPECT_EQ(out.live_segments, 0u);
-    EXPECT_EQ(out.counters.input_transcripts, 0u);
-    EXPECT_EQ(out.counters.merged_transcripts, 0u);
-    EXPECT_EQ(out.counters.discarded_transcripts, 0u);
+    EXPECT_ANY_THROW(build(path))
+        << "Zero-byte input file must be rejected by the gff reader.";
 }
 
 // ── Comments / blank lines only ─────────────────────────────────────
 //
-// A file containing only header comments (`#`) and blank lines is
-// equivalent to empty for build purposes — the gff reader skips
-// comment and blank lines, so no records reach `build_gff`.
-TEST_F(MalformedGtfTest, CommentsAndBlankLinesOnly_ProducesEmptyGrove) {
+// Same invariant as the empty-file case: the gff reader skips
+// comment/blank lines and ends up with zero records, which triggers
+// the same "No valid GFF data found" rejection.
+TEST_F(MalformedGtfTest, CommentsAndBlankLinesOnly_RejectedByReader) {
     auto path = write_gtf("comments.gtf",
         "##gff-version 3\n"
         "# this is a comment\n"
@@ -132,10 +128,10 @@ TEST_F(MalformedGtfTest, CommentsAndBlankLinesOnly_ProducesEmptyGrove) {
         "## another comment\n"
         "\n");
 
-    auto out = build(path);
-    EXPECT_EQ(out.segment_count, 0u);
-    EXPECT_EQ(out.live_segments, 0u);
-    EXPECT_EQ(out.counters.input_transcripts, 0u);
+    EXPECT_ANY_THROW(build(path))
+        << "Comments-only file is record-empty after parsing — must be "
+           "rejected by the gff reader for the same reason as a fully "
+           "empty file.";
 }
 
 // ── Non-existent file ───────────────────────────────────────────────
