@@ -108,16 +108,6 @@ protected:
             "chr1\tTEST\texon\t4500\t5000\t.\t+\t.\tgene_id \"G1\"; transcript_id \"PARENT_LATER\"; exon_number \"4\";\n");
     }
 
-    // Collect every segment key in the grove (live + absorbed). Callers
-    // bucket by `seg.absorbed` themselves. The name predates the shared
-    // grove_walk.hpp helper; kept for caller-side stability rather than
-    // renaming to `walk_all_segments`.
-    std::vector<const segment_feature*> walk_live_segments(grove_type& grove) const {
-        std::vector<const segment_feature*> out;
-        atroplex::test::for_each_segment(grove,
-            [&](const segment_feature& seg, key_ptr) { out.push_back(&seg); });
-        return out;
-    }
 };
 
 // ── Tier 1.1: Full pipeline counter population ─────────────────────────────
@@ -184,14 +174,14 @@ TEST_F(BuilderPipelineTest, RemoveTombstones_DefaultKeepsInTree) {
     EXPECT_EQ(summary.total_segments, 1u)
         << "total_segments should subtract tombstones";
 
-    auto live = walk_live_segments(grove);
-    EXPECT_EQ(live.size(), 2u)
+    auto all = atroplex::test::collect_all_segments(grove);
+    EXPECT_EQ(all.size(), 2u)
         << "Default: both segments still present in B+ tree "
            "(opt into --prune-tombstones for physical removal)";
 
     size_t absorbed_in_tree = 0;
     size_t live_in_tree = 0;
-    for (const auto* seg : live) {
+    for (const auto& [seg, key] : all) {
         if (seg->absorbed) ++absorbed_in_tree;
         else               ++live_in_tree;
     }
@@ -222,10 +212,10 @@ TEST_F(BuilderPipelineTest, RemoveTombstones_PruneFlagPhysicallyRemoves) {
 
     ASSERT_EQ(summary.counters.absorbed_segments, 1u);
 
-    auto live = walk_live_segments(grove);
-    EXPECT_EQ(live.size(), 1u)
+    auto all = atroplex::test::collect_all_segments(grove);
+    EXPECT_EQ(all.size(), 1u)
         << "Expected exactly one live segment (parent) after pruning";
-    for (const auto* seg : live) {
+    for (const auto& [seg, key] : all) {
         EXPECT_FALSE(seg->absorbed)
             << "Tree traversal should not surface any absorbed segment "
                "when --prune-tombstones is set";
@@ -366,9 +356,9 @@ TEST_F(BuilderPipelineTest, ReverseAbsorption_QtxRemap) {
         << "rep1's 3-exon segment should be reverse-absorbed into rep2's 4-exon parent";
 
     // Find the parent (live) segment index
-    auto segs = walk_live_segments(grove);
+    auto segs = atroplex::test::collect_all_segments(grove);
     size_t parent_idx = 0;
-    for (const auto* seg : segs) {
+    for (const auto& [seg, key] : segs) {
         if (!seg->absorbed) {
             parent_idx = seg->segment_index;
         }
@@ -456,10 +446,10 @@ TEST_F(BuilderPipelineTest, TransitiveChain_QtxRemap) {
         << "Both A and B should be absorbed (A→B→C chain)";
 
     // Find the sole live segment (C's 5-exon parent)
-    auto segs = walk_live_segments(grove);
+    auto segs = atroplex::test::collect_all_segments(grove);
     size_t live_idx = 0;
     size_t live_count = 0;
-    for (const auto* seg : segs) {
+    for (const auto& [seg, key] : segs) {
         if (!seg->absorbed) {
             live_idx = seg->segment_index;
             live_count++;

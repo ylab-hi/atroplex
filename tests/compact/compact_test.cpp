@@ -140,14 +140,6 @@ protected:
         return stem;
     }
 
-    /// Collect every segment key in the grove (live + absorbed). Callers
-    /// inspect `seg.absorbed` themselves.
-    std::vector<const segment_feature*> walk_segments(grove_type& grove) const {
-        std::vector<const segment_feature*> out;
-        atroplex::test::for_each_segment(grove,
-            [&](const segment_feature& seg, key_ptr) { out.push_back(&seg); });
-        return out;
-    }
 
     /// Drive subcall::compact through its public CLI surface so the
     /// validate/setup_grove/execute orchestration is actually exercised.
@@ -229,10 +221,10 @@ TEST_F(CompactSubcallTest, EndToEnd_RemovesTombstoneAndCopiesSidecars) {
     (void)sample_registry::deserialize(ifs);
     auto loaded = std::make_unique<grove_type>(grove_type::deserialize(ifs));
 
-    auto live = walk_segments(*loaded);
-    ASSERT_EQ(live.size(), 1u)
+    auto all = atroplex::test::collect_all_segments(*loaded);
+    ASSERT_EQ(all.size(), 1u)
         << "Compacted grove must contain exactly the parent segment";
-    EXPECT_FALSE(live[0]->absorbed)
+    EXPECT_FALSE(all[0].seg->absorbed)
         << "No segment in a compacted grove should still carry the tombstone flag";
 }
 

@@ -58,18 +58,36 @@ void for_each_segment(grove_type& grove, Fn&& fn) {
 }
 
 /**
- * Convenience: collect every live (non-absorbed) segment as
- * `{segment_feature*, key_ptr}` pairs. Built on `for_each_segment`.
+ * `{segment_feature*, key_ptr}` pair returned by the collect_* helpers
+ * below.
  */
-struct live_segment_entry {
+struct segment_entry {
     const segment_feature* seg;
     key_ptr key;
 };
 
-inline std::vector<live_segment_entry> collect_live_segments(grove_type& grove) {
-    std::vector<live_segment_entry> out;
+/**
+ * Collect every live (non-absorbed) segment as `{seg, key}` pairs.
+ * Built on `for_each_segment`.
+ */
+inline std::vector<segment_entry> collect_live_segments(grove_type& grove) {
+    std::vector<segment_entry> out;
     for_each_segment(grove, [&](segment_feature& seg, key_ptr key) {
         if (!seg.absorbed) out.push_back({&seg, key});
+    });
+    return out;
+}
+
+/**
+ * Collect every segment in the spatial index — live AND absorbed — as
+ * `{seg, key}` pairs. For tests that compare absorbed-vs-live counts
+ * after a build, or that snapshot the post-tombstone state of the
+ * tree.
+ */
+inline std::vector<segment_entry> collect_all_segments(grove_type& grove) {
+    std::vector<segment_entry> out;
+    for_each_segment(grove, [&](segment_feature& seg, key_ptr key) {
+        out.push_back({&seg, key});
     });
     return out;
 }
