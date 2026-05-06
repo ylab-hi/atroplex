@@ -169,7 +169,7 @@ void query::execute(const cxxopts::ParseResult& args) {
             auto contrast = query_contrast::parse(spec);
             logging::info("Running DTU: " + contrast.group_a + " vs " + contrast.group_b);
 
-            auto dtu = run_dtu(contrast, results, args);
+            auto dtu = run_dtu(contrast, results);
             apply_fdr_correction(dtu, fdr_threshold);
 
             size_t sig = std::count_if(dtu.begin(), dtu.end(),
@@ -404,8 +404,7 @@ void query::write_classification(const std::string& path,
 
 std::vector<dtu_result> query::run_dtu(
     const query_contrast& contrast,
-    const std::vector<query_result>& results,
-    const cxxopts::ParseResult& /*args*/) {
+    const std::vector<query_result>& results) {
 
     auto& registry = sample_registry::instance();
 

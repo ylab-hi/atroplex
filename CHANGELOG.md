@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **`query::run_dtu` no longer takes `cxxopts::ParseResult`** ([#88](https://github.com/ylab-hi/atroplex/pull/88), partial [#13](https://github.com/ylab-hi/atroplex/issues/13)): the parameter was already unused (commented out as `/*args*/` in the impl); removed from the signature and the single caller in `query::execute`. Matches the audit's "business logic shouldn't depend on CLI parsing types" recommendation. Also documents the `read_cluster::members` lifetime constraint (non-owning pointers into `read_clusterer::read_storage_` invalidated by `finalize_chromosome()`) — previously safe but undocumented.
+
 ### Removed
 - **Dead/stub files** ([#87](https://github.com/ylab-hi/atroplex/pull/87), partial [#13](https://github.com/ylab-hi/atroplex/issues/13)): five header/source pairs the audit flagged as never-used or stub. Removed `include/alignment.hpp` + `src/alignment.cpp` (empty constructor stub), `include/segment_identifier.hpp` (empty class skeleton), `include/data.hpp` (placeholder `exon` / `segment` / `transcript` structs superseded by `genomic_feature.hpp`'s variant-based feature system), `include/graph_structure.hpp` (old experimental layout), and `include/index_stats.hpp` + `src/index_stats.cpp` (2233 LOC) — replaced by `analysis_report` since PR #27 and no longer wired into any subcommand or test target. Two stale `// Future extension methods` comments in `builder.hpp` referencing types that don't exist (`alignment_entry`, `fusion_data`) also dropped. Net diff: −2634 lines. `CMakeLists.txt` uses `file(GLOB)` so no build-config change was needed.
 
