@@ -14,6 +14,7 @@
 
 #include "genomic_feature.hpp"
 #include "build_gff.hpp"
+#include "grove_walk.hpp"
 #include "sample_info.hpp"
 #include "transcript_matcher.hpp"
 
@@ -157,33 +158,16 @@ protected:
         feature_snapshot snap;
         snap.total_edges = grove.edge_count();
 
-        auto roots = grove.get_root_nodes();
-        for (auto& [seqid, root] : roots) {
-            if (!root) continue;
-            auto* node = root;
-            while (!node->get_is_leaf()) {
-                auto& children = node->get_children();
-                if (children.empty()) break;
-                node = children[0];
-            }
-
-            while (node) {
-                for (auto* key : node->get_keys()) {
-                    auto& feature = key->get_data();
-                    if (is_segment(feature)) {
-                        auto& seg = get_segment(feature);
-                        if (seg.absorbed) continue;
-                        snap.segment_count++;
-                        auto [id, name, biotype] = gene_registry::instance().resolve(seg.gene_idx);
-                        snap.gene_ids.insert(id);
-                        for (auto tx : seg.transcript_ids) {
-                            snap.transcript_ids.insert(tx);
-                        }
-                    }
+        atroplex::test::for_each_segment(grove,
+            [&](const segment_feature& seg, key_ptr) {
+                if (seg.absorbed) return;
+                snap.segment_count++;
+                auto [id, name, biotype] = gene_registry::instance().resolve(seg.gene_idx);
+                snap.gene_ids.insert(id);
+                for (auto tx : seg.transcript_ids) {
+                    snap.transcript_ids.insert(tx);
                 }
-                node = node->get_next();
-            }
-        }
+            });
 
         return snap;
     }

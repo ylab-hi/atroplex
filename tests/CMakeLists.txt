@@ -14,6 +14,11 @@ include(GoogleTest)
 # triggers another N-way parallel compile of the library, which OOMs GCC on
 # the CI runner.
 
+# Header-only test utility library — exposes tests/grove_walk.hpp and any
+# future shared-test helpers via a single include path.
+add_library(atroplex_test_utils INTERFACE)
+target_include_directories(atroplex_test_utils INTERFACE ${CMAKE_CURRENT_SOURCE_DIR})
+
 add_subdirectory(build)
 add_subdirectory(compact)
 add_subdirectory(discover)

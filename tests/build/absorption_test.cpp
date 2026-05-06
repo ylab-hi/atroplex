@@ -14,6 +14,7 @@
 
 #include "genomic_feature.hpp"
 #include "build_gff.hpp"
+#include "grove_walk.hpp"
 #include "sample_info.hpp"
 
 namespace fs = std::filesystem;
@@ -62,31 +63,16 @@ protected:
                          segment_count, test_opts, counters);
 
         size_t absorbed = 0, live = 0, total_absorbed_into = 0, live_tx_count = 0;
-        auto roots = grove->get_root_nodes();
-        for (auto& [seqid, root] : roots) {
-            if (!root) continue;
-            auto* node = root;
-            while (!node->get_is_leaf()) {
-                auto& children = node->get_children();
-                if (children.empty()) break;
-                node = children[0];
-            }
-            while (node) {
-                for (auto* key : node->get_keys()) {
-                    auto& feature = key->get_data();
-                    if (!is_segment(feature)) continue;
-                    auto& seg = get_segment(feature);
-                    if (seg.absorbed) {
-                        absorbed++;
-                    } else {
-                        live++;
-                        total_absorbed_into += seg.absorbed_count;
-                        live_tx_count += seg.transcript_ids.size();
-                    }
+        atroplex::test::for_each_segment(*grove,
+            [&](const segment_feature& seg, key_ptr) {
+                if (seg.absorbed) {
+                    absorbed++;
+                } else {
+                    live++;
+                    total_absorbed_into += seg.absorbed_count;
+                    live_tx_count += seg.transcript_ids.size();
                 }
-                node = node->get_next();
-            }
-        }
+            });
 
         return {segment_count, absorbed, live, total_absorbed_into, live_tx_count,
                 std::move(grove)};
@@ -126,31 +112,16 @@ protected:
                          segment_count, test_opts, counters);
 
         size_t absorbed = 0, live = 0, total_absorbed_into = 0, live_tx_count = 0;
-        auto roots = grove->get_root_nodes();
-        for (auto& [seqid, root] : roots) {
-            if (!root) continue;
-            auto* node = root;
-            while (!node->get_is_leaf()) {
-                auto& children = node->get_children();
-                if (children.empty()) break;
-                node = children[0];
-            }
-            while (node) {
-                for (auto* key : node->get_keys()) {
-                    auto& feature = key->get_data();
-                    if (!is_segment(feature)) continue;
-                    auto& seg = get_segment(feature);
-                    if (seg.absorbed) {
-                        absorbed++;
-                    } else {
-                        live++;
-                        total_absorbed_into += seg.absorbed_count;
-                        live_tx_count += seg.transcript_ids.size();
-                    }
+        atroplex::test::for_each_segment(*grove,
+            [&](const segment_feature& seg, key_ptr) {
+                if (seg.absorbed) {
+                    absorbed++;
+                } else {
+                    live++;
+                    total_absorbed_into += seg.absorbed_count;
+                    live_tx_count += seg.transcript_ids.size();
                 }
-                node = node->get_next();
-            }
-        }
+            });
 
         return {segment_count, absorbed, live, total_absorbed_into, live_tx_count,
                 std::move(grove)};
@@ -337,25 +308,10 @@ TEST_F(AbsorptionTest, CrossSampleInheritance_NovelLocus) {
         << "Expected 2 distinct live segments (different exon chains, no absorption).";
 
     std::set<uint32_t> distinct_gene_idx;
-    auto roots = result.grove->get_root_nodes();
-    for (auto& [seqid, root] : roots) {
-        if (!root) continue;
-        auto* node = root;
-        while (!node->get_is_leaf()) {
-            auto& children = node->get_children();
-            if (children.empty()) break;
-            node = children[0];
-        }
-        while (node) {
-            for (auto* key : node->get_keys()) {
-                auto& feature = key->get_data();
-                if (!is_segment(feature)) continue;
-                auto& seg = get_segment(feature);
-                if (!seg.absorbed) distinct_gene_idx.insert(seg.gene_idx);
-            }
-            node = node->get_next();
-        }
-    }
+    atroplex::test::for_each_segment(*result.grove,
+        [&](const segment_feature& seg, key_ptr) {
+            if (!seg.absorbed) distinct_gene_idx.insert(seg.gene_idx);
+        });
 
     EXPECT_EQ(distinct_gene_idx.size(), 1u)
         << "Sample B's novel locus should inherit Sample A's gene_idx via "
@@ -389,25 +345,10 @@ TEST_F(AbsorptionTest, CrossSampleInheritance_MonoExonInheritsFromMultiExon) {
         << "Expected 2 live segments (multi-exon donor + mono-exon recipient).";
 
     std::set<uint32_t> distinct_gene_idx;
-    auto roots = result.grove->get_root_nodes();
-    for (auto& [seqid, root] : roots) {
-        if (!root) continue;
-        auto* node = root;
-        while (!node->get_is_leaf()) {
-            auto& children = node->get_children();
-            if (children.empty()) break;
-            node = children[0];
-        }
-        while (node) {
-            for (auto* key : node->get_keys()) {
-                auto& feature = key->get_data();
-                if (!is_segment(feature)) continue;
-                auto& seg = get_segment(feature);
-                if (!seg.absorbed) distinct_gene_idx.insert(seg.gene_idx);
-            }
-            node = node->get_next();
-        }
-    }
+    atroplex::test::for_each_segment(*result.grove,
+        [&](const segment_feature& seg, key_ptr) {
+            if (!seg.absorbed) distinct_gene_idx.insert(seg.gene_idx);
+        });
 
     EXPECT_EQ(distinct_gene_idx.size(), 1u)
         << "Mono-exon sample transcript should inherit the multi-exon "
@@ -472,25 +413,10 @@ TEST_F(AbsorptionTest, MultiGene_Adjacent_DistinctGeneIdx) {
         << "Two non-overlapping genes must produce two distinct segments.";
 
     std::set<uint32_t> gene_idx_set;
-    auto roots = result.grove->get_root_nodes();
-    for (auto& [seqid, root] : roots) {
-        if (!root) continue;
-        auto* node = root;
-        while (!node->get_is_leaf()) {
-            auto& children = node->get_children();
-            if (children.empty()) break;
-            node = children[0];
-        }
-        while (node) {
-            for (auto* key : node->get_keys()) {
-                auto& feature = key->get_data();
-                if (!is_segment(feature)) continue;
-                auto& seg = get_segment(feature);
-                if (!seg.absorbed) gene_idx_set.insert(seg.gene_idx);
-            }
-            node = node->get_next();
-        }
-    }
+    atroplex::test::for_each_segment(*result.grove,
+        [&](const segment_feature& seg, key_ptr) {
+            if (!seg.absorbed) gene_idx_set.insert(seg.gene_idx);
+        });
     EXPECT_EQ(gene_idx_set.size(), 2u)
         << "Adjacent annotated genes must have distinct gene_idx values; "
            "got " << gene_idx_set.size() << " distinct value(s).";
@@ -511,27 +437,12 @@ TEST_F(AbsorptionTest, MultiGene_OppositeStrand_DistinctGeneIdx) {
 
     std::set<uint32_t> gene_idx_set;
     std::set<char> strands_seen;
-    auto roots = result.grove->get_root_nodes();
-    for (auto& [seqid, root] : roots) {
-        if (!root) continue;
-        auto* node = root;
-        while (!node->get_is_leaf()) {
-            auto& children = node->get_children();
-            if (children.empty()) break;
-            node = children[0];
-        }
-        while (node) {
-            for (auto* key : node->get_keys()) {
-                auto& feature = key->get_data();
-                if (!is_segment(feature)) continue;
-                auto& seg = get_segment(feature);
-                if (seg.absorbed) continue;
-                gene_idx_set.insert(seg.gene_idx);
-                strands_seen.insert(key->get_value().get_strand());
-            }
-            node = node->get_next();
-        }
-    }
+    atroplex::test::for_each_segment(*result.grove,
+        [&](const segment_feature& seg, key_ptr key) {
+            if (seg.absorbed) return;
+            gene_idx_set.insert(seg.gene_idx);
+            strands_seen.insert(key->get_value().get_strand());
+        });
     EXPECT_EQ(gene_idx_set.size(), 2u)
         << "Opposite-strand annotated genes must have distinct gene_idx "
            "values; got " << gene_idx_set.size() << " distinct value(s).";

@@ -23,6 +23,7 @@
 #include "build_summary.hpp"
 #include "builder.hpp"
 #include "genomic_feature.hpp"
+#include "grove_walk.hpp"
 #include "sample_info.hpp"
 #include "subcall/compact.hpp"
 
@@ -139,28 +140,12 @@ protected:
         return stem;
     }
 
-    /// Walk the live B+ tree and collect every segment key — same helper
-    /// pattern as builder_pipeline_test.cpp.
+    /// Collect every segment key in the grove (live + absorbed). Callers
+    /// inspect `seg.absorbed` themselves.
     std::vector<const segment_feature*> walk_segments(grove_type& grove) const {
         std::vector<const segment_feature*> out;
-        for (auto& [seqid, root] : grove.get_root_nodes()) {
-            if (!root) continue;
-            auto* node = root;
-            while (!node->get_is_leaf()) {
-                auto& children = node->get_children();
-                if (children.empty()) break;
-                node = children[0];
-            }
-            while (node) {
-                for (auto* key : node->get_keys()) {
-                    auto& feature = key->get_data();
-                    if (is_segment(feature)) {
-                        out.push_back(&get_segment(feature));
-                    }
-                }
-                node = node->get_next();
-            }
-        }
+        atroplex::test::for_each_segment(grove,
+            [&](const segment_feature& seg, key_ptr) { out.push_back(&seg); });
         return out;
     }
 

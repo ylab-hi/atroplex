@@ -2,6 +2,7 @@
 add_executable(absorption_tests absorption_test.cpp)
 target_link_libraries(absorption_tests PRIVATE
     atroplex_core
+    atroplex_test_utils
     gtest gtest_main
 )
 
@@ -21,6 +22,7 @@ gtest_discover_tests(absorption_tests WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_D
 add_executable(serialization_tests serialization_test.cpp)
 target_link_libraries(serialization_tests PRIVATE
     atroplex_core
+    atroplex_test_utils
     gtest gtest_main
 )
 
@@ -40,6 +42,7 @@ gtest_discover_tests(serialization_tests WORKING_DIRECTORY ${CMAKE_CURRENT_BINAR
 add_executable(builder_pipeline_tests builder_pipeline_test.cpp)
 target_link_libraries(builder_pipeline_tests PRIVATE
     atroplex_core
+    atroplex_test_utils
     gtest gtest_main
 )
 

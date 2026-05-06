@@ -21,6 +21,7 @@
 #include "analysis_report.hpp"
 #include "build_summary.hpp"
 #include "builder.hpp"
+#include "grove_walk.hpp"
 #include "genomic_feature.hpp"
 #include "quant_sidecar.hpp"
 #include "sample_info.hpp"
@@ -107,28 +108,14 @@ protected:
             "chr1\tTEST\texon\t4500\t5000\t.\t+\t.\tgene_id \"G1\"; transcript_id \"PARENT_LATER\"; exon_number \"4\";\n");
     }
 
-    // Walk the live grove (B+ tree leaves) and collect every segment key.
-    // Mirrors analysis_report::collect's traversal pattern.
+    // Collect every segment key in the grove (live + absorbed). Callers
+    // bucket by `seg.absorbed` themselves. The name predates the shared
+    // grove_walk.hpp helper; kept for caller-side stability rather than
+    // renaming to `walk_all_segments`.
     std::vector<const segment_feature*> walk_live_segments(grove_type& grove) const {
         std::vector<const segment_feature*> out;
-        for (auto& [seqid, root] : grove.get_root_nodes()) {
-            if (!root) continue;
-            auto* node = root;
-            while (!node->get_is_leaf()) {
-                auto& children = node->get_children();
-                if (children.empty()) break;
-                node = children[0];
-            }
-            while (node) {
-                for (auto* key : node->get_keys()) {
-                    auto& feature = key->get_data();
-                    if (is_segment(feature)) {
-                        out.push_back(&get_segment(feature));
-                    }
-                }
-                node = node->get_next();
-            }
-        }
+        atroplex::test::for_each_segment(grove,
+            [&](const segment_feature& seg, key_ptr) { out.push_back(&seg); });
         return out;
     }
 };
