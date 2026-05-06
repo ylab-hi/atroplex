@@ -416,68 +416,45 @@ inline std::string format_coordinate(const std::string& seqid,
 }
 
 /**
- * Exon feature: spatial interval with biological annotations
- * Used for read overlap queries and CDS/UTR disambiguation
+ * Common state and behaviors for spatial features that track which
+ * samples and which GFF column-2 sources contribute to them.
+ *
+ * Both `exon_feature` and `segment_feature` inherit from this. There
+ * are no virtual functions, so `sizeof(exon_feature)` and
+ * `sizeof(segment_feature)` are unchanged from the pre-extraction
+ * layout (the three shared fields just live in the base subobject
+ * instead of being declared per-derived).
+ *
+ * The `genomic_feature` variant continues to dispatch on the derived
+ * type via `is_exon` / `get_exon` / `is_segment` / `get_segment`; this
+ * base never appears in the variant directly.
  */
-struct exon_feature {
-    // Core identifiers
-    std::string id;                  // Exon ID
+struct tracked_feature {
+    // Transcript associations (interned via transcript_registry).
+    sorted_vec transcript_ids;
 
-    // Transcript associations (interned via transcript_registry)
-    sorted_vec transcript_ids;  // Reference transcripts using this exon
-
-    // Source tracking (GFF column 2) — bitfield indexed by source_registry
+    // GFF column 2 source bitfield, indexed by source_registry.
     uint16_t sources = 0;
 
-    // Sample tracking — dynamic bitset indexed by sample_registry IDs
+    // Sample membership — dynamic bitset indexed by sample_registry IDs.
     sample_bitset sample_idx;
 
-    // Additional annotations
-    int exon_number;                 // Exon number within transcript (-1 for unknown)
+    // --- Sample tracking ---
 
-    // Constructors
-    exon_feature() : sources(0), exon_number(-1) {}
+    void add_sample(uint32_t sample_id) { sample_idx.set(sample_id); }
+    bool in_sample(uint32_t sample_id) const { return sample_idx.test(sample_id); }
+    size_t sample_count() const { return sample_idx.count(); }
 
-    // Create exon from GFF entry
-    static exon_feature from_gff_entry(
-        const std::map<std::string, std::string, std::less<>>& attributes,
-        const std::string& seqid,
-        const gdt::interval& interval,
-        char strand
-    );
+    // --- Source tracking ---
 
-    // --- Sample tracking methods ---
-
-    // Add sample reference (registry ID from sample_registry)
-    void add_sample(uint32_t sample_id) {
-        sample_idx.set(sample_id);
-    }
-
-    // Add source (GFF column 2 value like HAVANA, ENSEMBL, StringTie)
     void add_source(const std::string& source) {
         sources |= source_registry::instance().mask(source);
     }
-
-    // Merge sources from another feature's bitfield
-    void merge_sources(uint16_t other) { sources |= other; }
-
-    // Check if feature exists in a specific sample
-    bool in_sample(uint32_t sample_id) const {
-        return sample_idx.test(sample_id);
-    }
-
-    // Check if feature has a specific source
     bool has_source(const std::string& source) const {
         return (sources & source_registry::instance().mask(source)) != 0;
     }
-
-    // Get number of sources
+    void merge_sources(uint16_t other) { sources |= other; }
     size_t source_count() const { return source_registry::count(sources); }
-
-    // Get number of samples containing this feature
-    size_t sample_count() const {
-        return sample_idx.count();
-    }
 
     // --- Pan-transcriptome statistics ---
 
@@ -488,18 +465,50 @@ struct exon_feature {
 
     /**
      * Conservation check. `min_required` is the inclusive sample-count
-     * threshold (e.g., total sample-typed entries × conserved_fraction,
-     * rounded up). Default callers pass the full sample count for the
-     * strict "in every sample" definition; relaxed thresholds let
-     * dropout-tolerant cores be enumerated.
+     * threshold (e.g. `ceil(total_sample_typed × conserved_fraction)`).
+     * Strict callers pass the full sample-typed count for the "in every
+     * sample" definition; relaxed thresholds let dropout-tolerant cores
+     * be enumerated.
      */
     bool is_conserved(size_t min_required) const {
         return sample_idx.count() >= min_required;
     }
 
-    bool is_sample_specific() const {
-        return sample_idx.count() == 1;
-    }
+    bool is_sample_specific() const { return sample_idx.count() == 1; }
+
+protected:
+    /**
+     * Serialize / deserialize the three shared fields in the canonical
+     * on-disk order — `transcript_ids → sources → sample_idx`. Both
+     * `exon_feature::serialize` and `segment_feature::serialize` already
+     * wrote these three in this exact order before the refactor, so
+     * `.ggx` files written pre-refactor remain deserializable
+     * byte-identically.
+     */
+    void write_tracked(std::ostream& os) const;
+    void read_tracked(std::istream& is);
+};
+
+/**
+ * Exon feature: spatial interval with biological annotations.
+ * Used for read overlap queries and CDS/UTR disambiguation.
+ */
+struct exon_feature : tracked_feature {
+    // Core identifiers
+    std::string id;                  // Exon ID
+
+    // Additional annotations
+    int exon_number = -1;            // Exon number within transcript (-1 for unknown)
+
+    exon_feature() = default;
+
+    // Create exon from GFF entry
+    static exon_feature from_gff_entry(
+        const std::map<std::string, std::string, std::less<>>& attributes,
+        const std::string& seqid,
+        const gdt::interval& interval,
+        char strand
+    );
 
     // Serialization
     void serialize(std::ostream& os) const;
@@ -507,40 +516,32 @@ struct exon_feature {
 };
 
 /**
- * Segment feature: spans consecutive exons, represents transcript paths
- * Used for graph traversal and transcript assignment
+ * Segment feature: spans consecutive exons, represents transcript paths.
+ * Used for graph traversal and transcript assignment.
  */
-struct segment_feature {
-    // Core identifiers
-    uint32_t gene_idx;               // Index into gene_registry (gene_id, gene_name, gene_biotype)
+struct segment_feature : tracked_feature {
+    // Core identifier — index into gene_registry (gene_id, gene_name, gene_biotype).
+    uint32_t gene_idx = 0;
 
-    // Gene accessors (resolve through gene_registry)
+    // Gene accessors (resolve through gene_registry).
     const std::string& gene_id() const { return gene_registry::instance().resolve(gene_idx).gene_id; }
     const std::string& gene_name() const { return gene_registry::instance().resolve(gene_idx).gene_name; }
     const std::string& gene_biotype() const { return gene_registry::instance().resolve(gene_idx).gene_biotype; }
 
-    // Transcript associations (interned via transcript_registry)
-    sorted_vec transcript_ids;  // Transcripts using this segment
-
-    // Source tracking (GFF column 2) — bitfield indexed by source_registry
-    uint16_t sources = 0;
-
-    // Sample tracking — dynamic bitset indexed by sample_registry IDs
-    sample_bitset sample_idx;
-
-    // Transcript biotype mapping (interned transcript_id -> biotype)
-    // e.g., protein_coding, retained_intron, nonsense_mediated_decay
+    // Transcript biotype mapping (interned transcript_id -> biotype),
+    // e.g. protein_coding, retained_intron, nonsense_mediated_decay.
+    // Segment-only — exons don't carry per-transcript biotype.
     std::unordered_map<uint32_t, std::string> transcript_biotypes;
 
     // Segment structure
-    size_t segment_index;            // Unique numeric index (used as edge ID for traversal)
-    int exon_count;                  // Number of exons in this segment
+    size_t segment_index = 0;        // Unique numeric index (used as edge ID for traversal)
+    int    exon_count = 0;           // Number of exons in this segment
 
     // Read support metadata (populated during discovery phase)
-    size_t read_coverage;            // Number of reads supporting this segment
+    size_t read_coverage = 0;        // Number of reads supporting this segment
 
     // Absorption tracking (ISM segments absorbed into longer parents)
-    bool absorbed = false;           // Tombstone: this segment was absorbed into a longer parent
+    bool   absorbed = false;         // Tombstone: this segment was absorbed into a longer parent
     size_t absorbed_count = 0;       // Number of ISM segments absorbed into this one
     // segment_index of the parent segment this one was absorbed into, when
     // tombstoning happened via `try_reverse_absorption::absorb_into_parent`.
@@ -551,67 +552,9 @@ struct segment_feature {
     // the parent at `merge_to_qtx` time instead of being discarded.
     std::optional<size_t> absorbed_into_idx;
 
-    // Constructors
-    segment_feature()
-        : gene_idx(0), sources(0), segment_index(0), exon_count(0), read_coverage(0) {}
+    segment_feature() = default;
 
-    // --- Sample tracking methods ---
-
-    // Add sample reference (registry ID from sample_registry)
-    void add_sample(uint32_t sample_id) {
-        sample_idx.set(sample_id);
-    }
-
-    // Add source (GFF column 2 value like HAVANA, ENSEMBL, StringTie)
-    void add_source(const std::string& source) {
-        sources |= source_registry::instance().mask(source);
-    }
-
-    // Merge sources from another feature's bitfield
-    void merge_sources(uint16_t other) { sources |= other; }
-
-    // Check if feature exists in a specific sample
-    bool in_sample(uint32_t sample_id) const {
-        return sample_idx.test(sample_id);
-    }
-
-    // Check if feature has a specific source
-    bool has_source(const std::string& source) const {
-        return (sources & source_registry::instance().mask(source)) != 0;
-    }
-
-    // Get number of sources
-    size_t source_count() const { return source_registry::count(sources); }
-
-    // Get number of samples containing this feature
-    size_t sample_count() const {
-        return sample_idx.count();
-    }
-
-    // --- Read support methods ---
-
-    void add_read_support(size_t count = 1) {
-        read_coverage += count;
-    }
-
-    // --- Pan-transcriptome statistics ---
-
-    // Calculate frequency across samples
-    float frequency(size_t total_samples) const {
-        if (total_samples == 0) return 0.0f;
-        return static_cast<float>(sample_idx.count()) / static_cast<float>(total_samples);
-    }
-
-    // Conservation check. `min_required` is the inclusive sample-count
-    // threshold (total sample-typed entries × conserved_fraction, rounded up).
-    bool is_conserved(size_t min_required) const {
-        return sample_idx.count() >= min_required;
-    }
-
-    // Check if feature is sample-specific (only in one sample)
-    bool is_sample_specific() const {
-        return sample_idx.count() == 1;
-    }
+    void add_read_support(size_t count = 1) { read_coverage += count; }
 
     // Serialization
     void serialize(std::ostream& os) const;
