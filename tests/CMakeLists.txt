@@ -15,5 +15,8 @@ include(GoogleTest)
 # the CI runner.
 
 add_subdirectory(build)
+add_subdirectory(compact)
 add_subdirectory(discover)
+add_subdirectory(export)
+add_subdirectory(inspect)
 add_subdirectory(query)

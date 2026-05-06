@@ -12,6 +12,7 @@
 #include <cmath>
 #include <filesystem>
 #include <fstream>
+#include <set>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -380,4 +381,104 @@ TEST_F(HubPsiEntropyTest, ConfigurableThreshold_BelowTwoFallsBackToDefault) {
     EXPECT_TRUE(rows.empty())
         << "Invalid --min-hub-branches must clamp to the default; with 5 < 10 "
            "the fixture should produce no hub rows.";
+}
+
+// ── branch_details.tsv schema and content (#61) ─────────────────────
+//
+// `begin_splicing_hub_streams` writes both `splicing_hubs.tsv` and
+// `branch_details.tsv`. `PsiAndEntropyCorrectForKnownHub` above asserts
+// the hub TSV in detail but never opens the branch file. This test
+// validates the branch-detail layout against the same 12-target hub
+// fixture: header columns, one row per (hub, target) pair, hub fields
+// repeated across rows, distinct target_exon_id values, and per-sample
+// `.present` columns reflecting the fixture's single hub-using sample.
+TEST_F(HubPsiEntropyTest, BranchDetails_SchemaAndRowCount) {
+    auto gtf_path = write_hub_fixture();
+
+    sample_info info("hub_sample");
+    info.type = "sample";
+    uint32_t sample_id = sample_registry::instance().register_data(info);
+
+    grove_type grove(3);
+    chromosome_exon_caches exon_caches;
+    chromosome_segment_caches segment_caches;
+    size_t segment_count = 0;
+    build_counters counters;
+    build_options test_opts;
+    test_opts.absorb = false;
+    test_opts.include_scaffolds = true;
+
+    build_gff::build(grove, gtf_path, sample_id, exon_caches, segment_caches,
+                     segment_count, test_opts, counters);
+    ASSERT_EQ(segment_count, 13u);
+
+    fs::path hubs_path = tmp_dir / "schema_hubs.tsv";
+    fs::path branches_path = tmp_dir / "schema_branches.tsv";
+    {
+        analysis_report report;
+        report.begin_splicing_hub_streams(hubs_path.string(), branches_path.string());
+        report.collect(grove);
+    }
+
+    ASSERT_TRUE(fs::exists(branches_path)) << "branch_details.tsv not created";
+    ASSERT_GT(fs::file_size(branches_path), 0u) << "branch_details.tsv is empty";
+
+    auto [header, rows] = parse_tsv(branches_path);
+
+    // Required schema columns. Per-sample `.present` columns appear after
+    // these six in the order the registry yields non-replicate entries.
+    for (const auto* expected : {"hub_gene_name", "hub_gene_id",
+                                 "hub_exon_id", "hub_coordinate",
+                                 "target_exon_id", "target_coordinate"}) {
+        EXPECT_GE(find_col(header, expected), 0)
+            << "branch_details.tsv must declare column '" << expected << "'";
+    }
+    int present_col = find_col(header, "hub_sample.present");
+    ASSERT_GE(present_col, 0)
+        << "branch_details.tsv must declare a `<sample>.present` column "
+           "for every non-replicate registry entry.";
+
+    // 12 transcripts fan out to 12 unique downstream exons → 12 branch rows.
+    ASSERT_EQ(rows.size(), 12u)
+        << "Expected exactly one branch row per (hub, target) pair "
+           "(12 distinct targets in the fixture).";
+
+    // Hub fields must be identical across all branch rows (one hub).
+    // We assert per-target distinctness on `target_coordinate` rather than
+    // `target_exon_id` because `exon_feature::id` is populated from the
+    // GFF `ID`/`exon_id` attribute, which the fixture doesn't set —
+    // every exon's id is the empty string. The coordinate column is
+    // populated by `format_coordinate(seqid, exon)` and is the right
+    // signal of "12 distinct targets."
+    int hub_exon_id_col = find_col(header, "hub_exon_id");
+    int hub_coord_col = find_col(header, "hub_coordinate");
+    int target_coord_col = find_col(header, "target_coordinate");
+    ASSERT_GE(hub_exon_id_col, 0);
+    ASSERT_GE(hub_coord_col, 0);
+    ASSERT_GE(target_coord_col, 0);
+
+    std::set<std::string> hub_exon_ids;
+    std::set<std::string> hub_coords;
+    std::set<std::string> target_coords;
+    for (const auto& row : rows) {
+        ASSERT_LT(static_cast<size_t>(hub_exon_id_col), row.size());
+        ASSERT_LT(static_cast<size_t>(hub_coord_col), row.size());
+        ASSERT_LT(static_cast<size_t>(target_coord_col), row.size());
+        hub_exon_ids.insert(row[hub_exon_id_col]);
+        hub_coords.insert(row[hub_coord_col]);
+        target_coords.insert(row[target_coord_col]);
+
+        // The single registered sample passes every transcript through
+        // the hub so every target is `.present == "1"`.
+        ASSERT_LT(static_cast<size_t>(present_col), row.size());
+        EXPECT_EQ(row[present_col], "1")
+            << "Every target should be present for the single hub-using sample.";
+    }
+    EXPECT_EQ(hub_exon_ids.size(), 1u)
+        << "All 12 branch rows must share one hub_exon_id.";
+    EXPECT_EQ(hub_coords.size(), 1u)
+        << "All 12 branch rows must share one hub_coordinate.";
+    EXPECT_EQ(target_coords.size(), 12u)
+        << "Each branch row must reference a distinct target_coordinate "
+           "(12 targets at 12 distinct downstream exon coords).";
 }
