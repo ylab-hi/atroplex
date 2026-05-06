@@ -129,8 +129,7 @@ private:
      */
     std::vector<dtu_result> run_dtu(
         const query_contrast& contrast,
-        const std::vector<query_result>& results,
-        const cxxopts::ParseResult& args);
+        const std::vector<query_result>& results);
 
     /**
      * Benjamini–Hochberg FDR correction. Mutates `results.fdr` and

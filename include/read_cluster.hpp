@@ -116,7 +116,14 @@ struct read_cluster {
     size_t start;                              // Min start across all members
     size_t end;                                // Max end across all members
     std::vector<splice_junction> consensus_junctions;
-    std::vector<const processed_read*> members; // Non-owning pointers
+    /// Non-owning pointers into the owning `read_clusterer::read_storage_`
+    /// vector. These pointers are valid only until
+    /// `read_clusterer::finalize_chromosome()` runs, which empties
+    /// `read_storage_` and frees the underlying `processed_read` objects.
+    /// Consumers must finish using a returned `read_cluster` before the
+    /// next chromosome's reads are added; storing the cluster across
+    /// `finalize_chromosome()` calls leaves these pointers dangling.
+    std::vector<const processed_read*> members;
 
     read_cluster() : strand('.'), start(SIZE_MAX), end(0) {}
 
