@@ -126,15 +126,14 @@ TEST_F(ConservedThresholdTest, IsConserved_GreaterEqualThreshold) {
     // Build a 3-sample grove where all three share the structure.
     auto grove = build_with(/*shared=*/3, /*distinct=*/0);
 
-    // Find the live shared segment.
+    // Find the first live segment with all three samples set.
     const segment_feature* shared_seg = nullptr;
-    atroplex::test::for_each_segment(grove,
-        [&](const segment_feature& seg, key_ptr) {
-            if (seg.absorbed) return;
-            if (seg.sample_count() == 3 && shared_seg == nullptr) {
-                shared_seg = &seg;
-            }
-        });
+    for (const auto& [seg, key] : atroplex::test::collect_live_segments(grove)) {
+        if (seg->sample_count() == 3) {
+            shared_seg = seg;
+            break;
+        }
+    }
     ASSERT_NE(shared_seg, nullptr) << "Expected a shared segment with 3 samples";
 
     // >= threshold: 1, 2, 3 all true; 4 false.

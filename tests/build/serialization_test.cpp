@@ -158,16 +158,14 @@ protected:
         feature_snapshot snap;
         snap.total_edges = grove.edge_count();
 
-        atroplex::test::for_each_segment(grove,
-            [&](const segment_feature& seg, key_ptr) {
-                if (seg.absorbed) return;
-                snap.segment_count++;
-                auto [id, name, biotype] = gene_registry::instance().resolve(seg.gene_idx);
-                snap.gene_ids.insert(id);
-                for (auto tx : seg.transcript_ids) {
-                    snap.transcript_ids.insert(tx);
-                }
-            });
+        for (const auto& [seg, key] : atroplex::test::collect_live_segments(grove)) {
+            snap.segment_count++;
+            auto [id, name, biotype] = gene_registry::instance().resolve(seg->gene_idx);
+            snap.gene_ids.insert(id);
+            for (auto tx : seg->transcript_ids) {
+                snap.transcript_ids.insert(tx);
+            }
+        }
 
         return snap;
     }

@@ -308,10 +308,9 @@ TEST_F(AbsorptionTest, CrossSampleInheritance_NovelLocus) {
         << "Expected 2 distinct live segments (different exon chains, no absorption).";
 
     std::set<uint32_t> distinct_gene_idx;
-    atroplex::test::for_each_segment(*result.grove,
-        [&](const segment_feature& seg, key_ptr) {
-            if (!seg.absorbed) distinct_gene_idx.insert(seg.gene_idx);
-        });
+    for (const auto& [seg, key] : atroplex::test::collect_live_segments(*result.grove)) {
+        distinct_gene_idx.insert(seg->gene_idx);
+    }
 
     EXPECT_EQ(distinct_gene_idx.size(), 1u)
         << "Sample B's novel locus should inherit Sample A's gene_idx via "
@@ -345,10 +344,9 @@ TEST_F(AbsorptionTest, CrossSampleInheritance_MonoExonInheritsFromMultiExon) {
         << "Expected 2 live segments (multi-exon donor + mono-exon recipient).";
 
     std::set<uint32_t> distinct_gene_idx;
-    atroplex::test::for_each_segment(*result.grove,
-        [&](const segment_feature& seg, key_ptr) {
-            if (!seg.absorbed) distinct_gene_idx.insert(seg.gene_idx);
-        });
+    for (const auto& [seg, key] : atroplex::test::collect_live_segments(*result.grove)) {
+        distinct_gene_idx.insert(seg->gene_idx);
+    }
 
     EXPECT_EQ(distinct_gene_idx.size(), 1u)
         << "Mono-exon sample transcript should inherit the multi-exon "
@@ -413,10 +411,9 @@ TEST_F(AbsorptionTest, MultiGene_Adjacent_DistinctGeneIdx) {
         << "Two non-overlapping genes must produce two distinct segments.";
 
     std::set<uint32_t> gene_idx_set;
-    atroplex::test::for_each_segment(*result.grove,
-        [&](const segment_feature& seg, key_ptr) {
-            if (!seg.absorbed) gene_idx_set.insert(seg.gene_idx);
-        });
+    for (const auto& [seg, key] : atroplex::test::collect_live_segments(*result.grove)) {
+        gene_idx_set.insert(seg->gene_idx);
+    }
     EXPECT_EQ(gene_idx_set.size(), 2u)
         << "Adjacent annotated genes must have distinct gene_idx values; "
            "got " << gene_idx_set.size() << " distinct value(s).";
@@ -437,12 +434,10 @@ TEST_F(AbsorptionTest, MultiGene_OppositeStrand_DistinctGeneIdx) {
 
     std::set<uint32_t> gene_idx_set;
     std::set<char> strands_seen;
-    atroplex::test::for_each_segment(*result.grove,
-        [&](const segment_feature& seg, key_ptr key) {
-            if (seg.absorbed) return;
-            gene_idx_set.insert(seg.gene_idx);
-            strands_seen.insert(key->get_value().get_strand());
-        });
+    for (const auto& [seg, key] : atroplex::test::collect_live_segments(*result.grove)) {
+        gene_idx_set.insert(seg->gene_idx);
+        strands_seen.insert(key->get_value().get_strand());
+    }
     EXPECT_EQ(gene_idx_set.size(), 2u)
         << "Opposite-strand annotated genes must have distinct gene_idx "
            "values; got " << gene_idx_set.size() << " distinct value(s).";
