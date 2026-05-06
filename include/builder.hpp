@@ -110,10 +110,6 @@ public:
         std::unordered_set<uint64_t>* out_tombstoned_segment_indices = nullptr,
         std::unordered_map<uint64_t, uint64_t>* out_tombstone_remap = nullptr
     );
-
-    // Future extension methods for Phase 2/3:
-    // static void add_discovered_transcripts(grove_type& grove, const std::vector<alignment_entry>& reads);
-    // static void add_fusion_segments(grove_type& grove, const fusion_data& fusions);
 };
 
 #endif //ATROPLEX_GENOGROVE_BUILDER_HPP
