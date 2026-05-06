@@ -4,6 +4,7 @@
 add_executable(compact_tests compact_test.cpp)
 target_link_libraries(compact_tests PRIVATE
     atroplex_core
+    atroplex_test_utils
     gtest gtest_main
 )
 

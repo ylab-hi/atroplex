@@ -17,6 +17,7 @@ gtest_discover_tests(hub_psi_entropy_tests WORKING_DIRECTORY ${CMAKE_CURRENT_BIN
 add_executable(conserved_threshold_tests conserved_threshold_test.cpp)
 target_link_libraries(conserved_threshold_tests PRIVATE
     atroplex_core
+    atroplex_test_utils
     gtest gtest_main
 )
 

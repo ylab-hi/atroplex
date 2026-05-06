@@ -1,0 +1,18 @@
+##id: multi_gene_adjacent
+##description: Two adjacent annotated genes on the same chromosome and strand
+##description: with non-overlapping coordinate spans. G1 at chr1:1000-3000 and
+##description: G2 at chr1:5000-7000. Each gene has a single 3-exon transcript.
+##description: Verifies that distinct annotated genes produce distinct gene_idx
+##description: values — the spatial intersect should not pull G2's segment in
+##description: as a candidate when G1's transcript is processed (and vice
+##description: versa) because the spans don't overlap.
+chr1	TEST	gene	1000	3000	.	+	.	gene_id "G1"; gene_name "GeneOne"; gene_biotype "protein_coding";
+chr1	TEST	transcript	1000	3000	.	+	.	gene_id "G1"; transcript_id "TX_G1"; gene_name "GeneOne"; gene_biotype "protein_coding";
+chr1	TEST	exon	1000	1200	.	+	.	gene_id "G1"; transcript_id "TX_G1"; exon_number "1";
+chr1	TEST	exon	2000	2200	.	+	.	gene_id "G1"; transcript_id "TX_G1"; exon_number "2";
+chr1	TEST	exon	2800	3000	.	+	.	gene_id "G1"; transcript_id "TX_G1"; exon_number "3";
+chr1	TEST	gene	5000	7000	.	+	.	gene_id "G2"; gene_name "GeneTwo"; gene_biotype "protein_coding";
+chr1	TEST	transcript	5000	7000	.	+	.	gene_id "G2"; transcript_id "TX_G2"; gene_name "GeneTwo"; gene_biotype "protein_coding";
+chr1	TEST	exon	5000	5200	.	+	.	gene_id "G2"; transcript_id "TX_G2"; exon_number "1";
+chr1	TEST	exon	6000	6200	.	+	.	gene_id "G2"; transcript_id "TX_G2"; exon_number "2";
+chr1	TEST	exon	6800	7000	.	+	.	gene_id "G2"; transcript_id "TX_G2"; exon_number "3";

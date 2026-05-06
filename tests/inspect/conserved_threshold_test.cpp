@@ -24,6 +24,7 @@
 #include "analysis_report.hpp"
 #include "builder.hpp"
 #include "genomic_feature.hpp"
+#include "grove_walk.hpp"
 #include "sample_info.hpp"
 
 namespace fs = std::filesystem;
@@ -125,28 +126,12 @@ TEST_F(ConservedThresholdTest, IsConserved_GreaterEqualThreshold) {
     // Build a 3-sample grove where all three share the structure.
     auto grove = build_with(/*shared=*/3, /*distinct=*/0);
 
-    // Find the live shared segment.
+    // Find the first live segment with all three samples set.
     const segment_feature* shared_seg = nullptr;
-    auto roots = grove.get_root_nodes();
-    for (auto& [seqid, root] : roots) {
-        if (!root) continue;
-        auto* node = root;
-        while (!node->get_is_leaf()) {
-            auto& children = node->get_children();
-            if (children.empty()) break;
-            node = children[0];
-        }
-        while (node) {
-            for (auto* key : node->get_keys()) {
-                auto& feature = key->get_data();
-                if (!is_segment(feature)) continue;
-                auto& seg = get_segment(feature);
-                if (seg.absorbed) continue;
-                if (seg.sample_count() == 3 && shared_seg == nullptr) {
-                    shared_seg = &seg;
-                }
-            }
-            node = node->get_next();
+    for (const auto& [seg, key] : atroplex::test::collect_live_segments(grove)) {
+        if (seg->sample_count() == 3) {
+            shared_seg = seg;
+            break;
         }
     }
     ASSERT_NE(shared_seg, nullptr) << "Expected a shared segment with 3 samples";

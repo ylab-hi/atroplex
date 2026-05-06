@@ -1,0 +1,20 @@
+##id: multi_gene_opposite_strand
+##description: Two annotated genes overlapping at the same chromosome
+##description: coordinates but on opposite strands. G1 at chr1:1000-5000/+
+##description: and G2_ANTI at chr1:1500-4500/-. Each gene has a single
+##description: 3-exon transcript. Verifies that grove.intersect() is
+##description: strand-aware — segments on the `+` strand do not appear as
+##description: candidates for the `-` strand transcript and vice versa, so
+##description: each gene keeps its own gene_idx and the antisense gene
+##description: never inherits the sense gene's identity (or vice versa)
+##description: through spatial overlap.
+chr1	TEST	gene	1000	5000	.	+	.	gene_id "G1_SENSE"; gene_name "GeneSense"; gene_biotype "protein_coding";
+chr1	TEST	transcript	1000	5000	.	+	.	gene_id "G1_SENSE"; transcript_id "TX_SENSE"; gene_name "GeneSense"; gene_biotype "protein_coding";
+chr1	TEST	exon	1000	1200	.	+	.	gene_id "G1_SENSE"; transcript_id "TX_SENSE"; exon_number "1";
+chr1	TEST	exon	2500	2700	.	+	.	gene_id "G1_SENSE"; transcript_id "TX_SENSE"; exon_number "2";
+chr1	TEST	exon	4800	5000	.	+	.	gene_id "G1_SENSE"; transcript_id "TX_SENSE"; exon_number "3";
+chr1	TEST	gene	1500	4500	.	-	.	gene_id "G2_ANTI"; gene_name "GeneAnti"; gene_biotype "protein_coding";
+chr1	TEST	transcript	1500	4500	.	-	.	gene_id "G2_ANTI"; transcript_id "TX_ANTI"; gene_name "GeneAnti"; gene_biotype "protein_coding";
+chr1	TEST	exon	1500	1700	.	-	.	gene_id "G2_ANTI"; transcript_id "TX_ANTI"; exon_number "1";
+chr1	TEST	exon	3000	3200	.	-	.	gene_id "G2_ANTI"; transcript_id "TX_ANTI"; exon_number "2";
+chr1	TEST	exon	4300	4500	.	-	.	gene_id "G2_ANTI"; transcript_id "TX_ANTI"; exon_number "3";

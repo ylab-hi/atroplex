@@ -23,6 +23,7 @@
 #include "build_summary.hpp"
 #include "builder.hpp"
 #include "genomic_feature.hpp"
+#include "grove_walk.hpp"
 #include "sample_info.hpp"
 #include "subcall/compact.hpp"
 
@@ -139,30 +140,6 @@ protected:
         return stem;
     }
 
-    /// Walk the live B+ tree and collect every segment key — same helper
-    /// pattern as builder_pipeline_test.cpp.
-    std::vector<const segment_feature*> walk_segments(grove_type& grove) const {
-        std::vector<const segment_feature*> out;
-        for (auto& [seqid, root] : grove.get_root_nodes()) {
-            if (!root) continue;
-            auto* node = root;
-            while (!node->get_is_leaf()) {
-                auto& children = node->get_children();
-                if (children.empty()) break;
-                node = children[0];
-            }
-            while (node) {
-                for (auto* key : node->get_keys()) {
-                    auto& feature = key->get_data();
-                    if (is_segment(feature)) {
-                        out.push_back(&get_segment(feature));
-                    }
-                }
-                node = node->get_next();
-            }
-        }
-        return out;
-    }
 
     /// Drive subcall::compact through its public CLI surface so the
     /// validate/setup_grove/execute orchestration is actually exercised.
@@ -244,10 +221,10 @@ TEST_F(CompactSubcallTest, EndToEnd_RemovesTombstoneAndCopiesSidecars) {
     (void)sample_registry::deserialize(ifs);
     auto loaded = std::make_unique<grove_type>(grove_type::deserialize(ifs));
 
-    auto live = walk_segments(*loaded);
-    ASSERT_EQ(live.size(), 1u)
+    auto all = atroplex::test::collect_all_segments(*loaded);
+    ASSERT_EQ(all.size(), 1u)
         << "Compacted grove must contain exactly the parent segment";
-    EXPECT_FALSE(live[0]->absorbed)
+    EXPECT_FALSE(all[0].seg->absorbed)
         << "No segment in a compacted grove should still carry the tombstone flag";
 }
 
