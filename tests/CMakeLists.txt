@@ -16,4 +16,5 @@ include(GoogleTest)
 
 add_subdirectory(build)
 add_subdirectory(discover)
+add_subdirectory(inspect)
 add_subdirectory(query)

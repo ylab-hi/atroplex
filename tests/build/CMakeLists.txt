@@ -65,16 +65,6 @@ target_link_libraries(quant_sidecar_tests PRIVATE
 
 gtest_discover_tests(quant_sidecar_tests WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
 
-# Hub PSI + entropy integration test: builds a grove with a known hub
-# topology and verifies the .psi and .entropy columns in splicing_hubs.tsv.
-add_executable(hub_psi_entropy_tests hub_psi_entropy_test.cpp)
-target_link_libraries(hub_psi_entropy_tests PRIVATE
-    atroplex_core
-    gtest gtest_main
-)
-
-gtest_discover_tests(hub_psi_entropy_tests WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
-
 # Conserved-threshold tests: is_conserved >= semantics,
 # analysis_report::set_conserved_fraction validation, and end-to-end
 # verification that the conserved_segments.tsv content tracks the
