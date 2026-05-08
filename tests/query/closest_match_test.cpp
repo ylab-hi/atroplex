@@ -15,6 +15,7 @@
 
 #include "genomic_feature.hpp"
 #include "read_cluster.hpp"
+#include "sample_info.hpp"
 #include "transcript_matcher.hpp"
 
 namespace gdt = genogrove::data_type;
