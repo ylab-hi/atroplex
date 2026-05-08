@@ -102,6 +102,16 @@ struct match_result {
     std::optional<std::string> reference_transcript;
     std::optional<std::string> reference_gene;
 
+    // Nearest same-strand segment on the same chromosome, populated only
+    // when the query has no spatial overlap (INTERGENIC) and the matcher
+    // was configured with `find_nearest = true`. Distance is the bp gap
+    // to the nearest non-overlapping segment; direction is "upstream" or
+    // "downstream" relative to the query in genomic coordinates.
+    std::optional<std::string> closest_gene_id;
+    std::optional<std::string> closest_gene_name;
+    std::optional<size_t>      closest_distance_bp;
+    std::optional<std::string> closest_direction;
+
     // Match quality metrics
     double junction_match_score = 0.0;   // Fraction of junctions that match
     int matching_junctions = 0;
@@ -155,6 +165,9 @@ public:
         bool allow_partial = true;       // Allow partial transcript matches (ISM)
         bool track_novel = true;         // Track novel junctions
         int splice_site_window = 10;     // Window for matching splice sites as "known"
+        bool find_nearest = false;       // For INTERGENIC queries, also report
+                                         // the nearest non-overlapping same-strand
+                                         // segment via grove::flanking()
     };
 
     /**
@@ -249,6 +262,13 @@ private:
      * Find candidate segments via spatial query
      */
     std::vector<key_ptr> find_candidate_segments(const read_cluster& cluster);
+
+    /**
+     * Populate closest_* fields on `result` from the nearest non-overlapping
+     * same-strand segment. Called only when no spatial overlap was found
+     * and `cfg_.find_nearest` is set.
+     */
+    void populate_nearest(match_result& result, const read_cluster& cluster);
 
     /**
      * Get exon chain for a segment/transcript

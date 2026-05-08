@@ -14,3 +14,12 @@ target_compile_definitions(query_tests PRIVATE
 )
 
 gtest_discover_tests(query_tests WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+
+# Closest-match (flanking-based nearest neighbor) tests — fixture-free,
+# builds the grove inline.
+add_executable(closest_match_tests closest_match_test.cpp)
+target_link_libraries(closest_match_tests PRIVATE
+    atroplex_core
+    gtest gtest_main
+)
+gtest_discover_tests(closest_match_tests WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})

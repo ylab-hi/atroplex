@@ -15,6 +15,7 @@
 #include <sstream>
 #include <fstream>
 #include <cmath>
+#include <limits>
 
 // ============================================================================
 // Helper functions for category string conversion
@@ -104,6 +105,9 @@ match_result transcript_matcher::match(const read_cluster& cluster) {
 
     if (candidates.empty()) {
         result.category = structural_category::INTERGENIC;
+        if (cfg_.find_nearest) {
+            populate_nearest(result, cluster);
+        }
         update_stats(result);
         return result;
     }
@@ -153,6 +157,9 @@ match_result transcript_matcher::match(const read_cluster& cluster) {
     // No matching segment found
     if (best == nullptr) {
         result.category = structural_category::INTERGENIC;
+        if (cfg_.find_nearest) {
+            populate_nearest(result, cluster);
+        }
         update_stats(result);
         return result;
     }
@@ -611,6 +618,77 @@ key_ptr transcript_matcher::create_discovered_segment(const read_cluster& cluste
     key_ptr seg_key = grove_.insert_data(cluster.seqid, coord, feature);
 
     return seg_key;
+}
+
+void transcript_matcher::populate_nearest(match_result& result,
+                                           const read_cluster& cluster) {
+    // Same-strand predicate. Wildcard '*' (either side) matches any strand —
+    // mirrors the example given in genogrove's flanking() documentation.
+    auto same_strand = [](const auto& cand, const auto& q) {
+        return q.get_strand() == '*' || cand.get_strand() == '*'
+            || cand.get_strand() == q.get_strand();
+    };
+
+    auto query = cluster.get_coordinate();
+    auto fr = grove_.flanking(query, cluster.seqid, same_strand);
+
+    // Tombstone safety net (defense in depth). By construction, every
+    // tombstone in atroplex has a live "absorber" segment whose coordinate
+    // range strictly contains it (see try_reverse_absorption); flanking's
+    // tie-breaks pick max-end for predecessor and min-start for successor,
+    // so the live absorber always beats its absorbed children in both
+    // directions. Tombstones therefore cannot mask a real neighbor under
+    // current absorption rules. The check below stays as a safety net in
+    // case absorption ever produces an orphaned tombstone, or genogrove
+    // changes flanking's tie-break semantics.
+    auto* pred = fr.get_predecessor();
+    auto* succ = fr.get_successor();
+
+    auto live_segment = [](key_ptr k) -> const segment_feature* {
+        if (k == nullptr) return nullptr;
+        if (!is_segment(k->get_data())) return nullptr;
+        const auto& seg = get_segment(k->get_data());
+        if (seg.absorbed) return nullptr;
+        return &seg;
+    };
+
+    const segment_feature* pred_seg = live_segment(pred);
+    const segment_feature* succ_seg = live_segment(succ);
+
+    if (pred_seg == nullptr && succ_seg == nullptr) return;
+
+    // Distances. Closed-coordinate semantics matching genogrove's flanking
+    // tests: gap = 0 when abutting (pred.end == query.start - 1 or
+    // succ.start == query.end + 1).
+    size_t pred_dist = std::numeric_limits<size_t>::max();
+    size_t succ_dist = std::numeric_limits<size_t>::max();
+
+    if (pred_seg != nullptr) {
+        size_t pred_end = pred->get_value().get_end();
+        pred_dist = (query.get_start() > pred_end + 1)
+            ? (query.get_start() - pred_end - 1) : 0;
+    }
+    if (succ_seg != nullptr) {
+        size_t succ_start = succ->get_value().get_start();
+        succ_dist = (succ_start > query.get_end() + 1)
+            ? (succ_start - query.get_end() - 1) : 0;
+    }
+
+    // Pick the closer side. On a tie, prefer upstream (predecessor) for
+    // determinism — purely a tie-break convention.
+    bool pick_pred = (pred_seg != nullptr) && (pred_dist <= succ_dist);
+    const segment_feature* picked = pick_pred ? pred_seg : succ_seg;
+    size_t distance = pick_pred ? pred_dist : succ_dist;
+
+    // Direction is computed in genomic coordinates (not strand-relative):
+    // upstream = neighbor lies before query in genomic order, regardless
+    // of strand. This matches how IGV / UCSC describe relative position.
+    std::string direction = pick_pred ? "upstream" : "downstream";
+
+    result.closest_gene_id      = picked->gene_id();
+    result.closest_gene_name    = picked->gene_name();
+    result.closest_distance_bp  = distance;
+    result.closest_direction    = std::move(direction);
 }
 
 std::vector<splice_junction> transcript_matcher::extract_reference_junctions(

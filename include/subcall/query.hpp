@@ -66,6 +66,13 @@ struct query_result {
     int known_acceptors = 0;
     int novel_donors = 0;
     int novel_acceptors = 0;
+
+    // Nearest non-overlapping same-strand segment (only set when --nearest
+    // is enabled and the query is INTERGENIC with a flanking hit).
+    std::optional<std::string> closest_gene_id;
+    std::optional<std::string> closest_gene_name;
+    std::optional<size_t>      closest_distance_bp;
+    std::optional<std::string> closest_direction;
 };
 
 /**
@@ -114,7 +121,8 @@ private:
     /**
      * Classify input transcripts from GTF/GFF against the grove
      */
-    std::vector<query_result> classify_transcripts(const std::string& input_path);
+    std::vector<query_result> classify_transcripts(const std::string& input_path,
+                                                    bool find_nearest);
 
     /**
      * Run differential transcript usage for a single contrast.
