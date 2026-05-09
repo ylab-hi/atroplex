@@ -36,11 +36,9 @@ protected:
     key_ptr insert_segment(const std::string& seqid, char strand,
                             size_t start, size_t end,
                             const std::string& gene_id,
-                            const std::string& gene_name = "",
-                            bool absorbed = false) {
+                            const std::string& gene_name = "") {
         segment_feature seg;
         seg.gene_idx = gene_registry::instance().intern(gene_id, gene_name, "");
-        seg.absorbed = absorbed;
         gdt::genomic_coordinate coord(strand, start, end);
         genomic_feature feature = seg;
         return grove->insert_data(seqid, coord, feature);
@@ -154,6 +152,23 @@ TEST_F(ClosestMatchTest, OppositeStrandNeighborSkipped) {
     ASSERT_TRUE(result.closest_gene_id.has_value());
     EXPECT_EQ(*result.closest_gene_id, "GENE_PLUS_FAR")
         << "Same-strand predicate should skip the closer minus-strand segment";
+}
+
+TEST_F(ClosestMatchTest, NegativeStrandQueryPicksNegativeStrandNeighbor) {
+    // Symmetric counterpart to OppositeStrandNeighborSkipped: a `-`
+    // query selects its `-` neighbor and skips the closer `+` segment.
+    // Pins the predicate's symmetry — both directions of the strand
+    // check are exercised across the matrix of (query strand, neighbor
+    // strand) cases.
+    insert_segment("chr1", '+', 4000, 4500, "GENE_PLUS_NEAR");
+    insert_segment("chr1", '-', 1000, 2000, "GENE_MINUS_FAR");
+
+    transcript_matcher matcher(*grove, config_with_nearest(true));
+    auto result = matcher.match(make_query("chr1", '-', 5000, 6000));
+
+    ASSERT_TRUE(result.closest_gene_id.has_value());
+    EXPECT_EQ(*result.closest_gene_id, "GENE_MINUS_FAR");
+    EXPECT_EQ(*result.closest_direction, "upstream");
 }
 
 TEST_F(ClosestMatchTest, WildcardQueryMatchesAnyStrand) {

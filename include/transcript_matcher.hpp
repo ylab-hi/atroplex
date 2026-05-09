@@ -103,10 +103,14 @@ struct match_result {
     std::optional<std::string> reference_gene;
 
     // Nearest same-strand segment on the same chromosome, populated only
-    // when the query has no spatial overlap (INTERGENIC) and the matcher
-    // was configured with `find_nearest = true`. Distance is the bp gap
-    // to the nearest non-overlapping segment; direction is "upstream" or
-    // "downstream" relative to the query in genomic coordinates.
+    // when `result.category == INTERGENIC` and the matcher was configured
+    // with `find_nearest = true`. The reported neighbor is always
+    // non-overlapping with the query — `grove::flanking()` excludes
+    // overlapping keys structurally — even though the second INTERGENIC
+    // fall-through can be reached on a query that spatially overlaps a
+    // segment with no exon edges. Distance is the bp gap to that
+    // non-overlapping neighbor; direction is "upstream" or "downstream"
+    // relative to the query in genomic coordinates.
     std::optional<std::string> closest_gene_id;
     std::optional<std::string> closest_gene_name;
     std::optional<size_t>      closest_distance_bp;
