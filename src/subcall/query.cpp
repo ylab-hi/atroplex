@@ -409,11 +409,19 @@ void query::write_classification(const std::string& path,
             << r.sample_ids.size();
 
         if (emit_closest_cols) {
-            out << "\t" << r.closest_gene_id.value_or(".")
-                << "\t" << r.closest_gene_name.value_or(".")
+            // value_or(".") only fires when the optional is empty; for
+            // present-but-empty strings (e.g., a registry entry with no
+            // gene_name attribute in the source GFF) we still want "."
+            // rather than a literal blank field.
+            auto opt_str = [](const std::optional<std::string>& o) {
+                if (!o.has_value() || o->empty()) return std::string(".");
+                return *o;
+            };
+            out << "\t" << opt_str(r.closest_gene_id)
+                << "\t" << opt_str(r.closest_gene_name)
                 << "\t" << (r.closest_distance_bp.has_value()
                               ? std::to_string(*r.closest_distance_bp) : ".")
-                << "\t" << r.closest_direction.value_or(".");
+                << "\t" << opt_str(r.closest_direction);
         }
 
         // Per-sample presence
