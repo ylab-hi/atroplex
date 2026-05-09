@@ -88,7 +88,11 @@ cxxopts::Options query::parse_args(int argc, char** argv) {
             "For INTERGENIC transcripts (no spatial overlap with any indexed "
             "segment), also report the nearest non-overlapping same-strand "
             "segment. Adds closest_gene_id / closest_gene_name / "
-            "closest_distance_bp / closest_direction columns to query.tsv.",
+            "closest_distance_bp / closest_direction columns to query.tsv. "
+            "Use only on a compacted index (run `atroplex compact` first): "
+            "tombstoned segments can extend past their live absorber's "
+            "coordinate range under the absorption tolerances, and "
+            "non-compacted inputs may surface tombstones as nearest matches.",
             cxxopts::value<bool>()->default_value("false"))
         ;
 

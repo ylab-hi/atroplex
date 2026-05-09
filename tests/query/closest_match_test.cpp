@@ -189,37 +189,6 @@ TEST_F(ClosestMatchTest, MissingChromosomeLeavesClosestUnset) {
     EXPECT_FALSE(result.closest_gene_id.has_value());
 }
 
-TEST_F(ClosestMatchTest, LiveAbsorberBeatsItsTombstoneAtSameLocus) {
-    // In atroplex, every tombstone has a live "absorber" segment in the
-    // grove whose coordinate range strictly contains the tombstone's
-    // (try_reverse_absorption inserts the longer parent live and tombstones
-    // the shorter contained candidate). flanking()'s tie-breaks pick max-end
-    // for the predecessor and min-start for the successor, so the live
-    // absorber always beats its tombstoned children in both directions —
-    // tombstones cannot mask a real neighbor.
-    //
-    // This test exercises that property: a live parent at [3500, 5500]
-    // contains its absorbed child at [4000, 4500]. Query at [6500, 7500]
-    // sits to the right of both. flanking's predecessor by max-end is the
-    // parent (end=5500 > 4500), which is also live — so it gets reported.
-    //
-    // The defense-in-depth `live_segment` filter in populate_nearest exists
-    // for safety if absorption ever produces an unparented tombstone; this
-    // test pins the by-construction guarantee.
-    auto* parent = insert_segment("chr1", '+', 3500, 5500, "GENE_PARENT");
-    insert_segment("chr1", '+', 4000, 4500, "GENE_ABSORBED",
-                   /*gene_name=*/"", /*absorbed=*/true);
-    (void)parent;
-
-    transcript_matcher matcher(*grove, config_with_nearest(true));
-    auto result = matcher.match(make_query("chr1", '+', 6500, 7500));
-
-    ASSERT_TRUE(result.closest_gene_id.has_value());
-    EXPECT_EQ(*result.closest_gene_id, "GENE_PARENT");
-    EXPECT_EQ(*result.closest_direction, "upstream");
-    // Closed-coord gap: 6500 - 5500 - 1 = 999
-    EXPECT_EQ(*result.closest_distance_bp, 999u);
-}
 
 // ── overlapping segments are skipped by flanking ─────────────────────
 

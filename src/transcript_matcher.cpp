@@ -632,28 +632,25 @@ void transcript_matcher::populate_nearest(match_result& result,
     auto query = cluster.get_coordinate();
     auto fr = grove_.flanking(query, cluster.seqid, same_strand);
 
-    // Tombstone safety net (defense in depth). By construction, every
-    // tombstone in atroplex has a live "absorber" segment whose coordinate
-    // range strictly contains it (see try_reverse_absorption); flanking's
-    // tie-breaks pick max-end for predecessor and min-start for successor,
-    // so the live absorber always beats its absorbed children in both
-    // directions. Tombstones therefore cannot mask a real neighbor under
-    // current absorption rules. The check below stays as a safety net in
-    // case absorption ever produces an orphaned tombstone, or genogrove
-    // changes flanking's tie-break semantics.
+    // Run --nearest only against compacted indexes — `atroplex compact`
+    // physically removes tombstoned segments via grove.remove_key(). This
+    // matcher does NOT filter tombstones here: under the absorption rules
+    // (Rule 5 ±50 bp terminal tolerance, fuzzy ISM ±5 bp) a tombstone's
+    // coordinate range can extend past its live absorber's, so flanking's
+    // max-end / min-start tie-break could surface the tombstone over the
+    // live parent. Filtering would silently drop those reports; refusing
+    // to filter and demanding a compact input keeps the contract simple.
     auto* pred = fr.get_predecessor();
     auto* succ = fr.get_successor();
 
-    auto live_segment = [](key_ptr k) -> const segment_feature* {
+    auto segment_from = [](key_ptr k) -> const segment_feature* {
         if (k == nullptr) return nullptr;
         if (!is_segment(k->get_data())) return nullptr;
-        const auto& seg = get_segment(k->get_data());
-        if (seg.absorbed) return nullptr;
-        return &seg;
+        return &get_segment(k->get_data());
     };
 
-    const segment_feature* pred_seg = live_segment(pred);
-    const segment_feature* succ_seg = live_segment(succ);
+    const segment_feature* pred_seg = segment_from(pred);
+    const segment_feature* succ_seg = segment_from(succ);
 
     if (pred_seg == nullptr && succ_seg == nullptr) return;
 
