@@ -140,6 +140,27 @@ TEST_F(ClosestMatchTest, PicksClosestOfBracketingPair) {
     EXPECT_EQ(downward.closest_distance_bp.value_or(0u), 100u);
 }
 
+// ── closed-coord boundary case (abutting → gap = 0) ──────────────────
+
+TEST_F(ClosestMatchTest, AbuttingNeighborHasZeroDistance) {
+    // Closed-coord semantics in populate_nearest:
+    //   gap = 0 when neighbor.end == query.start - 1 (predecessor side)
+    //          or neighbor.start == query.end + 1   (successor side).
+    // Pin the boundary so a future change to the distance arithmetic
+    // (signed/unsigned, half-open coords) shows up as a test failure
+    // instead of off-by-one drift.
+    insert_segment("chr1", '+', 1000, 4999, "GENE_PRED_ABUT");
+
+    transcript_matcher matcher(*grove, config_with_nearest(true));
+    auto result = matcher.match(make_query("chr1", '+', 5000, 6000));
+
+    ASSERT_TRUE(result.closest_gene_id.has_value());
+    EXPECT_EQ(*result.closest_gene_id, "GENE_PRED_ABUT");
+    EXPECT_EQ(*result.closest_direction, "upstream");
+    EXPECT_EQ(*result.closest_distance_bp, 0u)
+        << "Abutting predecessor must report zero gap";
+}
+
 // ── strand filtering via flanking predicate ──────────────────────────
 
 TEST_F(ClosestMatchTest, OppositeStrandNeighborSkipped) {

@@ -23,3 +23,13 @@ target_link_libraries(closest_match_tests PRIVATE
     gtest gtest_main
 )
 gtest_discover_tests(closest_match_tests WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+
+# Writer-level tests for query::write_classification — drives the writer
+# directly with a synthetic vector<query_result>, asserts column schema
+# with/without --nearest. Fixture-free; reads the temp output file back.
+add_executable(write_classification_tests write_classification_test.cpp)
+target_link_libraries(write_classification_tests PRIVATE
+    atroplex_core
+    gtest gtest_main
+)
+gtest_discover_tests(write_classification_tests WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})

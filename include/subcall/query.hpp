@@ -147,8 +147,16 @@ private:
                               double fdr_threshold);
 
     // Output
-    void write_classification(const std::string& path,
-                              const std::vector<query_result>& results);
+    //
+    // `write_classification` is static so unit tests can drive it with a
+    // synthetic `vector<query_result>` and a nullable reader; the only
+    // member-state dependency before this refactor was `qtx_reader_ptr()`
+    // which is now passed explicitly.
+public:
+    static void write_classification(const std::string& path,
+                                     const std::vector<query_result>& results,
+                                     quant_sidecar::Reader* qtx_reader);
+private:
     void write_dtu_results(const std::string& path,
                            const query_contrast& contrast,
                            const std::vector<dtu_result>& results);

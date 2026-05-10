@@ -167,7 +167,7 @@ void query::execute(const cxxopts::ParseResult& args) {
     std::string basename = std::filesystem::path(input_path).stem().string();
 
     std::string class_path = (out_dir / (basename + ".query.tsv")).string();
-    write_classification(class_path, results);
+    write_classification(class_path, results, qtx_reader_ptr());
 
     // Step 3: Optional DTU analysis (one output file per contrast)
     std::vector<std::pair<query_contrast, std::vector<dtu_result>>> all_dtu;
@@ -320,7 +320,8 @@ std::vector<query_result> query::classify_transcripts(const std::string& input_p
 // ============================================================================
 
 void query::write_classification(const std::string& path,
-                                  const std::vector<query_result>& results) {
+                                  const std::vector<query_result>& results,
+                                  quant_sidecar::Reader* qtx_reader) {
     std::ofstream out(path);
     if (!out.is_open()) {
         logging::error("Cannot open output file: " + path);
@@ -340,7 +341,7 @@ void query::write_classification(const std::string& path,
     // Emit per-sample expression columns only when a .qtx sidecar was
     // loaded alongside the grove. Without it every row would be `.` —
     // noisy columns that say "no data" for every value.
-    const bool emit_expression_cols = qtx_reader_ptr() != nullptr;
+    const bool emit_expression_cols = (qtx_reader != nullptr);
 
     // Emit closest_* columns only when --nearest was set (any row carries
     // a populated closest field). Avoids dead `.` columns by default.
