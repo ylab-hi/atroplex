@@ -33,3 +33,15 @@ target_link_libraries(write_classification_tests PRIVATE
     gtest gtest_main
 )
 gtest_discover_tests(write_classification_tests WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+
+# End-to-end integration: matcher → query_result → write_classification.
+# Covers the two open QC items on PR #91 — that running `atroplex query
+# --nearest` adds closest_* columns to query.tsv for INTERGENIC rows,
+# and that running without --nearest still emits every classification.
+add_executable(nearest_integration_tests nearest_integration_test.cpp)
+target_link_libraries(nearest_integration_tests PRIVATE
+    atroplex_core
+    gtest gtest_main
+)
+gtest_discover_tests(nearest_integration_tests WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+
