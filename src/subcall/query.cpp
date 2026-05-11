@@ -84,6 +84,16 @@ cxxopts::Options query::parse_args(int argc, char** argv) {
             cxxopts::value<double>()->default_value("0.8"))
         ("min-overlap", "Minimum overlap with reference segment (bp)",
             cxxopts::value<int>()->default_value("50"))
+        ("nearest",
+            "For INTERGENIC transcripts (no spatial overlap with any indexed "
+            "segment), also report the nearest non-overlapping same-strand "
+            "segment. Adds closest_gene_id / closest_gene_name / "
+            "closest_distance_bp / closest_direction columns to query.tsv. "
+            "Use only on a compacted index (run `atroplex compact` first): "
+            "tombstoned segments can extend past their live absorber's "
+            "coordinate range under the absorption tolerances, and "
+            "non-compacted inputs may surface tombstones as nearest matches.",
+            cxxopts::value<bool>()->default_value("false"))
         ;
 
     options.add_options("Differential usage")
@@ -135,10 +145,11 @@ void query::execute(const cxxopts::ParseResult& args) {
     }
 
     std::string input_path = args["input"].as<std::string>();
+    bool find_nearest = args["nearest"].as<bool>();
     logging::info("Classifying transcripts from: " + input_path);
 
     // Step 1: Classify input transcripts against the grove
-    auto results = classify_transcripts(input_path);
+    auto results = classify_transcripts(input_path, find_nearest);
 
     // Log classification summary
     std::map<structural_category, size_t> category_counts;
@@ -156,7 +167,7 @@ void query::execute(const cxxopts::ParseResult& args) {
     std::string basename = std::filesystem::path(input_path).stem().string();
 
     std::string class_path = (out_dir / (basename + ".query.tsv")).string();
-    write_classification(class_path, results);
+    write_classification(class_path, results, qtx_reader_ptr());
 
     // Step 3: Optional DTU analysis (one output file per contrast)
     std::vector<std::pair<query_contrast, std::vector<dtu_result>>> all_dtu;
@@ -196,7 +207,8 @@ void query::execute(const cxxopts::ParseResult& args) {
 // Transcript classification
 // ============================================================================
 
-std::vector<query_result> query::classify_transcripts(const std::string& input_path) {
+std::vector<query_result> query::classify_transcripts(const std::string& input_path,
+                                                        bool find_nearest) {
     std::vector<query_result> results;
 
     // Configure matcher
@@ -204,6 +216,7 @@ std::vector<query_result> query::classify_transcripts(const std::string& input_p
     match_cfg.junction_tolerance = 5;
     match_cfg.min_junction_score = 0.8;
     match_cfg.min_overlap_bp = 50;
+    match_cfg.find_nearest = find_nearest;
 
     transcript_matcher matcher(*grove, match_cfg);
 
@@ -265,6 +278,11 @@ std::vector<query_result> query::classify_transcripts(const std::string& input_p
         qr.novel_donors = match.novel_donors;
         qr.novel_acceptors = match.novel_acceptors;
 
+        qr.closest_gene_id     = match.closest_gene_id;
+        qr.closest_gene_name   = match.closest_gene_name;
+        qr.closest_distance_bp = match.closest_distance_bp;
+        qr.closest_direction   = match.closest_direction;
+
         if (match.has_match()) {
             qr.gene_id = match.reference_gene.value_or(".");
             qr.gene_name = ".";
@@ -302,7 +320,8 @@ std::vector<query_result> query::classify_transcripts(const std::string& input_p
 // ============================================================================
 
 void query::write_classification(const std::string& path,
-                                  const std::vector<query_result>& results) {
+                                  const std::vector<query_result>& results,
+                                  quant_sidecar::Reader* qtx_reader) {
     std::ofstream out(path);
     if (!out.is_open()) {
         logging::error("Cannot open output file: " + path);
@@ -322,7 +341,12 @@ void query::write_classification(const std::string& path,
     // Emit per-sample expression columns only when a .qtx sidecar was
     // loaded alongside the grove. Without it every row would be `.` —
     // noisy columns that say "no data" for every value.
-    const bool emit_expression_cols = qtx_reader_ptr() != nullptr;
+    const bool emit_expression_cols = (qtx_reader != nullptr);
+
+    // Emit closest_* columns only when --nearest was set (any row carries
+    // a populated closest field). Avoids dead `.` columns by default.
+    const bool emit_closest_cols = std::any_of(results.begin(), results.end(),
+        [](const query_result& r) { return r.closest_gene_id.has_value(); });
 
     // Header
     out << "transcript_id\tgene_id\tgene_name\t"
@@ -332,6 +356,11 @@ void query::write_classification(const std::string& path,
         << "known_donors\tknown_acceptors\t"
         << "novel_donors\tnovel_acceptors\t"
         << "n_samples";
+
+    if (emit_closest_cols) {
+        out << "\tclosest_gene_id\tclosest_gene_name\t"
+            << "closest_distance_bp\tclosest_direction";
+    }
 
     // Per-sample presence columns
     for (uint32_t sid : sample_ids) {
@@ -351,15 +380,24 @@ void query::write_classification(const std::string& path,
     }
     out << "\n";
 
-    // Rows — skip unmatched transcripts (intergenic/antisense/genic with no
-    // useful per-sample data; counts are in the summary file)
+    // Rows — emit every classified transcript, including INTERGENIC and
+    // ANTISENSE. The previous skip-INTERGENIC behavior contradicted the
+    // intent of #53 ("rather than silently dropping it from the output");
+    // users querying a catalog need to see which input transcripts were
+    // classified as INTERGENIC, not just an aggregate count in the
+    // summary file. Per-sample presence cells naturally fall to 0 (empty
+    // sample_ids) and expression cells to "." (empty sample_expression),
+    // so the schema stays uniform across categories.
     for (const auto& r : results) {
-        if (r.category == structural_category::INTERGENIC ||
-            r.category == structural_category::ANTISENSE) continue;
+        // INTERGENIC / ANTISENSE rows have no overlap-based gene
+        // assignment; emit "." rather than an empty field so the column
+        // count stays consistent.
+        const std::string gid   = r.gene_id.empty()   ? "." : r.gene_id;
+        const std::string gname = r.gene_name.empty() ? "." : r.gene_name;
 
         out << r.transcript_id << "\t"
-            << r.gene_id << "\t"
-            << r.gene_name << "\t"
+            << gid << "\t"
+            << gname << "\t"
             << to_string(r.category) << "\t"
             << r.subcat.to_string() << "\t"
             << r.junction_match_score << "\t"
@@ -371,6 +409,22 @@ void query::write_classification(const std::string& path,
             << r.novel_donors << "\t"
             << r.novel_acceptors << "\t"
             << r.sample_ids.size();
+
+        if (emit_closest_cols) {
+            // value_or(".") only fires when the optional is empty; for
+            // present-but-empty strings (e.g., a registry entry with no
+            // gene_name attribute in the source GFF) we still want "."
+            // rather than a literal blank field.
+            auto opt_str = [](const std::optional<std::string>& o) {
+                if (!o.has_value() || o->empty()) return std::string(".");
+                return *o;
+            };
+            out << "\t" << opt_str(r.closest_gene_id)
+                << "\t" << opt_str(r.closest_gene_name)
+                << "\t" << (r.closest_distance_bp.has_value()
+                              ? std::to_string(*r.closest_distance_bp) : ".")
+                << "\t" << opt_str(r.closest_direction);
+        }
 
         // Per-sample presence
         std::set<uint32_t> present_set(r.sample_ids.begin(), r.sample_ids.end());

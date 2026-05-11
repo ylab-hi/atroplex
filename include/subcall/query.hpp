@@ -66,6 +66,13 @@ struct query_result {
     int known_acceptors = 0;
     int novel_donors = 0;
     int novel_acceptors = 0;
+
+    // Nearest non-overlapping same-strand segment (only set when --nearest
+    // is enabled and the query is INTERGENIC with a flanking hit).
+    std::optional<std::string> closest_gene_id;
+    std::optional<std::string> closest_gene_name;
+    std::optional<size_t>      closest_distance_bp;
+    std::optional<std::string> closest_direction;
 };
 
 /**
@@ -114,7 +121,8 @@ private:
     /**
      * Classify input transcripts from GTF/GFF against the grove
      */
-    std::vector<query_result> classify_transcripts(const std::string& input_path);
+    std::vector<query_result> classify_transcripts(const std::string& input_path,
+                                                    bool find_nearest);
 
     /**
      * Run differential transcript usage for a single contrast.
@@ -139,15 +147,23 @@ private:
                               double fdr_threshold);
 
     // Output
-    void write_classification(const std::string& path,
-                              const std::vector<query_result>& results);
-    void write_dtu_results(const std::string& path,
-                           const query_contrast& contrast,
-                           const std::vector<dtu_result>& results);
-    void write_summary(const std::string& path,
-                       const std::vector<query_result>& classification,
-                       const std::vector<std::pair<query_contrast,
-                           std::vector<dtu_result>>>& dtu_results);
+    //
+    // All three writers are public statics so unit tests can drive them
+    // with synthetic inputs. None used member state besides
+    // `qtx_reader_ptr()` (only `write_classification`), which is now
+    // passed explicitly. Callers in `execute()` pass `qtx_reader_ptr()`;
+    // tests pass `nullptr` to disable per-sample expression columns.
+public:
+    static void write_classification(const std::string& path,
+                                     const std::vector<query_result>& results,
+                                     quant_sidecar::Reader* qtx_reader);
+    static void write_dtu_results(const std::string& path,
+                                  const query_contrast& contrast,
+                                  const std::vector<dtu_result>& results);
+    static void write_summary(const std::string& path,
+                              const std::vector<query_result>& classification,
+                              const std::vector<std::pair<query_contrast,
+                                  std::vector<dtu_result>>>& dtu_results);
 };
 
 } // namespace subcall

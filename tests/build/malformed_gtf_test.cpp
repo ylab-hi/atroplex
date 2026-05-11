@@ -103,24 +103,25 @@ protected:
 
 // ── Empty file ──────────────────────────────────────────────────────
 //
-// genogrove's gff reader actively rejects files that yield zero
-// records, throwing `std::runtime_error("No valid GFF data found in
-// <path>")`. An accidentally-empty file gets a sharp error rather than
-// a silently-empty grove — better UX. Pinned here so a future relaxation
-// (e.g. "warn but produce empty grove") flips a single assertion.
-TEST_F(MalformedGtfTest, EmptyFile_RejectedByReader) {
+// genogrove ≥ v0.22.0 ([genogrove#310](https://github.com/genogrove/genogrove/issues/310))
+// no longer throws on zero-record inputs; the reader returns an empty
+// iterator and `build` produces an empty grove. Lets batch consumers
+// (cohort-scale builds with mixed-quality inputs) decide their own
+// policy on empty inputs without aborting the whole job.
+TEST_F(MalformedGtfTest, EmptyFile_ProducesEmptyGrove) {
     auto path = write_gtf("empty.gtf", "");
 
-    EXPECT_ANY_THROW(build(path))
-        << "Zero-byte input file must be rejected by the gff reader.";
+    auto out = build(path);
+    EXPECT_EQ(out.segment_count, 0u);
+    EXPECT_EQ(out.live_segments, 0u);
 }
 
 // ── Comments / blank lines only ─────────────────────────────────────
 //
 // Same invariant as the empty-file case: the gff reader skips
-// comment/blank lines and ends up with zero records, which triggers
-// the same "No valid GFF data found" rejection.
-TEST_F(MalformedGtfTest, CommentsAndBlankLinesOnly_RejectedByReader) {
+// comment/blank lines and ends up with zero records, which is now a
+// structurally-valid but record-empty input.
+TEST_F(MalformedGtfTest, CommentsAndBlankLinesOnly_ProducesEmptyGrove) {
     auto path = write_gtf("comments.gtf",
         "##gff-version 3\n"
         "# this is a comment\n"
@@ -128,10 +129,9 @@ TEST_F(MalformedGtfTest, CommentsAndBlankLinesOnly_RejectedByReader) {
         "## another comment\n"
         "\n");
 
-    EXPECT_ANY_THROW(build(path))
-        << "Comments-only file is record-empty after parsing — must be "
-           "rejected by the gff reader for the same reason as a fully "
-           "empty file.";
+    auto out = build(path);
+    EXPECT_EQ(out.segment_count, 0u);
+    EXPECT_EQ(out.live_segments, 0u);
 }
 
 // ── Non-existent file ───────────────────────────────────────────────
