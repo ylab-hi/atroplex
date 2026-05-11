@@ -148,22 +148,22 @@ private:
 
     // Output
     //
-    // `write_classification` is static so unit tests can drive it with a
-    // synthetic `vector<query_result>` and a nullable reader; the only
-    // member-state dependency before this refactor was `qtx_reader_ptr()`
-    // which is now passed explicitly.
+    // All three writers are public statics so unit tests can drive them
+    // with synthetic inputs. None used member state besides
+    // `qtx_reader_ptr()` (only `write_classification`), which is now
+    // passed explicitly. Callers in `execute()` pass `qtx_reader_ptr()`;
+    // tests pass `nullptr` to disable per-sample expression columns.
 public:
     static void write_classification(const std::string& path,
                                      const std::vector<query_result>& results,
                                      quant_sidecar::Reader* qtx_reader);
-private:
-    void write_dtu_results(const std::string& path,
-                           const query_contrast& contrast,
-                           const std::vector<dtu_result>& results);
-    void write_summary(const std::string& path,
-                       const std::vector<query_result>& classification,
-                       const std::vector<std::pair<query_contrast,
-                           std::vector<dtu_result>>>& dtu_results);
+    static void write_dtu_results(const std::string& path,
+                                  const query_contrast& contrast,
+                                  const std::vector<dtu_result>& results);
+    static void write_summary(const std::string& path,
+                              const std::vector<query_result>& classification,
+                              const std::vector<std::pair<query_contrast,
+                                  std::vector<dtu_result>>>& dtu_results);
 };
 
 } // namespace subcall
