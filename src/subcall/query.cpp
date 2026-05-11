@@ -380,17 +380,18 @@ void query::write_classification(const std::string& path,
     }
     out << "\n";
 
-    // Rows — skip unmatched transcripts (intergenic/antisense/genic with no
-    // useful per-sample data; counts are in the summary file). With
-    // --nearest, INTERGENIC rows that picked up a flanking neighbor are
-    // kept so the closest_* columns are visible.
+    // Rows — emit every classified transcript, including INTERGENIC and
+    // ANTISENSE. The previous skip-INTERGENIC behavior contradicted the
+    // intent of #53 ("rather than silently dropping it from the output");
+    // users querying a catalog need to see which input transcripts were
+    // classified as INTERGENIC, not just an aggregate count in the
+    // summary file. Per-sample presence cells naturally fall to 0 (empty
+    // sample_ids) and expression cells to "." (empty sample_expression),
+    // so the schema stays uniform across categories.
     for (const auto& r : results) {
-        const bool has_closest = r.closest_gene_id.has_value();
-        if ((r.category == structural_category::INTERGENIC && !has_closest) ||
-            r.category == structural_category::ANTISENSE) continue;
-
-        // INTERGENIC rows have no overlap-based gene assignment; emit
-        // "." rather than an empty field so column count stays consistent.
+        // INTERGENIC / ANTISENSE rows have no overlap-based gene
+        // assignment; emit "." rather than an empty field so the column
+        // count stays consistent.
         const std::string gid   = r.gene_id.empty()   ? "." : r.gene_id;
         const std::string gname = r.gene_name.empty() ? "." : r.gene_name;
 

@@ -4,12 +4,14 @@
  * inputs and reads the output file back to assert schema invariants
  * around `--nearest` (atroplex#53):
  *
+ *   - Every classified row is emitted, INTERGENIC and ANTISENSE
+ *     included (the previous skip behavior contradicted #53's "rather
+ *     than silently dropping it from the output").
  *   - Without --nearest (no row has closest_*): header omits the four
- *     closest_* columns, INTERGENIC rows are skipped.
+ *     closest_* columns.
  *   - With --nearest (some row has closest_*): header includes the four
- *     closest_* columns, INTERGENIC rows that picked up a flanking
- *     neighbor are emitted, INTERGENIC rows without a neighbor are still
- *     skipped, and present-but-empty `closest_gene_name` coalesces to "."
+ *     closest_* columns; rows without a flanking neighbor leave them
+ *     as "." and present-but-empty `closest_gene_name` coalesces to "."
  *     (writer's opt_str helper).
  *
  * Reader is passed as nullptr so per-sample expression columns are
@@ -82,9 +84,8 @@ protected:
         if (fs::exists(tmp)) fs::remove(tmp);
     }
 
-    /// Build a query_result for an FSM/NIC-style row that survives the
-    /// writer's "skip unmatched" filter (anything other than INTERGENIC
-    /// or ANTISENSE without closest is emitted).
+    /// Build a query_result for an FSM/NIC-style row (the writer emits
+    /// every classification now; this helper is just for ergonomics).
     subcall::query_result make_classified_row(
         const std::string& tx,
         structural_category cat,
@@ -118,29 +119,37 @@ protected:
     fs::path tmp;
 };
 
-// ── --nearest off (no row has closest_*) ─────────────────────────────
+// ── every classification is emitted ──────────────────────────────────
 
-TEST_F(WriteClassificationTest, WithoutNearest_NoClosestColumnsAndIntergenicSkipped) {
+TEST_F(WriteClassificationTest, AllClassificationsEmitted_NoClosestCols) {
+    // Without --nearest, no row carries closest_*, so the header omits
+    // the four closest_* columns. Every row is still emitted — FSM,
+    // INTERGENIC, and ANTISENSE all show up so users can see which
+    // input transcripts landed in each category (#53's stated motivation).
     std::vector<subcall::query_result> results;
     results.push_back(make_classified_row("TX_FSM", structural_category::FSM,
                                           "GENE_A", "GeneA"));
     results.push_back(make_intergenic_row("TX_INTERGENIC"));
+    {
+        subcall::query_result anti;
+        anti.transcript_id = "TX_ANTISENSE";
+        anti.category = structural_category::ANTISENSE;
+        results.push_back(anti);
+    }
 
     subcall::query::write_classification(tmp.string(), results, /*qtx_reader=*/nullptr);
 
     auto lines = split_lines(slurp(tmp));
-    ASSERT_FALSE(lines.empty());
+    ASSERT_EQ(lines.size(), 4u) << "Expect header + 3 emitted rows";
 
     auto header = split_tabs(lines.front());
     EXPECT_EQ(std::find(header.begin(), header.end(),
                         std::string("closest_gene_id")), header.end())
         << "Header must NOT include closest_* columns when no row has them";
 
-    // Only the FSM row makes it through; INTERGENIC without closest is
-    // still skipped.
-    ASSERT_EQ(lines.size(), 2u) << "Expect header + 1 emitted row";
-    auto fsm_fields = split_tabs(lines[1]);
-    EXPECT_EQ(fsm_fields.front(), "TX_FSM");
+    EXPECT_EQ(split_tabs(lines[1]).front(), "TX_FSM");
+    EXPECT_EQ(split_tabs(lines[2]).front(), "TX_INTERGENIC");
+    EXPECT_EQ(split_tabs(lines[3]).front(), "TX_ANTISENSE");
 }
 
 // ── --nearest on, INTERGENIC with neighbor emitted ───────────────────
@@ -148,10 +157,10 @@ TEST_F(WriteClassificationTest, WithoutNearest_NoClosestColumnsAndIntergenicSkip
 TEST_F(WriteClassificationTest, WithNearest_HeaderIncludesClosestColumns) {
     std::vector<subcall::query_result> results;
     results.push_back(make_intergenic_row("TX_NEAR",
-                                          /*gene_id=*/std::string("GENE_NEAR"),
-                                          /*gene_name=*/std::string("GeneNear"),
-                                          /*distance=*/size_t(123),
-                                          /*direction=*/std::string("upstream")));
+                                          /*closest_gene_id=*/std::string("GENE_NEAR"),
+                                          /*closest_gene_name=*/std::string("GeneNear"),
+                                          /*closest_distance=*/static_cast<size_t>(123),
+                                          /*closest_direction=*/std::string("upstream")));
 
     subcall::query::write_classification(tmp.string(), results, nullptr);
 
@@ -180,24 +189,41 @@ TEST_F(WriteClassificationTest, WithNearest_HeaderIncludesClosestColumns) {
     EXPECT_EQ(row[col_index("closest_direction")],   "upstream");
 }
 
-TEST_F(WriteClassificationTest, WithNearest_IntergenicWithoutNeighborStillSkipped) {
+TEST_F(WriteClassificationTest, WithNearest_IntergenicWithoutNeighborStillEmitted) {
+    // With --nearest on (at least one row has closest_*), the header
+    // includes closest_* columns. An INTERGENIC row that did NOT pick
+    // up a flanking neighbor (e.g., on a chromosome with no segments)
+    // is still emitted; its closest_* cells are "." rather than the
+    // row being silently dropped.
     std::vector<subcall::query_result> results;
-    // One row with closest set so emit_closest_cols flips on; one
-    // INTERGENIC row WITHOUT closest must still be skipped, otherwise
-    // we'd write rows where every closest_* column is just "." with no
-    // useful information.
     results.push_back(make_intergenic_row("TX_HAS_NEIGHBOR",
                                           std::string("GENE_X"), std::string("GeneX"),
-                                          size_t(50), std::string("downstream")));
+                                          static_cast<size_t>(50),
+                                          std::string("downstream")));
     results.push_back(make_intergenic_row("TX_NO_NEIGHBOR"));
 
     subcall::query::write_classification(tmp.string(), results, nullptr);
     auto lines = split_lines(slurp(tmp));
 
-    // Header + exactly one data row
-    ASSERT_EQ(lines.size(), 2u);
-    EXPECT_NE(lines[1].find("TX_HAS_NEIGHBOR"), std::string::npos);
-    EXPECT_EQ(lines[1].find("TX_NO_NEIGHBOR"),  std::string::npos);
+    ASSERT_EQ(lines.size(), 3u) << "Header + both INTERGENIC rows";
+
+    auto header = split_tabs(lines.front());
+    auto col_index = [&](const std::string& name) {
+        return std::distance(header.begin(),
+                             std::find(header.begin(), header.end(), name));
+    };
+
+    auto with_neighbor    = split_tabs(lines[1]);
+    auto without_neighbor = split_tabs(lines[2]);
+
+    EXPECT_EQ(with_neighbor.front(),    "TX_HAS_NEIGHBOR");
+    EXPECT_EQ(without_neighbor.front(), "TX_NO_NEIGHBOR");
+
+    EXPECT_EQ(with_neighbor[col_index("closest_gene_id")],     "GENE_X");
+    EXPECT_EQ(without_neighbor[col_index("closest_gene_id")],  ".")
+        << "Row without a flanking hit must show '.' in closest_gene_id";
+    EXPECT_EQ(without_neighbor[col_index("closest_distance_bp")], ".");
+    EXPECT_EQ(without_neighbor[col_index("closest_direction")],   ".");
 }
 
 // ── opt_str coalescing for present-but-empty strings ─────────────────
@@ -211,10 +237,10 @@ TEST_F(WriteClassificationTest, EmptyClosestGeneNameCoalescesToDot) {
     // column count goes off-by-one downstream.
     std::vector<subcall::query_result> results;
     results.push_back(make_intergenic_row("TX_NO_NAME",
-                                          /*gene_id=*/std::string("MSTRG.42"),
-                                          /*gene_name=*/std::string(""),  // present-but-empty
-                                          /*distance=*/size_t(1000),
-                                          /*direction=*/std::string("upstream")));
+                                          /*closest_gene_id=*/std::string("MSTRG.42"),
+                                          /*closest_gene_name=*/std::string(""),  // present-but-empty
+                                          /*closest_distance=*/static_cast<size_t>(1000),
+                                          /*closest_direction=*/std::string("upstream")));
 
     subcall::query::write_classification(tmp.string(), results, nullptr);
     auto lines = split_lines(slurp(tmp));
@@ -245,7 +271,8 @@ TEST_F(WriteClassificationTest, RowFieldCountMatchesHeader) {
                                           "GENE_A", "GeneA"));
     results.push_back(make_intergenic_row("TX_NEAR",
                                           std::string("GENE_NEAR"), std::string("GeneNear"),
-                                          size_t(100), std::string("upstream")));
+                                          static_cast<size_t>(100),
+                                          std::string("upstream")));
 
     subcall::query::write_classification(tmp.string(), results, nullptr);
     auto lines = split_lines(slurp(tmp));
