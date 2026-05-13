@@ -8,8 +8,8 @@
  * information.
  */
 
-#include "build_bam.hpp"
-#include "segment_builder.hpp"
+#include "build/build_bam.hpp"
+#include "build/segment_builder.hpp"
 #include "utility.hpp"
 
 #include <sstream>

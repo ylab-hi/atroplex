@@ -15,8 +15,8 @@
 #include <sstream>
 
 #include "utility.hpp"
-#include "builder.hpp"
-#include "build_gff.hpp"
+#include "build/builder.hpp"
+#include "build/build_gff.hpp"
 #include "sample_manifest.hpp"
 
 namespace subcall {

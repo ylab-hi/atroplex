@@ -30,7 +30,7 @@
 #include <algorithm>
 
 #include "genomic_feature.hpp"
-#include "build_gff.hpp"
+#include "build/build_gff.hpp"
 #include "sample_info.hpp"
 #include "read_cluster.hpp"
 #include "transcript_matcher.hpp"

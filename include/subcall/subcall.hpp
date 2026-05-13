@@ -22,7 +22,7 @@
 #include <genogrove/structure/grove/grove.hpp>
 #include <genogrove/data_type/interval.hpp>
 
-#include "build_summary.hpp"
+#include "build/build_summary.hpp"
 #include "genomic_feature.hpp"
 #include "quant_sidecar.hpp"
 

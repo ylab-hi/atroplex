@@ -19,8 +19,8 @@
 #include <vector>
 
 #include "analysis_report.hpp"
-#include "build_summary.hpp"
-#include "builder.hpp"
+#include "build/build_summary.hpp"
+#include "build/builder.hpp"
 #include "grove_walk.hpp"
 #include "genomic_feature.hpp"
 #include "quant_sidecar.hpp"

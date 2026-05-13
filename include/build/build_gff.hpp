@@ -25,11 +25,11 @@
 #include <genogrove/io/gff_reader.hpp>
 
 // class
-#include "build_summary.hpp"
+#include "build/build_summary.hpp"
 #include "genomic_feature.hpp"
 #include "quant_sidecar.hpp"
 #include "sample_info.hpp"
-#include "segment_builder.hpp"
+#include "build/segment_builder.hpp"
 
 namespace gio = genogrove::io;
 

@@ -21,8 +21,8 @@
 #include <fstream>
 #include <string>
 
-#include "build_gff.hpp"
-#include "build_summary.hpp"
+#include "build/build_gff.hpp"
+#include "build/build_summary.hpp"
 #include "genomic_feature.hpp"
 #include "grove_walk.hpp"
 #include "sample_info.hpp"

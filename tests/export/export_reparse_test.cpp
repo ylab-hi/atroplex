@@ -30,9 +30,9 @@
 
 #include <cxxopts.hpp>
 
-#include "build_gff.hpp"
-#include "build_summary.hpp"
-#include "builder.hpp"
+#include "build/build_gff.hpp"
+#include "build/build_summary.hpp"
+#include "build/builder.hpp"
 #include "genomic_feature.hpp"
 #include "grove_walk.hpp"
 #include "sample_info.hpp"

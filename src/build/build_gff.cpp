@@ -18,7 +18,7 @@
 
 // class
 #include "utility.hpp"
-#include "build_gff.hpp"
+#include "build/build_gff.hpp"
 
 // genogrove
 

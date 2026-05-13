@@ -18,7 +18,7 @@
 #include <vector>
 
 #include "analysis_report.hpp"
-#include "build_gff.hpp"
+#include "build/build_gff.hpp"
 #include "genomic_feature.hpp"
 #include "sample_info.hpp"
 
