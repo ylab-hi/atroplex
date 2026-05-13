@@ -19,10 +19,10 @@
 
 // class
 #include "utility.hpp"
-#include "builder.hpp"
-#include "build_bam.hpp"
-#include "build_gff.hpp"
-#include "build_summary.hpp"
+#include "build/builder.hpp"
+#include "build/build_bam.hpp"
+#include "build/build_gff.hpp"
+#include "build/build_summary.hpp"
 #include "quant_sidecar.hpp"
 
 // Natural chromosome sort comparator

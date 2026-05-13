@@ -28,7 +28,7 @@
 
 #include <cxxopts.hpp>
 
-#include "builder.hpp"
+#include "build/builder.hpp"
 #include "genomic_feature.hpp"
 #include "sample_info.hpp"
 #include "subcall/export_gtf.hpp"

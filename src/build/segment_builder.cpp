@@ -8,7 +8,7 @@
  * information.
  */
 
-#include "segment_builder.hpp"
+#include "build/segment_builder.hpp"
 
 // Absorption rule thresholds (see absorption_rules.txt)
 static constexpr size_t TERMINAL_TOLERANCE_BP = 50;

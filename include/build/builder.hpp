@@ -22,7 +22,7 @@
 #include <genogrove/io/filetype_detector.hpp>
 
 // class
-#include "build_summary.hpp"
+#include "build/build_summary.hpp"
 #include "genomic_feature.hpp"
 #include "sample_info.hpp"
 

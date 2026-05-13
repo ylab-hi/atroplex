@@ -22,7 +22,7 @@
 #include <vector>
 
 #include "analysis_report.hpp"
-#include "builder.hpp"
+#include "build/builder.hpp"
 #include "genomic_feature.hpp"
 #include "grove_walk.hpp"
 #include "sample_info.hpp"

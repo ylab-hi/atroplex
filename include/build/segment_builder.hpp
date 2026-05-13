@@ -18,7 +18,7 @@
 #include <unordered_map>
 #include <mutex>
 
-#include "build_summary.hpp"
+#include "build/build_summary.hpp"
 #include "genomic_feature.hpp"
 #include "quant_sidecar.hpp"
 #include "sample_info.hpp"

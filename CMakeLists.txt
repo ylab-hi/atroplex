@@ -34,7 +34,7 @@ find_package(ZLIB REQUIRED)
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(HTSLIB REQUIRED htslib)
 
-file(GLOB SOURCES "src/*.cpp")
+file(GLOB SOURCES "src/*.cpp" "src/build/*.cpp")
 file(GLOB SUBCALL_SOURCES "src/subcall/*.cpp")
 
 # Library target containing every source except main.cpp. The atroplex

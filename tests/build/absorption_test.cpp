@@ -13,7 +13,7 @@
 #include <set>
 
 #include "genomic_feature.hpp"
-#include "build_gff.hpp"
+#include "build/build_gff.hpp"
 #include "grove_walk.hpp"
 #include "sample_info.hpp"
 

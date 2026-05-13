@@ -8,7 +8,7 @@
  * information.
  */
 
-#include "build_summary.hpp"
+#include "build/build_summary.hpp"
 
 #include <algorithm>
 #include <fstream>
