@@ -493,7 +493,10 @@ std::vector<key_ptr> transcript_matcher::find_candidate_segments(
     gdt::genomic_coordinate query = cluster.get_coordinate();
     auto result = grove_.intersect(query, cluster.seqid);
 
-    for (auto* key : result.get_keys()) {
+    for (auto* key_const : result.get_keys()) {
+        // genogrove v0.24.0 returns `const key*` from `query_result::get_keys()`;
+        // see segment_builder.cpp const_cast comment for the rationale.
+        auto* key = const_cast<key_ptr>(key_const);
         if (!is_segment(key->get_data())) continue;
         if (get_segment(key->get_data()).absorbed) continue;
 
@@ -640,10 +643,14 @@ void transcript_matcher::populate_nearest(match_result& result,
     // max-end / min-start tie-break could surface the tombstone over the
     // live parent. Filtering would silently drop those reports; refusing
     // to filter and demanding a compact input keeps the contract simple.
+    // v0.24.0's flanking_query_result returns `const key*`; the lambda
+    // reads only `get_data()`, so accept a const pointer rather than
+    // const_cast to non-const we don't need.
+    using const_key_ptr = const gdt::key<gdt::genomic_coordinate, genomic_feature>*;
     auto* pred = fr.get_predecessor();
     auto* succ = fr.get_successor();
 
-    auto segment_from = [](key_ptr k) -> const segment_feature* {
+    auto segment_from = [](const_key_ptr k) -> const segment_feature* {
         if (k == nullptr) return nullptr;
         if (!is_segment(k->get_data())) return nullptr;
         return &get_segment(k->get_data());

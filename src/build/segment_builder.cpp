@@ -118,7 +118,16 @@ void segment_builder::create_segment(
     {
         gdt::genomic_coordinate query_coord(strand, span_start, span_end);
         auto result = grove.intersect(query_coord, seqid);
-        for (auto* candidate_key : result.get_keys()) {
+        for (auto* candidate_key_const : result.get_keys()) {
+            // genogrove v0.24.0 made `query_result::get_keys()` return
+            // `const key*` to guard against `set_value()` corrupting the
+            // B+ tree ordering. atroplex's absorption pipeline mutates
+            // feature *data* on candidates (live → tombstoned, merge of
+            // transcript_ids/sample_idx, etc.) which does not affect
+            // ordering. const_cast back to `key_ptr` is the pragmatic
+            // bridge until upstream offers a data-mutation API distinct
+            // from `set_value`. See ylab-hi/atroplex#95.
+            auto* candidate_key = const_cast<key_ptr>(candidate_key_const);
             if (!is_segment(candidate_key->get_data())) continue;
             auto& seg = get_segment(candidate_key->get_data());
             if (seg.absorbed) continue;

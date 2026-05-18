@@ -53,7 +53,7 @@ protected:
             info.type = "annotation";
             info.annotation_source = "GENCODE";
         }
-        uint32_t sample_id = sample_registry::instance().intern(info);
+        uint32_t sample_id = sample_registry::instance().intern(info.id, info);
 
         build_counters counters;
         build_options test_opts;
@@ -97,7 +97,7 @@ protected:
         // File 1
         sample_info info1("sample1");
         if (file1_annotation) { info1.type = "annotation"; info1.annotation_source = "GENCODE"; }
-        uint32_t sid1 = sample_registry::instance().intern(info1);
+        uint32_t sid1 = sample_registry::instance().intern(info1.id, info1);
         build_options test_opts;
         test_opts.absorb = absorb;
         test_opts.include_scaffolds = true;
@@ -107,7 +107,7 @@ protected:
         // File 2
         sample_info info2("sample2");
         if (file2_annotation) { info2.type = "annotation"; info2.annotation_source = "GENCODE"; }
-        uint32_t sid2 = sample_registry::instance().intern(info2);
+        uint32_t sid2 = sample_registry::instance().intern(info2.id, info2);
         build_gff::build(*grove, fix2, sid2, exon_caches, segment_caches,
                          segment_count, test_opts, counters);
 

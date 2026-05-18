@@ -413,7 +413,11 @@ struct sample_info {
     }
 };
 
-// Type alias for the sample registry singleton
-using sample_registry = gdt::registry<sample_info>;
+// Sample metadata pool — keyed on the sample's stable `id` string, payload
+// is the full sample_info record. First-write-wins on the id: re-interning
+// a known sample returns the existing index and drops the new payload.
+// `intern(info.id, info)` at every call site; `get(idx)` returns the
+// stored sample_info.
+using sample_registry = gdt::registry<std::string, struct sample_tag, sample_info>;
 
 #endif //ATROPLEX_SAMPLE_INFO_HPP

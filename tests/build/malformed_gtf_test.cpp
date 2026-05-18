@@ -83,7 +83,7 @@ protected:
             info.type = "annotation";
             info.annotation_source = "TEST";
         }
-        uint32_t sample_id = sample_registry::instance().intern(info);
+        uint32_t sample_id = sample_registry::instance().intern(info.id, info);
 
         grove_type grove(3);
         chromosome_exon_caches exon_caches;

@@ -48,7 +48,7 @@ protected:
         sample_info info("test_ref");
         info.type = "annotation";
         info.annotation_source = "TEST";
-        uint32_t sample_id = sample_registry::instance().intern(info);
+        uint32_t sample_id = sample_registry::instance().intern(info.id, info);
 
         // absorb=false to keep all segments as separate candidates
         build_counters counters;
@@ -382,7 +382,7 @@ protected:
         sample_info info("test_ref");
         info.type = "annotation";
         info.annotation_source = "TEST";
-        uint32_t sample_id = sample_registry::instance().intern(info);
+        uint32_t sample_id = sample_registry::instance().intern(info.id, info);
 
         build_counters counters;
         build_options test_opts;

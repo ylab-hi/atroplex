@@ -52,7 +52,7 @@ protected:
         sample_info anno_info("TEST_ANNOTATION");
         anno_info.type = "annotation";
         anno_info.annotation_source = "TEST";
-        [[maybe_unused]] auto anno_id = sample_registry::instance().intern(anno_info);
+        [[maybe_unused]] auto anno_id = sample_registry::instance().intern(anno_info.id, anno_info);
 
         build_counters counters;
         build_options test_opts;
@@ -65,7 +65,7 @@ protected:
         // Register sample (with expression)
         sample_info samp_info("TEST_SAMPLE");
         samp_info.type = "sample";
-        [[maybe_unused]] auto samp_id = sample_registry::instance().intern(samp_info);
+        [[maybe_unused]] auto samp_id = sample_registry::instance().intern(samp_info.id, samp_info);
 
         build_gff::build(*grove_, sample_path, 1, exon_caches_, segment_caches_,
                          segment_count_, test_opts, counters);

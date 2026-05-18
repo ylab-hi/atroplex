@@ -138,7 +138,7 @@ TEST_F(HubPsiEntropyTest, PsiAndEntropyCorrectForKnownHub) {
     // Register one sample and build the grove
     sample_info info("hub_sample");
     info.type = "sample";
-    uint32_t sample_id = sample_registry::instance().intern(info);
+    uint32_t sample_id = sample_registry::instance().intern(info.id, info);
 
     grove_type grove(3);
     chromosome_exon_caches exon_caches;
@@ -257,7 +257,7 @@ std::pair<std::unique_ptr<grove_type>, size_t> build_grove_from_gtf(
 ) {
     sample_info info(sample_id_label);
     info.type = "sample";
-    uint32_t sample_id = sample_registry::instance().intern(info);
+    uint32_t sample_id = sample_registry::instance().intern(info.id, info);
 
     auto grove = std::make_unique<grove_type>(3);
     chromosome_exon_caches exon_caches;
@@ -397,7 +397,7 @@ TEST_F(HubPsiEntropyTest, BranchDetails_SchemaAndRowCount) {
 
     sample_info info("hub_sample");
     info.type = "sample";
-    uint32_t sample_id = sample_registry::instance().intern(info);
+    uint32_t sample_id = sample_registry::instance().intern(info.id, info);
 
     grove_type grove(3);
     chromosome_exon_caches exon_caches;
