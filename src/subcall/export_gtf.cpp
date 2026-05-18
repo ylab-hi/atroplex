@@ -347,7 +347,7 @@ void export_gtf::execute(const cxxopts::ParseResult& args) {
 
                     // One transcript_entry per transcript_id on this segment
                     for (uint32_t tx_id : seg.transcript_ids) {
-                        std::string tx_name = transcript_registry::instance().resolve(tx_id);
+                        std::string tx_name = transcript_registry::instance().get(tx_id);
 
                         // Look up biotype for this transcript
                         std::string tx_biotype;

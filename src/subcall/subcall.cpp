@@ -401,9 +401,9 @@ void subcall::load_grove(const std::string& path) {
     }
 
     // Deserialize registries (order must match save_grove)
-    gene_registry::instance().deserialize_into(ifs);
-    source_registry::instance().deserialize_into(ifs);
-    transcript_registry::instance().deserialize_into(ifs);
+    (void)gene_registry::deserialize(ifs);
+    source_registry::deserialize(ifs);
+    (void)transcript_registry::deserialize(ifs);
     (void)sample_registry::deserialize(ifs);
 
     // Deserialize grove (handles its own zlib decompression)

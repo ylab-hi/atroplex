@@ -183,7 +183,7 @@ protected:
             reset_registries();
             sample_info info("orig");
             info.type = "sample";
-            uint32_t sid = sample_registry::instance().register_data(info);
+            uint32_t sid = sample_registry::instance().intern(info);
             grove_type grove(3);
             chromosome_exon_caches ec;
             chromosome_segment_caches sc;
@@ -201,7 +201,7 @@ protected:
             reset_registries();
             sample_info info("exported");
             info.type = "sample";
-            uint32_t sid = sample_registry::instance().register_data(info);
+            uint32_t sid = sample_registry::instance().intern(info);
             grove_type grove(3);
             chromosome_exon_caches ec;
             chromosome_segment_caches sc;

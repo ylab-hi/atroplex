@@ -44,9 +44,9 @@ exon_feature exon_feature::from_gff_entry(
     if (gbiotype.empty()) {
         gbiotype = get_attribute(attributes, "gene_biotype");
     }
-    // Gene identity interned but not stored on the exon — gene_idx lives
+    // Gene identity interno bd but not stored on the exon — gene_idx lives
     // only on segments. The intern() call ensures the gene is registered.
-    (void)gene_registry::instance().intern(gid, gname, gbiotype);
+    (void)gene_registry::instance().intern(gid, gene_info{gid, gname, gbiotype});
 
     // Transcript information
     std::string transcript_id = get_attribute(attributes, "transcript_id");
@@ -290,57 +290,24 @@ genomic_feature serialization_traits<genomic_feature>::deserialize(std::istream&
 } // namespace genogrove::data_type
 
 // ============================================================================
-// Registry serialization
+// gene_info serialization (payload type for gene_registry)
 // ============================================================================
+//
+// `gene_registry` is a `gdt::registry<std::string, gene_tag, gene_info>` —
+// the registry's serialize() walks each stored payload through
+// `serializer<gene_info>::write`, which dispatches to these methods via
+// the `has_serialize` / `has_deserialize` concepts in serialization_traits.
 
-void gene_registry::serialize(std::ostream& os) const {
-    uint32_t n = static_cast<uint32_t>(entries_.size());
-    write_pod(os, n);
-    for (const auto& entry : entries_) {
-        write_string(os, entry.gene_id);
-        write_string(os, entry.gene_name);
-        write_string(os, entry.gene_biotype);
-    }
+void gene_info::serialize(std::ostream& os) const {
+    write_string(os, gene_id);
+    write_string(os, gene_name);
+    write_string(os, gene_biotype);
 }
 
-void gene_registry::deserialize_into(std::istream& is) {
-    uint32_t n = read_pod<uint32_t>(is);
-    for (uint32_t i = 0; i < n; ++i) {
-        std::string gene_id = read_string(is);
-        std::string gene_name = read_string(is);
-        std::string gene_biotype = read_string(is);
-        (void)intern(gene_id, gene_name, gene_biotype);
-    }
-}
-
-void source_registry::serialize(std::ostream& os) const {
-    uint32_t n = static_cast<uint32_t>(bit_to_str_.size());
-    write_pod(os, n);
-    for (const auto& s : bit_to_str_) {
-        write_string(os, s);
-    }
-}
-
-void source_registry::deserialize_into(std::istream& is) {
-    uint32_t n = read_pod<uint32_t>(is);
-    for (uint32_t i = 0; i < n; ++i) {
-        std::string s = read_string(is);
-        (void)intern(s);
-    }
-}
-
-void transcript_registry::serialize(std::ostream& os) const {
-    uint32_t n = static_cast<uint32_t>(id_to_str_.size());
-    write_pod(os, n);
-    for (const auto& s : id_to_str_) {
-        write_string(os, s);
-    }
-}
-
-void transcript_registry::deserialize_into(std::istream& is) {
-    uint32_t n = read_pod<uint32_t>(is);
-    for (uint32_t i = 0; i < n; ++i) {
-        std::string s = read_string(is);
-        (void)intern(s);
-    }
+gene_info gene_info::deserialize(std::istream& is) {
+    gene_info gi;
+    gi.gene_id = read_string(is);
+    gi.gene_name = read_string(is);
+    gi.gene_biotype = read_string(is);
+    return gi;
 }

@@ -434,7 +434,7 @@ void analysis_report::emit_hub_rows(gene_acc& acc, const std::string& seqid) {
             }
 
             // Global row prefix — gene info from gene_acc, not exon
-            auto& gene_info = gene_registry::instance().resolve(acc.gene_idx);
+            auto& gene_info = gene_registry::instance().get(acc.gene_idx);
             hub_out << gene_info.gene_name << "\t"
                     << gene_info.gene_id << "\t"
                     << hub_exon.id << "\t"

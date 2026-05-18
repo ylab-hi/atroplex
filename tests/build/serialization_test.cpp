@@ -52,7 +52,7 @@ protected:
         sample_info anno_info("TEST_ANNOTATION");
         anno_info.type = "annotation";
         anno_info.annotation_source = "TEST";
-        [[maybe_unused]] auto anno_id = sample_registry::instance().register_data(anno_info);
+        [[maybe_unused]] auto anno_id = sample_registry::instance().intern(anno_info);
 
         build_counters counters;
         build_options test_opts;
@@ -65,7 +65,7 @@ protected:
         // Register sample (with expression)
         sample_info samp_info("TEST_SAMPLE");
         samp_info.type = "sample";
-        [[maybe_unused]] auto samp_id = sample_registry::instance().register_data(samp_info);
+        [[maybe_unused]] auto samp_id = sample_registry::instance().intern(samp_info);
 
         build_gff::build(*grove_, sample_path, 1, exon_caches_, segment_caches_,
                          segment_count_, test_opts, counters);
@@ -102,9 +102,9 @@ protected:
         ifs.read(reinterpret_cast<char*>(&version), sizeof(version));
         EXPECT_EQ(version, 1);
 
-        gene_registry::instance().deserialize_into(ifs);
-        source_registry::instance().deserialize_into(ifs);
-        transcript_registry::instance().deserialize_into(ifs);
+        (void)gene_registry::deserialize(ifs);
+        source_registry::deserialize(ifs);
+        (void)transcript_registry::deserialize(ifs);
         (void)sample_registry::deserialize(ifs);
 
         auto loaded = std::make_unique<grove_type>(grove_type::deserialize(ifs));
@@ -133,8 +133,8 @@ protected:
         snap.sample_count = sample_registry::instance().size();
 
         for (uint32_t i = 0; i < snap.gene_count; ++i) {
-            auto [id, name, biotype] = gene_registry::instance().resolve(i);
-            snap.genes.emplace_back(id, name, biotype);
+            const auto& gi = gene_registry::instance().get(i);
+            snap.genes.emplace_back(gi.gene_id, gi.gene_name, gi.gene_biotype);
         }
 
         for (uint32_t i = 0; i < snap.sample_count; ++i) {
@@ -160,8 +160,8 @@ protected:
 
         for (const auto& [seg, key] : atroplex::test::collect_live_segments(grove)) {
             snap.segment_count++;
-            auto [id, name, biotype] = gene_registry::instance().resolve(seg->gene_idx);
-            snap.gene_ids.insert(id);
+            const auto& gi = gene_registry::instance().get(seg->gene_idx);
+            snap.gene_ids.insert(gi.gene_id);
             for (auto tx : seg->transcript_ids) {
                 snap.transcript_ids.insert(tx);
             }

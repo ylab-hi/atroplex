@@ -178,7 +178,7 @@ build_summary builder::build_from_samples(grove_type& grove,
                          (info.id.empty() ? "" : " (id: " + info.id + ")"));
 
             // Register sample_info in the registry to get uint32_t ID
-            uint32_t registry_id = sample_registry::instance().register_data(info);
+            uint32_t registry_id = sample_registry::instance().intern(info);
             open_sidecar(registry_id);
 
             // Build with persistent caches for cross-file deduplication
@@ -187,7 +187,7 @@ build_summary builder::build_from_samples(grove_type& grove,
             logging::info("[" + std::to_string(current) + "/" + std::to_string(total) + "] Processing BAM: " + filepath.filename().string() +
                          (info.id.empty() ? "" : " (id: " + info.id + ")"));
 
-            uint32_t registry_id = sample_registry::instance().register_data(info);
+            uint32_t registry_id = sample_registry::instance().intern(info);
             open_sidecar(registry_id);
 
             build_bam::build(grove, filepath, registry_id, exon_caches, segment_caches,

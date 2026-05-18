@@ -290,7 +290,7 @@ void build_gff::process_transcript(
             if (!gname.empty()) break;
         }
     }
-    uint32_t gene_idx = gene_registry::instance().intern(gid, gname, gbiotype);
+    uint32_t gene_idx = gene_registry::instance().intern(gid, gene_info{gid, gname, gbiotype});
 
     segment_builder::create_segment(
         grove, grove_mutex, transcript_id, seqid, strand,

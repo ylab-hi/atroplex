@@ -139,7 +139,7 @@ match_result transcript_matcher::match(const read_cluster& cluster) {
         scored.push_back({
             seg_key,
             score,
-            transcript_registry::instance().resolve(*seg.transcript_ids.begin()),
+            transcript_registry::instance().get(*seg.transcript_ids.begin()),
             seg.gene_id(),
             std::move(exon_chain),
             ref_juncs
