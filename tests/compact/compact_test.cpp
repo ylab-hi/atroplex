@@ -215,9 +215,9 @@ TEST_F(CompactSubcallTest, EndToEnd_RemovesTombstoneAndCopiesSidecars) {
     ASSERT_EQ(std::string(magic, 4), "AGRX");
     uint16_t version; ifs.read(reinterpret_cast<char*>(&version), sizeof(version));
     ASSERT_EQ(version, 1);
-    gene_registry::instance().deserialize_into(ifs);
-    source_registry::instance().deserialize_into(ifs);
-    transcript_registry::instance().deserialize_into(ifs);
+    (void)gene_registry::deserialize(ifs);
+    source_registry::deserialize(ifs);
+    (void)transcript_registry::deserialize(ifs);
     (void)sample_registry::deserialize(ifs);
     auto loaded = std::make_unique<grove_type>(grove_type::deserialize(ifs));
 

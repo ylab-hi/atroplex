@@ -28,6 +28,7 @@
 // genogrove
 #include <genogrove/data_type/interval.hpp>
 #include <genogrove/data_type/genomic_coordinate.hpp>
+#include <genogrove/data_type/registry.hpp>
 #include <genogrove/data_type/serialization_traits.hpp>
 #include <genogrove/structure/grove/grove.hpp>
 
@@ -222,155 +223,92 @@ public:
 };
 
 /**
- * Transcript ID string pool (intern strings → uint32_t)
- * Singleton; all transcript ID strings are stored once and referenced by index.
- */
-class transcript_registry {
-    std::unordered_map<std::string, uint32_t> str_to_id_;
-    std::vector<std::string> id_to_str_;
-public:
-    static transcript_registry& instance() {
-        static transcript_registry reg;
-        return reg;
-    }
-
-    [[nodiscard]] uint32_t intern(const std::string& name) {
-        auto it = str_to_id_.find(name);
-        if (it != str_to_id_.end()) return it->second;
-        uint32_t id = static_cast<uint32_t>(id_to_str_.size());
-        str_to_id_[name] = id;
-        id_to_str_.push_back(name);
-        return id;
-    }
-
-    const std::string& resolve(uint32_t id) const {
-        if (id >= id_to_str_.size()) {
-            throw std::out_of_range("transcript_registry: invalid id");
-        }
-        return id_to_str_[id];
-    }
-
-    size_t size() const { return id_to_str_.size(); }
-
-    void clear() { str_to_id_.clear(); id_to_str_.clear(); }
-    static void reset() { instance().clear(); }
-
-    void serialize(std::ostream& os) const;
-    void deserialize_into(std::istream& is);
-};
-
-/**
- * Gene metadata (stored once per unique gene_id in the registry)
+ * Gene metadata stored in `gene_registry` as the payload — `gene_id` is the
+ * registry key, `gene_name` and `gene_biotype` ride along. No equality or
+ * hash overload is needed (or wanted): `registry<std::string, gene_tag,
+ * gene_info>` deduplicates on the std::string key, so the payload is free
+ * to compare deeply if anyone ever wants to.
  */
 struct gene_info {
     std::string gene_id;
     std::string gene_name;
     std::string gene_biotype;
-};
-
-/**
- * Gene string pool (intern gene_id/gene_name/gene_biotype triplet → uint32_t)
- * Singleton; gene metadata is stored once per unique gene_id and referenced by index.
- * All exon/segment features carry a single uint32_t gene_idx instead of three strings.
- */
-class gene_registry {
-    std::unordered_map<std::string, uint32_t> id_to_idx_;
-    std::vector<gene_info> entries_;
-public:
-    static gene_registry& instance() {
-        static gene_registry reg;
-        return reg;
-    }
-
-    [[nodiscard]] uint32_t intern(const std::string& gene_id,
-                    const std::string& gene_name,
-                    const std::string& gene_biotype) {
-        auto it = id_to_idx_.find(gene_id);
-        if (it != id_to_idx_.end()) return it->second;
-        uint32_t idx = static_cast<uint32_t>(entries_.size());
-        id_to_idx_[gene_id] = idx;
-        entries_.push_back({gene_id, gene_name, gene_biotype});
-        return idx;
-    }
-
-    const gene_info& resolve(uint32_t idx) const {
-        if (idx >= entries_.size()) {
-            throw std::out_of_range("gene_registry: invalid idx");
-        }
-        return entries_[idx];
-    }
-
-    size_t size() const { return entries_.size(); }
-
-    void clear() { id_to_idx_.clear(); entries_.clear(); }
-    static void reset() { instance().clear(); }
 
     void serialize(std::ostream& os) const;
-    void deserialize_into(std::istream& is);
+    [[nodiscard]] static gene_info deserialize(std::istream& is);
 };
 
 /**
- * Source string pool (intern GFF column 2 values → bit positions in a uint16_t)
- * Singleton; supports up to 16 unique source strings (HAVANA, ENSEMBL, TALON, etc.).
- * Features store a uint16_t bitfield instead of unordered_set<string>.
+ * Transcript ID string pool (intern strings → uint32_t).
+ * Tagged alias on top of `gdt::registry` so the singleton ID space is distinct
+ * from `source_registry`'s inner pool (which also stores std::string).
+ */
+using transcript_registry = gdt::registry<std::string, struct transcript_tag>;
+
+/**
+ * Gene metadata pool — keyed on gene_id (std::string), payload is the full
+ * gene_info triplet. `intern(gene_id, gene_info{...})` is first-write-wins
+ * on the key, so TALON's placeholder payload for a gene_id GENCODE already
+ * registered is silently dropped (load-bearing: builder sorts annotation
+ * files first so the canonical record wins). `instance().get(idx)` returns
+ * the stored gene_info; use `.gene_id`, `.gene_name`, `.gene_biotype`.
+ */
+using gene_registry = gdt::registry<std::string, struct gene_tag, gene_info>;
+
+/**
+ * Source string pool (intern GFF column 2 values → bit positions in a uint16_t).
+ * Wrapper class — `gdt::registry` has no cap, so we enforce the 16-source limit
+ * here and expose mask()/for_each()/count() bit helpers. Internal storage delegates
+ * to a tagged `gdt::registry<std::string, source_tag>` singleton.
  */
 class source_registry {
     static constexpr size_t MAX_SOURCES = 16;
-    std::unordered_map<std::string, uint8_t> str_to_bit_;
-    std::vector<std::string> bit_to_str_;
+    using inner = gdt::registry<std::string, struct source_tag>;
 public:
     static source_registry& instance() {
         static source_registry reg;
         return reg;
     }
 
-    /// Returns the bit position for this source string (allocates new if unseen)
+    /// Returns the bit position for this source string (allocates new if unseen).
     [[nodiscard]] uint8_t intern(const std::string& source) {
-        auto it = str_to_bit_.find(source);
-        if (it != str_to_bit_.end()) return it->second;
-        uint8_t bit = static_cast<uint8_t>(bit_to_str_.size());
-        if (bit >= MAX_SOURCES) {
+        auto id = inner::instance().intern(source);
+        if (id >= MAX_SOURCES) {
             throw std::overflow_error(
-                "source_registry: max " + std::to_string(MAX_SOURCES) + " unique sources exceeded (trying to add '" + source +
+                "source_registry: max " + std::to_string(MAX_SOURCES) +
+                " unique sources exceeded (trying to add '" + source +
                 "'). If you need more, widen the sources bitfield from uint16_t to uint32_t.");
         }
-        str_to_bit_[source] = bit;
-        bit_to_str_.push_back(source);
-        return bit;
+        return static_cast<uint8_t>(id);
     }
 
-    /// Returns the bitmask (single bit set) for a source string
+    /// Returns the bitmask (single bit set) for a source string.
     uint16_t mask(const std::string& source) {
-        return static_cast<uint16_t>(1u << intern(source));
+        return static_cast<uint16_t>(uint16_t{1} << intern(source));
     }
 
-    const std::string& resolve(uint8_t bit) const {
-        if (bit >= bit_to_str_.size()) {
-            throw std::out_of_range("source_registry: invalid bit");
-        }
-        return bit_to_str_[bit];
+    const std::string& get(uint8_t bit) const {
+        return inner::instance().get(bit);
     }
 
-    size_t size() const { return bit_to_str_.size(); }
+    size_t size() const { return inner::instance().size(); }
+    static void reset() { inner::reset(); }
 
-    void clear() { str_to_bit_.clear(); bit_to_str_.clear(); }
-    static void reset() { instance().clear(); }
+    void serialize(std::ostream& os) const { inner::instance().serialize(os); }
+    static void deserialize(std::istream& is) { (void)inner::deserialize(is); }
 
-    void serialize(std::ostream& os) const;
-    void deserialize_into(std::istream& is);
-
-    /// Iterate over set bits in a bitfield, calling fn(const string&) for each
+    /// Iterate over set bits in a bitfield, calling fn(const string&) for each.
     template<typename Fn>
     void for_each(uint16_t bitfield, Fn&& fn) const {
         uint16_t bits = bitfield;
         while (bits) {
             uint8_t bit = static_cast<uint8_t>(std::countr_zero(bits));
-            fn(bit_to_str_[bit]);
+            fn(inner::instance().get(bit));
             bits &= bits - 1;  // clear lowest set bit
         }
     }
 
-    /// Count number of set bits
+    /// Count number of set bits.
     static size_t count(uint16_t bitfield) {
         return static_cast<size_t>(std::popcount(bitfield));
     }
@@ -524,9 +462,9 @@ struct segment_feature : tracked_feature {
     uint32_t gene_idx = 0;
 
     // Gene accessors (resolve through gene_registry).
-    const std::string& gene_id() const { return gene_registry::instance().resolve(gene_idx).gene_id; }
-    const std::string& gene_name() const { return gene_registry::instance().resolve(gene_idx).gene_name; }
-    const std::string& gene_biotype() const { return gene_registry::instance().resolve(gene_idx).gene_biotype; }
+    const std::string& gene_id() const { return gene_registry::instance().get(gene_idx).gene_id; }
+    const std::string& gene_name() const { return gene_registry::instance().get(gene_idx).gene_name; }
+    const std::string& gene_biotype() const { return gene_registry::instance().get(gene_idx).gene_biotype; }
 
     // Transcript biotype mapping (interned transcript_id -> biotype),
     // e.g. protein_coding, retained_intron, nonsense_mediated_decay.

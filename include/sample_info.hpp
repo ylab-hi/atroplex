@@ -30,7 +30,7 @@ namespace gdt = genogrove::data_type;
  * In the pan-transcriptome context, both reference annotations and sample
  * assemblies are treated as "samples" of the transcriptome.
  *
- * Designed to be stored in genogrove's data_registry.
+ * Designed to be stored in genogrove's gdt::registry.
  *
  * Field descriptions aligned with ENCODE standards:
  * https://www.encodeproject.org/data-standards/
@@ -281,7 +281,7 @@ struct sample_info {
         return it != attributes.end() ? it->second : default_value;
     }
 
-    // --- Serialization for data_registry ---
+    // --- Serialization for gdt::registry ---
 
     void serialize(std::ostream& os) const {
         auto write_string = [&os](const std::string& s) {
@@ -413,7 +413,11 @@ struct sample_info {
     }
 };
 
-// Type alias for the sample registry singleton
-using sample_registry = gdt::registry<sample_info>;
+// Sample metadata pool — keyed on the sample's stable `id` string, payload
+// is the full sample_info record. First-write-wins on the id: re-interning
+// a known sample returns the existing index and drops the new payload.
+// `intern(info.id, info)` at every call site; `get(idx)` returns the
+// stored sample_info.
+using sample_registry = gdt::registry<std::string, struct sample_tag, sample_info>;
 
 #endif //ATROPLEX_SAMPLE_INFO_HPP

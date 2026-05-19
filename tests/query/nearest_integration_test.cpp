@@ -90,7 +90,7 @@ protected:
                         const std::string& gene_id,
                         const std::string& gene_name) {
         segment_feature seg;
-        seg.gene_idx = gene_registry::instance().intern(gene_id, gene_name, "");
+        seg.gene_idx = gene_registry::instance().intern(gene_id, gene_info{gene_id, gene_name, ""});
         gdt::genomic_coordinate coord(strand, start, end);
         genomic_feature feature = seg;
         grove->insert_data(seqid, coord, feature);

@@ -28,11 +28,11 @@ namespace gdt = genogrove::data_type;
  *
  * Stores SNPs, indels, and other sequence-level variants with
  * provenance information (which samples contain this variant).
- * Designed for data_registry storage with lightweight ID references.
+ * Designed for gdt::registry storage with lightweight ID references.
  *
  * Usage:
  *   auto& registry = variant_registry::instance();
- *   uint32_t var_id = registry.register_data(
+ *   uint32_t var_id = registry.intern(
  *       sequence_variant("chr1", 12345, "A", "G")
  *           .with_id("rs12345")
  *           .with_sample(gencode_sample_id)
@@ -142,7 +142,7 @@ struct sequence_variant {
         return frequency(total_samples) >= threshold;
     }
 
-    // --- Serialization for data_registry ---
+    // --- Serialization for gdt::registry ---
 
     void serialize(std::ostream& os) const {
         auto write_string = [&os](const std::string& s) {

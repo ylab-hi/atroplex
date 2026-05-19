@@ -109,7 +109,7 @@ void build_bam::build(grove_type& grove,
         }
 
         // Create segment via segment_builder (same absorption rules as GTF)
-        uint32_t seg_gene_idx = gene_registry::instance().intern(gene_id, gene_name, gene_biotype);
+        uint32_t seg_gene_idx = gene_registry::instance().intern(gene_id, gene_info{gene_id, gene_name, gene_biotype});
         segment_builder::create_segment(
             grove, grove_mutex, tx_id, seqid, cluster.strand,
             cluster.start, cluster.end,
