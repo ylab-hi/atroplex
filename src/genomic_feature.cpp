@@ -44,7 +44,7 @@ exon_feature exon_feature::from_gff_entry(
     if (gbiotype.empty()) {
         gbiotype = get_attribute(attributes, "gene_biotype");
     }
-    // Gene identity interno bd but not stored on the exon — gene_idx lives
+    // Gene identity interned but not stored on the exon — gene_idx lives
     // only on segments. The intern() call ensures the gene is registered.
     (void)gene_registry::instance().intern(gid, gene_info{gid, gname, gbiotype});
 
