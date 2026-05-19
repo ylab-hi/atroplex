@@ -214,7 +214,16 @@ void build_gff::process_transcript(
                     if (sample_id.has_value()) {
                         auto& registry = sample_registry::instance();
                         if (registry.contains(*sample_id)) {
-                            auto& info = registry.get(*sample_id);
+                            // v0.23.0+ removed the mutable `get()` overload —
+                            // mutating an interned value would desync the
+                            // value→id lookup map. With the Key/Payload form
+                            // (sample_registry keys on `info.id` only),
+                            // mutating non-key fields like `expr_type` is
+                            // safe: the lookup map is unaffected. const_cast
+                            // bridges the API gap until upstream offers a
+                            // payload-mutation entry point. See #95 for the
+                            // broader const story.
+                            auto& info = const_cast<sample_info&>(registry.get(*sample_id));
                             if (!info.has_expression_type()) {
                                 if      (attr == "counts") info.expr_type = sample_info::expression_type::COUNTS;
                                 else if (attr == "TPM")    info.expr_type = sample_info::expression_type::TPM;
