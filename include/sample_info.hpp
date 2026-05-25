@@ -85,23 +85,25 @@ struct expression_filters {
     float min_FPKM   = -1.0f;
     float min_RPKM   = -1.0f;
     float min_cov    = -1.0f;
+    float min_CPM    = -1.0f;
 
     /// Return the threshold for a given GFF attribute name, or -1 if the
     /// attribute is unknown or has no threshold set. Case-sensitive match
-    /// to the GFF convention (counts, TPM, FPKM, RPKM, cov).
+    /// to the GFF convention (counts, TPM, FPKM, RPKM, cov, CPM).
     float for_attribute(const std::string& attr) const {
         if (attr == "counts") return min_counts;
         if (attr == "TPM")    return min_TPM;
         if (attr == "FPKM")   return min_FPKM;
         if (attr == "RPKM")   return min_RPKM;
         if (attr == "cov")    return min_cov;
+        if (attr == "CPM")    return min_CPM;
         return -1.0f;
     }
 
     /// True if at least one threshold is set.
     bool any_active() const {
         return min_counts >= 0 || min_TPM >= 0 || min_FPKM >= 0
-            || min_RPKM >= 0 || min_cov >= 0;
+            || min_RPKM >= 0 || min_cov >= 0 || min_CPM >= 0;
     }
 };
 

@@ -10,6 +10,7 @@
 
 #include "subcall/subcall.hpp"
 
+#include <algorithm>
 #include <filesystem>
 #include <fstream>
 #include <sstream>
@@ -51,6 +52,8 @@ void subcall::add_common_options(cxxopts::Options& options) {
         ("min-RPKM", "Minimum `RPKM` value to keep a transcript that carries the `RPKM` attribute. Disabled by default.",
             cxxopts::value<float>()->default_value("-1"))
         ("min-cov", "Minimum `cov` value to keep a transcript that carries the `cov` attribute. Disabled by default.",
+            cxxopts::value<float>()->default_value("-1"))
+        ("min-CPM", "Minimum `CPM` value to keep a transcript that carries the `CPM` attribute. Disabled by default.",
             cxxopts::value<float>()->default_value("-1"))
         ("filter-precedence", "Switch expression filtering to precedence mode. Comma-separated "
             "list of expression types (e.g. TPM,FPKM,counts). For each transcript, walk this list "
@@ -96,6 +99,7 @@ build_options subcall::apply_grove_options(const cxxopts::ParseResult& args) {
     opts.filters.min_FPKM   = args["min-FPKM"].as<float>();
     opts.filters.min_RPKM   = args["min-RPKM"].as<float>();
     opts.filters.min_cov    = args["min-cov"].as<float>();
+    opts.filters.min_CPM    = args["min-CPM"].as<float>();
 
     // Optional precedence list. Empty = AND mode; non-empty = walk
     // user-given order, evaluate only the first carried type's threshold.
@@ -114,7 +118,15 @@ build_options subcall::apply_grove_options(const cxxopts::ParseResult& args) {
                     "--filter-precedence: unrecognized expression type '" + token +
                     "' (expected one of: counts, TPM, FPKM, RPKM, cov, CPM)");
             }
-            opts.filter_precedence.push_back(t);
+            // Dedup: later occurrences of the same type are dead (the
+            // first occurrence always wins in the build_gff precedence
+            // walk). Silently drop them instead of letting the vector
+            // grow with no-op entries.
+            if (std::find(opts.filter_precedence.begin(),
+                          opts.filter_precedence.end(), t)
+                == opts.filter_precedence.end()) {
+                opts.filter_precedence.push_back(t);
+            }
         }
     }
 
@@ -271,6 +283,7 @@ void subcall::setup_grove(const cxxopts::ParseResult& args) {
             if (opts.filters.min_FPKM   >= 0) note += " FPKM>="   + std::to_string(opts.filters.min_FPKM);
             if (opts.filters.min_RPKM   >= 0) note += " RPKM>="   + std::to_string(opts.filters.min_RPKM);
             if (opts.filters.min_cov    >= 0) note += " cov>="    + std::to_string(opts.filters.min_cov);
+            if (opts.filters.min_CPM    >= 0) note += " CPM>="    + std::to_string(opts.filters.min_CPM);
             logging::info(note);
         }
         if (!opts.filter_precedence.empty()) {
@@ -360,6 +373,16 @@ void subcall::setup_grove(const cxxopts::ParseResult& args) {
             build_stats->build_parameters["min_RPKM"] = std::to_string(static_cast<int>(opts.filters.min_RPKM));
         if (opts.filters.min_cov >= 0)
             build_stats->build_parameters["min_cov"] = std::to_string(static_cast<int>(opts.filters.min_cov));
+        if (opts.filters.min_CPM >= 0)
+            build_stats->build_parameters["min_CPM"] = std::to_string(static_cast<int>(opts.filters.min_CPM));
+        if (!opts.filter_precedence.empty()) {
+            std::string prec_list;
+            for (auto t : opts.filter_precedence) {
+                if (!prec_list.empty()) prec_list += ",";
+                prec_list += sample_info::expression_type_attribute(t);
+            }
+            build_stats->build_parameters["filter_precedence"] = prec_list;
+        }
 
         logging::info("Grove ready with spatial index and graph structure");
 
