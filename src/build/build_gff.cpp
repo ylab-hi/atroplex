@@ -168,79 +168,69 @@ void build_gff::process_transcript(
     }
     counters.input_transcripts++;
 
-    // Resolve the sample's declared expression_attributes (set from the
-    // manifest's optional `expression_attribute` column). Empty vector
-    // means no filtering and no expression storage for this sample.
-    const std::vector<std::string>* declared_attrs = nullptr;
-    if (sample_id.has_value()) {
-        auto& registry = sample_registry::instance();
-        if (registry.contains(*sample_id)) {
-            declared_attrs = &registry.get(*sample_id).expression_attributes;
-        }
-    }
+    // Walk the canonical expression types against the transcript-level
+    // entry's attribute map, collecting every (type, value) pair the GFF
+    // row actually carries. The .qtx sidecar stores them all (one record
+    // per pair). Filtering is CLI-driven and runs on this collected list
+    // — the manifest no longer declares which attributes to consider.
+    static constexpr std::pair<const char*, sample_info::expression_type> KNOWN_TYPES[] = {
+        {"counts", sample_info::expression_type::COUNTS},
+        {"TPM",    sample_info::expression_type::TPM},
+        {"FPKM",   sample_info::expression_type::FPKM},
+        {"RPKM",   sample_info::expression_type::RPKM},
+        {"cov",    sample_info::expression_type::COV},
+        {"CPM",    sample_info::expression_type::CPM},
+    };
 
-    // Extract transcript biotype and any declared-attribute values from
-    // the transcript-level entry. expression_value = the FIRST declared
-    // attribute's value (used for storage on the segment); the filter
-    // loop below walks ALL declared attributes and evaluates each one
-    // against its corresponding threshold (AND semantics).
-    float expression_value = -1.0f;
+    segment_builder::expression_values_t expression_values;
     bool drop_by_filter = false;
     std::string transcript_biotype;
     for (const auto& entry : transcript_entries) {
         if (entry.type != "transcript") continue;
 
-        if (declared_attrs && !declared_attrs->empty()) {
-            bool first = true;
-            for (const auto& attr : *declared_attrs) {
-                auto it = entry.attributes.find(attr);
-                if (it == entry.attributes.end()) {
-                    continue;  // pass-through: nothing to evaluate for this attr
-                }
-                float value = -1.0f;
-                try {
-                    value = std::stof(it->second);
-                } catch (const std::exception& e) {
-                    logging::warning("Invalid " + attr + " value '" + it->second +
-                        "' for transcript " + transcript_id + ": " + e.what());
-                    continue;
-                }
-                if (first) {
-                    // First declared attribute becomes the stored value +
-                    // display label for per_sample outputs. Tag the sample
-                    // with its expression_type once (idempotent).
-                    expression_value = value;
-                    first = false;
-                    if (sample_id.has_value()) {
-                        auto& registry = sample_registry::instance();
-                        if (registry.contains(*sample_id)) {
-                            // v0.23.0+ removed the mutable `get()` overload —
-                            // mutating an interned value would desync the
-                            // value→id lookup map. With the Key/Payload form
-                            // (sample_registry keys on `info.id` only),
-                            // mutating non-key fields like `expr_type` is
-                            // safe: the lookup map is unaffected. const_cast
-                            // bridges the API gap until upstream offers a
-                            // payload-mutation entry point. See #95 for the
-                            // broader const story.
-                            auto& info = const_cast<sample_info&>(registry.get(*sample_id));
-                            if (!info.has_expression_type()) {
-                                if      (attr == "counts") info.expr_type = sample_info::expression_type::COUNTS;
-                                else if (attr == "TPM")    info.expr_type = sample_info::expression_type::TPM;
-                                else if (attr == "FPKM")   info.expr_type = sample_info::expression_type::FPKM;
-                                else if (attr == "RPKM")   info.expr_type = sample_info::expression_type::RPKM;
-                                // `cov` stays UNKNOWN to match the legacy header convention
-                            }
-                        }
-                    }
-                }
-                // Evaluate the filter for this attribute (AND semantics):
-                // skip if the CLI threshold is set and the transcript's
-                // value is below it.
+        for (const auto& [attr_name, type_enum] : KNOWN_TYPES) {
+            auto it = entry.attributes.find(attr_name);
+            if (it == entry.attributes.end()) continue;
+            float value = -1.0f;
+            try {
+                value = std::stof(it->second);
+            } catch (const std::exception& e) {
+                logging::warning(std::string("Invalid ") + attr_name + " value '" +
+                    it->second + "' for transcript " + transcript_id + ": " + e.what());
+                continue;
+            }
+            expression_values.emplace_back(static_cast<uint8_t>(type_enum), value);
+        }
+
+        // Apply filter logic. AND mode (opts.filter_precedence empty): drop
+        // if any threshold the user set fails on a value the transcript
+        // actually carries. Precedence mode: walk the user-given order;
+        // evaluate ONLY the threshold for the first type the transcript
+        // carries — all other types are ignored for filtering (but still
+        // stored).
+        if (opts.filter_precedence.empty()) {
+            for (const auto& [type_byte, value] : expression_values) {
+                const char* attr = sample_info::expression_type_attribute(
+                    static_cast<sample_info::expression_type>(type_byte));
+                if (!attr) continue;
                 float threshold = opts.filters.for_attribute(attr);
                 if (threshold >= 0 && value < threshold) {
                     drop_by_filter = true;
+                    break;
                 }
+            }
+        } else {
+            for (sample_info::expression_type t : opts.filter_precedence) {
+                const uint8_t target = static_cast<uint8_t>(t);
+                auto found = std::find_if(expression_values.begin(), expression_values.end(),
+                    [target](const auto& p) { return p.first == target; });
+                if (found == expression_values.end()) continue;
+                const char* attr = sample_info::expression_type_attribute(t);
+                float threshold = attr ? opts.filters.for_attribute(attr) : -1.0f;
+                if (threshold >= 0 && found->second < threshold) {
+                    drop_by_filter = true;
+                }
+                break;
             }
         }
 
@@ -305,7 +295,7 @@ void build_gff::process_transcript(
         grove, grove_mutex, transcript_id, seqid, strand,
         min_it->start, max_it->end, static_cast<int>(sorted_exons.size()),
         exon_coords, exon_chain, segment_cache, gene_idx, sample_id,
-        gff_source, segment_count, expression_value, transcript_biotype,
+        gff_source, segment_count, expression_values, transcript_biotype,
         opts.absorb, opts.fuzzy_tolerance, counters, sidecar_writer, opts.annotated_loci_only
     );
 }

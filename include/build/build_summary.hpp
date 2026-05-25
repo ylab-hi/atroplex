@@ -57,6 +57,13 @@ struct build_counters {
 struct build_options {
     uint32_t threads = 1;
     expression_filters filters;
+    /// Precedence list for expression filtering. Empty = AND mode (every
+    /// --min-X threshold the user set is evaluated against the transcript's
+    /// matching values; drop if any threshold fails). Non-empty = precedence
+    /// mode: walk this list in order, evaluate only the threshold for the
+    /// first type the transcript carries. Populated by the --filter-precedence
+    /// CLI flag.
+    std::vector<sample_info::expression_type> filter_precedence;
     bool absorb = true;
     size_t fuzzy_tolerance = 5;
     bool prune_tombstones = false;

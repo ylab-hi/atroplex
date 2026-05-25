@@ -86,7 +86,7 @@ void segment_builder::create_segment(
     std::optional<uint32_t> sample_id,
     const std::string& gff_source,
     size_t& segment_count,
-    float expression_value,
+    const expression_values_t& expression_values,
     const std::string& transcript_biotype,
     bool absorb,
     size_t fuzzy_tolerance,
@@ -100,7 +100,7 @@ void segment_builder::create_segment(
     auto cached = segment_cache.find(structure_key);
     if (cached != segment_cache.end()) {
         merge_into_segment(cached->second, transcript_id, sample_id,
-                          gff_source, expression_value, transcript_biotype,
+                          gff_source, expression_values, transcript_biotype,
                           sidecar_writer);
         counters.merged_transcripts++;
         return;
@@ -140,7 +140,7 @@ void segment_builder::create_segment(
     // Step 2: Rule 5 — Terminal variant
     if (absorb && exon_chain.size() >= 2 &&
         try_terminal_variant_merge(exon_chain, candidates, transcript_id, sample_id,
-                                   gff_source, expression_value, transcript_biotype,
+                                   gff_source, expression_values, transcript_biotype,
                                    sidecar_writer, counters)) {
         return;
     }
@@ -154,7 +154,7 @@ void segment_builder::create_segment(
     if (absorb && exon_chain.size() >= 2 &&
         try_subsequence_absorption(exon_chain, candidates, span_start, span_end,
                                     fuzzy_tolerance, transcript_id, sample_id,
-                                    gff_source, expression_value, transcript_biotype,
+                                    gff_source, expression_values, transcript_biotype,
                                     sidecar_writer, counters)) {
         return;
     }
@@ -201,8 +201,12 @@ void segment_builder::create_segment(
     }
     segment_count++;
 
-    if (sidecar_writer && expression_value >= 0.0f) {
-        sidecar_writer->append(segment_count - 1, expression_value);
+    if (sidecar_writer) {
+        for (const auto& [type_byte, value] : expression_values) {
+            if (value >= 0.0f) {
+                sidecar_writer->append(segment_count - 1, type_byte, value);
+            }
+        }
     }
 
     segment_cache[structure_key] = seg_key;
@@ -229,7 +233,7 @@ bool segment_builder::try_terminal_variant_merge(
     const std::vector<key_ptr>& exon_chain,
     const std::vector<spatial_candidate>& candidates,
     const std::string& transcript_id, std::optional<uint32_t> sample_id,
-    const std::string& gff_source, float expression_value,
+    const std::string& gff_source, const expression_values_t& expression_values,
     const std::string& transcript_biotype,
     quant_sidecar::SampleStreamWriter* sidecar_writer,
     build_counters& counters) {
@@ -239,7 +243,7 @@ bool segment_builder::try_terminal_variant_merge(
         if (has_same_intron_chain(exon_chain, cand.exon_chain) &&
             terminal_boundaries_within_tolerance(exon_chain, cand.exon_chain, TERMINAL_TOLERANCE_BP)) {
             merge_into_segment(cand.segment, transcript_id, sample_id,
-                              gff_source, expression_value, transcript_biotype,
+                              gff_source, expression_values, transcript_biotype,
                               sidecar_writer);
             get_segment(cand.segment->get_data()).absorbed_count++;
             counters.merged_transcripts++;
@@ -277,7 +281,7 @@ bool segment_builder::try_subsequence_absorption(
     const std::vector<spatial_candidate>& candidates,
     size_t span_start, size_t span_end, size_t fuzzy_tolerance,
     const std::string& transcript_id, std::optional<uint32_t> sample_id,
-    const std::string& gff_source, float expression_value,
+    const std::string& gff_source, const expression_values_t& expression_values,
     const std::string& transcript_biotype,
     quant_sidecar::SampleStreamWriter* sidecar_writer,
     build_counters& counters) {
@@ -303,7 +307,7 @@ bool segment_builder::try_subsequence_absorption(
 
         if (match == subsequence_type::FSM) {
             merge_into_segment(cand.segment, transcript_id, sample_id,
-                              gff_source, expression_value, transcript_biotype,
+                              gff_source, expression_values, transcript_biotype,
                               sidecar_writer);
             get_segment(cand.segment->get_data()).absorbed_count++;
             counters.merged_transcripts++;
@@ -320,7 +324,7 @@ bool segment_builder::try_subsequence_absorption(
     if (best_parent != nullptr) {
         if (best_match == subsequence_type::ISM_3PRIME) {
             merge_into_segment(best_parent, transcript_id, sample_id,
-                              gff_source, expression_value, transcript_biotype,
+                              gff_source, expression_values, transcript_biotype,
                               sidecar_writer);
             get_segment(best_parent->get_data()).absorbed_count++;
             counters.merged_transcripts++;
@@ -452,7 +456,7 @@ void segment_builder::merge_into_segment(
     const std::string& transcript_id,
     std::optional<uint32_t> sample_id,
     const std::string& gff_source,
-    float expression_value,
+    const expression_values_t& expression_values,
     const std::string& transcript_biotype,
     quant_sidecar::SampleStreamWriter* sidecar_writer
 ) {
@@ -468,15 +472,19 @@ void segment_builder::merge_into_segment(
     if (!gff_source.empty()) {
         seg.add_source(gff_source);
     }
-    // Sidecar write on merge: the original 3a wiring only wrote inside
-    // create_segment's "Step 5: Create new segment" branch, so any
-    // transcript that merged into an existing segment (Rule 0 exact,
-    // Rule 5 terminal variant, fuzzy-FSM, Rule 2 ISM_3PRIME, or
-    // try_reverse_absorption) dropped its counts. With annotations
-    // processed first, every segment is created without expression and
-    // every sample transcript then merges — leaving the .qtx empty.
-    if (sidecar_writer && expression_value >= 0.0f) {
-        sidecar_writer->append(seg.segment_index, expression_value);
+    // Sidecar write on merge: every (type, value) pair the parser
+    // collected for this transcript is appended to the sample's stream
+    // for the target segment's index. Without this, transcripts that
+    // merge into an existing segment (Rule 0 exact / Rule 5 terminal /
+    // fuzzy-FSM / Rule 2 ISM_3PRIME / reverse absorption) would drop
+    // their expression — the dominant path because annotations are
+    // processed first and most sample transcripts merge into those.
+    if (sidecar_writer) {
+        for (const auto& [type_byte, value] : expression_values) {
+            if (value >= 0.0f) {
+                sidecar_writer->append(seg.segment_index, type_byte, value);
+            }
+        }
     }
 }
 

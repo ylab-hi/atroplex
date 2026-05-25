@@ -159,9 +159,11 @@ build_summary builder::build_from_samples(grove_type& grove,
             try {
                 sidecar = std::make_unique<quant_sidecar::SampleStreamWriter>(
                     current_stream_path, registry_id);
+                // types_mask is populated by merge_to_qtx as records flow
+                // through; leave 0 here.
                 current_sample_meta = quant_sidecar::SampleMetadata{
                     registry_id,
-                    static_cast<uint8_t>(info.expr_type),
+                    /*types_mask=*/0,
                     sample_label
                 };
             } catch (const std::exception& e) {

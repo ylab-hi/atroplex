@@ -24,24 +24,6 @@
 
 namespace gio = genogrove::io;
 
-namespace {
-
-/// Render a sample's declared expression_type as the short suffix used
-/// in output column headers. Matches analysis_report's copy of the same
-/// helper — any change here must be mirrored there.
-std::string expr_type_label(sample_info::expression_type t) {
-    switch (t) {
-        case sample_info::expression_type::COUNTS: return "counts";
-        case sample_info::expression_type::TPM:    return "TPM";
-        case sample_info::expression_type::FPKM:   return "FPKM";
-        case sample_info::expression_type::RPKM:   return "RPKM";
-        case sample_info::expression_type::CPM:    return "CPM";
-        default:                                   return "expression";
-    }
-}
-
-} // anonymous namespace
-
 namespace subcall {
 
 // ============================================================================
@@ -300,11 +282,16 @@ std::vector<query_result> query::classify_transcripts(const std::string& input_p
 
             // Sidecar-backed per-sample expression (3a removed expression
             // from segment features; values now live in the .qtx sidecar).
-            // One lookup per matched segment — bounded by sample_idx size.
+            // qr.sample_expression is single-valued per sample — the
+            // multi-value .qtx (post-redesign) carries records per
+            // (sample, type), so we sum across types into one scalar
+            // here. Per-(sample, type) columns in query.tsv are a
+            // follow-up task; today's writer treats expression as one
+            // generic column per sample.
             if (auto* reader = qtx_reader_ptr()) {
-                auto records = reader->lookup(seg.segment_index);
+                auto records = reader->lookup_all(seg.segment_index);
                 for (const auto& rec : records) {
-                    qr.sample_expression[rec.sample_id] = rec.value;
+                    qr.sample_expression[rec.sample_id] += rec.value;
                 }
             }
         }
@@ -369,13 +356,17 @@ void query::write_classification(const std::string& path,
     }
 
     // Per-sample expression columns (sample-typed entries only; annotations
-    // never carry expression). Column label encodes the declared expr_type,
-    // matching the hub / sample_stats convention in analysis_report.
+    // never carry expression). Generic `.expression` suffix here because
+    // sample_info no longer carries expr_type — the .qtx now stores
+    // per-(sample, type) records, and sample_expression sums them into
+    // one scalar per sample. Per-(sample, type) column expansion is a
+    // follow-up task; this writer still emits one expression column per
+    // sample for now.
     if (emit_expression_cols) {
         for (uint32_t sid : sample_ids) {
             const auto& info = registry.get(sid);
             if (info.type != "sample") continue;
-            out << "\t" << info.id << "." << expr_type_label(info.expr_type);
+            out << "\t" << info.id << ".expression";
         }
     }
     out << "\n";

@@ -44,14 +44,16 @@ protected:
         fs::remove_all(tmp_dir, ec);
     }
 
-    // Helper: write a per-sample stream file and finalize it.
+    // Helper: write a per-sample stream file and finalize it. Records are
+    // written with type=0 (UNKNOWN) since these tests don't exercise the
+    // type axis — they're checking storage/sort/dedup/remap machinery.
     fs::path write_stream(uint32_t sample_id,
                           const std::vector<std::pair<uint64_t, float>>& records) {
         fs::path p = tmp_dir / (std::to_string(sample_id) + ".stream");
         {
             quant_sidecar::SampleStreamWriter w(p, sample_id);
             for (auto [seg, val] : records) {
-                w.append(seg, val);
+                w.append(seg, /*type=*/0, val);
             }
             w.finalize();
         }
@@ -67,7 +69,7 @@ protected:
         std::vector<quant_sidecar::SampleMetadata> metas;
         for (const auto& [sid, recs] : samples) {
             streams.push_back(write_stream(sid, recs));
-            metas.push_back({sid, /*expr_type=*/0, "sample_" + std::to_string(sid)});
+            metas.push_back({sid, /*types_mask placeholder=*/0, "sample_" + std::to_string(sid)});
         }
         fs::path out = tmp_dir / qtx_name;
         quant_sidecar::merge_to_qtx(out, streams, metas);
@@ -94,8 +96,8 @@ TEST_F(QuantSidecarTest, StreamWriter_DestructorFinalizes) {
     fs::path p = tmp_dir / "dtor.stream";
     {
         quant_sidecar::SampleStreamWriter w(p, /*sample_id=*/7);
-        w.append(100, 1.5f);
-        w.append(50,  2.5f);
+        w.append(100, /*type=*/0, 1.5f);
+        w.append(50,  /*type=*/0, 2.5f);
         // No explicit finalize; destructor should flush.
     }
     EXPECT_TRUE(fs::exists(p));
@@ -104,7 +106,7 @@ TEST_F(QuantSidecarTest, StreamWriter_DestructorFinalizes) {
 TEST_F(QuantSidecarTest, StreamWriter_RepeatFinalizeIsNoOp) {
     fs::path p = tmp_dir / "idempotent.stream";
     quant_sidecar::SampleStreamWriter w(p, 1);
-    w.append(1, 1.0f);
+    w.append(1, /*type=*/0, 1.0f);
     w.finalize();
     w.finalize();  // must not throw
     w.finalize();
@@ -127,22 +129,22 @@ TEST_F(QuantSidecarTest, Merge_SingleSample) {
     EXPECT_EQ(r.samples()[0].name, "sample_7");
 
     // Each segment has exactly one (sample_id=7, value) record
-    auto r1 = r.lookup(1);
+    auto r1 = r.lookup_all(1);
     ASSERT_EQ(r1.size(), 1u);
     EXPECT_EQ(r1[0].sample_id, 7u);
     EXPECT_FLOAT_EQ(r1[0].value, 10.0f);
 
-    auto r3 = r.lookup(3);
+    auto r3 = r.lookup_all(3);
     ASSERT_EQ(r3.size(), 1u);
     EXPECT_FLOAT_EQ(r3[0].value, 30.0f);
 
-    auto r5 = r.lookup(5);
+    auto r5 = r.lookup_all(5);
     ASSERT_EQ(r5.size(), 1u);
     EXPECT_FLOAT_EQ(r5[0].value, 50.0f);
 
     // Missing segment returns empty
-    EXPECT_TRUE(r.lookup(2).empty());
-    EXPECT_TRUE(r.lookup(99).empty());
+    EXPECT_TRUE(r.lookup_all(2).empty());
+    EXPECT_TRUE(r.lookup_all(99).empty());
 }
 
 TEST_F(QuantSidecarTest, Merge_MultipleSamplesSegmentMajor) {
@@ -158,7 +160,7 @@ TEST_F(QuantSidecarTest, Merge_MultipleSamplesSegmentMajor) {
     EXPECT_EQ(r.segment_block_count(), 4u);  // segments 10, 20, 30, 40
 
     // Segment 10: samples 1 and 2
-    auto b10 = r.lookup(10);
+    auto b10 = r.lookup_all(10);
     ASSERT_EQ(b10.size(), 2u);
     // Records within a block are sorted by sample_id
     EXPECT_EQ(b10[0].sample_id, 1u);
@@ -167,7 +169,7 @@ TEST_F(QuantSidecarTest, Merge_MultipleSamplesSegmentMajor) {
     EXPECT_FLOAT_EQ(b10[1].value, 11.0f);
 
     // Segment 20: all three samples
-    auto b20 = r.lookup(20);
+    auto b20 = r.lookup_all(20);
     ASSERT_EQ(b20.size(), 3u);
     EXPECT_EQ(b20[0].sample_id, 1u);
     EXPECT_FLOAT_EQ(b20[0].value, 2.0f);
@@ -177,13 +179,13 @@ TEST_F(QuantSidecarTest, Merge_MultipleSamplesSegmentMajor) {
     EXPECT_FLOAT_EQ(b20[2].value, 222.0f);
 
     // Segment 30: sample 1 only
-    auto b30 = r.lookup(30);
+    auto b30 = r.lookup_all(30);
     ASSERT_EQ(b30.size(), 1u);
     EXPECT_EQ(b30[0].sample_id, 1u);
     EXPECT_FLOAT_EQ(b30[0].value, 3.0f);
 
     // Segment 40: sample 3 only
-    auto b40 = r.lookup(40);
+    auto b40 = r.lookup_all(40);
     ASSERT_EQ(b40.size(), 1u);
     EXPECT_EQ(b40[0].sample_id, 3u);
     EXPECT_FLOAT_EQ(b40[0].value, 444.0f);
@@ -200,15 +202,16 @@ TEST_F(QuantSidecarTest, LookupFiltered_IntersectsWithWantedSet) {
 
     quant_sidecar::Reader r(out);
 
-    // Ask for samples {2, 4, 99}: only 2 and 4 hit; 99 isn't in the block
-    auto filtered = r.lookup_filtered(100, {2u, 4u, 99u});
+    // Ask for samples {2, 4, 99}: only 2 and 4 hit; 99 isn't in the block.
+    // Tests write records with type=0 (UNKNOWN), so filter to that type.
+    auto filtered = r.lookup_filtered(100, /*type=*/0, {2u, 4u, 99u});
     ASSERT_EQ(filtered.size(), 2u);
     EXPECT_FLOAT_EQ(filtered.at(2), 2.0f);
     EXPECT_FLOAT_EQ(filtered.at(4), 4.0f);
     EXPECT_EQ(filtered.count(99), 0u);
 
     // Missing segment: empty map regardless of wanted list
-    auto none = r.lookup_filtered(999, {1u, 2u});
+    auto none = r.lookup_filtered(999, /*type=*/0, {1u, 2u});
     EXPECT_TRUE(none.empty());
 }
 
@@ -237,15 +240,20 @@ TEST_F(QuantSidecarTest, ForEachSegment_IteratesInOrder) {
 }
 
 TEST_F(QuantSidecarTest, Merge_SampleMetadataRoundTrips) {
-    // Explicit metadata: mix of expr_type values and names
+    // Sample IDs and names round-trip. The third SampleMetadata field
+    // is `types_mask` (bitfield of which expression_type bytes each
+    // sample has records for) — it's POPULATED by merge_to_qtx from
+    // the actual records, so whatever we pass in here is overwritten.
+    // The records write type=0 throughout, so the computed mask is
+    // (1 << 0) = 1 for both samples.
     std::vector<fs::path> streams;
     std::vector<quant_sidecar::SampleMetadata> metas;
 
     streams.push_back(write_stream(100, {{1, 10.0f}}));
-    metas.push_back({100, /*expr_type=*/2, "TCGA-A01"});
+    metas.push_back({100, /*types_mask placeholder=*/0, "TCGA-A01"});
 
     streams.push_back(write_stream(200, {{1, 20.0f}}));
-    metas.push_back({200, /*expr_type=*/4, "ENCSR_042"});
+    metas.push_back({200, /*types_mask placeholder=*/0, "ENCSR_042"});
 
     fs::path out = tmp_dir / "meta.qtx";
     quant_sidecar::merge_to_qtx(out, streams, metas);
@@ -255,11 +263,11 @@ TEST_F(QuantSidecarTest, Merge_SampleMetadataRoundTrips) {
 
     // Order in sample metadata should match the merge input order
     EXPECT_EQ(r.samples()[0].sample_id, 100u);
-    EXPECT_EQ(r.samples()[0].expr_type, 2u);
+    EXPECT_EQ(r.samples()[0].types_mask, 1u);
     EXPECT_EQ(r.samples()[0].name, "TCGA-A01");
 
     EXPECT_EQ(r.samples()[1].sample_id, 200u);
-    EXPECT_EQ(r.samples()[1].expr_type, 4u);
+    EXPECT_EQ(r.samples()[1].types_mask, 1u);
     EXPECT_EQ(r.samples()[1].name, "ENCSR_042");
 }
 
@@ -279,7 +287,7 @@ TEST_F(QuantSidecarTest, Merge_EmptyStreamsProducesEmptyQtx) {
     quant_sidecar::Reader r(out);
     EXPECT_EQ(r.segment_block_count(), 0u);
     EXPECT_EQ(r.samples().size(), 2u);
-    EXPECT_TRUE(r.lookup(1).empty());
+    EXPECT_TRUE(r.lookup_all(1).empty());
 }
 
 TEST_F(QuantSidecarTest, Merge_ExcludesTombstonedSegments) {
@@ -306,26 +314,26 @@ TEST_F(QuantSidecarTest, Merge_ExcludesTombstonedSegments) {
     EXPECT_EQ(r.segment_block_count(), 3u);
 
     // Surviving blocks each carry both samples.
-    auto b1 = r.lookup(1);
+    auto b1 = r.lookup_all(1);
     ASSERT_EQ(b1.size(), 2u);
     EXPECT_EQ(b1[0].sample_id, 1u);
     EXPECT_FLOAT_EQ(b1[0].value, 10.0f);
     EXPECT_EQ(b1[1].sample_id, 2u);
     EXPECT_FLOAT_EQ(b1[1].value, 11.0f);
 
-    auto b3 = r.lookup(3);
+    auto b3 = r.lookup_all(3);
     ASSERT_EQ(b3.size(), 2u);
     EXPECT_FLOAT_EQ(b3[0].value, 30.0f);
     EXPECT_FLOAT_EQ(b3[1].value, 33.0f);
 
-    auto b5 = r.lookup(5);
+    auto b5 = r.lookup_all(5);
     ASSERT_EQ(b5.size(), 2u);
     EXPECT_FLOAT_EQ(b5[0].value, 50.0f);
     EXPECT_FLOAT_EQ(b5[1].value, 55.0f);
 
     // Excluded segments are absent — lookups return empty.
-    EXPECT_TRUE(r.lookup(2).empty());
-    EXPECT_TRUE(r.lookup(4).empty());
+    EXPECT_TRUE(r.lookup_all(2).empty());
+    EXPECT_TRUE(r.lookup_all(4).empty());
 
     // for_each_segment iterates only surviving blocks in order.
     std::vector<uint64_t> seen;
@@ -369,14 +377,14 @@ TEST_F(QuantSidecarTest, Merge_RemapsTombstonedSegmentsToLiveParent) {
     quant_sidecar::Reader r(out);
     EXPECT_EQ(r.segment_block_count(), 1u);
 
-    auto b9 = r.lookup(9);
+    auto b9 = r.lookup_all(9);
     ASSERT_EQ(b9.size(), 2u);
     EXPECT_EQ(b9[0].sample_id, 1u);
     EXPECT_FLOAT_EQ(b9[0].value, 5.5f);
     EXPECT_EQ(b9[1].sample_id, 2u);
     EXPECT_FLOAT_EQ(b9[1].value, 9.9f);
 
-    EXPECT_TRUE(r.lookup(5).empty());
+    EXPECT_TRUE(r.lookup_all(5).empty());
 }
 
 TEST_F(QuantSidecarTest, Merge_RemapWinsOverDropSet) {
@@ -394,10 +402,10 @@ TEST_F(QuantSidecarTest, Merge_RemapWinsOverDropSet) {
 
     quant_sidecar::Reader r(out);
     EXPECT_EQ(r.segment_block_count(), 1u);
-    auto b42 = r.lookup(42);
+    auto b42 = r.lookup_all(42);
     ASSERT_EQ(b42.size(), 1u);
     EXPECT_FLOAT_EQ(b42[0].value, 100.0f);
-    EXPECT_TRUE(r.lookup(3).empty());
+    EXPECT_TRUE(r.lookup_all(3).empty());
 }
 
 TEST_F(QuantSidecarTest, Merge_RemapMergesIntoExistingParentBlock) {
@@ -422,7 +430,7 @@ TEST_F(QuantSidecarTest, Merge_RemapMergesIntoExistingParentBlock) {
     quant_sidecar::Reader r(out);
     EXPECT_EQ(r.segment_block_count(), 1u);
 
-    auto b20 = r.lookup(20);
+    auto b20 = r.lookup_all(20);
     ASSERT_EQ(b20.size(), 3u);
     // Records within the merged block must remain sorted by sample_id
     EXPECT_EQ(b20[0].sample_id, 1u);
@@ -448,8 +456,8 @@ TEST_F(QuantSidecarTest, Merge_EmptyRemapBehavesLikeLegacyCall) {
 
     quant_sidecar::Reader r(out);
     EXPECT_EQ(r.segment_block_count(), 1u);
-    EXPECT_TRUE(r.lookup(5).empty());  // dropped as before
-    auto b9 = r.lookup(9);
+    EXPECT_TRUE(r.lookup_all(5).empty());  // dropped as before
+    auto b9 = r.lookup_all(9);
     ASSERT_EQ(b9.size(), 1u);
     EXPECT_FLOAT_EQ(b9[0].value, 9.0f);
 }

@@ -24,17 +24,18 @@
 
 namespace {
 
-/// Render a sample's declared expression_type as the short suffix used
-/// in per-sample output column headers (e.g., `SAMPLE.counts`).
-std::string expr_type_label(sample_info::expression_type t) {
-    switch (t) {
-        case sample_info::expression_type::COUNTS: return "counts";
-        case sample_info::expression_type::TPM:    return "TPM";
-        case sample_info::expression_type::FPKM:   return "FPKM";
-        case sample_info::expression_type::RPKM:   return "RPKM";
-        case sample_info::expression_type::CPM:    return "CPM";
-        default:                                   return "expression";
-    }
+/// Pack a (sample_id, expression_type byte) pair into a single uint64_t
+/// so the inner map in exon_expr_sum_ can stay a plain
+/// unordered_map<uint64_t, float> without needing a custom pair hash.
+/// Layout: high 32 bits = sample_id, low 8 bits = type. The middle 24
+/// bits are zero — they exist so the encoding is self-describing
+/// (sample_id is at byte offset 8..15, type is at byte offset 0).
+inline uint64_t pack_sample_type(uint32_t sample_id, uint8_t type) {
+    return (static_cast<uint64_t>(sample_id) << 8) | static_cast<uint64_t>(type);
+}
+
+inline std::pair<uint32_t, uint8_t> unpack_sample_type(uint64_t packed) {
+    return { static_cast<uint32_t>(packed >> 8), static_cast<uint8_t>(packed & 0xFF) };
 }
 
 double compute_median(std::vector<size_t>& values) {
@@ -69,31 +70,22 @@ void analysis_report::accumulate_segment_stats(const segment_feature& seg) {
     }
 }
 
-std::vector<quant_sidecar::Reader::ValueRecord>
+std::vector<quant_sidecar::Reader::TypedValueRecord>
 analysis_report::lookup_segment_expression(const segment_feature& seg) {
-    // When a .qtx reader is available, look up this segment's
-    // per-sample expression records once and:
-    //   1. accumulate per-sample stats (expression_sum,
-    //      expressed_segments) for the sample_stats output
-    //   2. attribute the value to every exon in this segment's
-    //      chain via exon_expr_sum_[exon_key][sample_id] so
-    //      hub / branch / conserved-exon emission can quote a
-    //      per-exon value derived from the segments containing
-    //      the exon
-    // Records are pre-sorted by sample_id within a block. We
-    // walk the segment's exon chain via the same SEGMENT_TO_EXON
-    // / EXON_TO_EXON edges the main exon walk uses below, but
-    // do it inline here so the per-segment lookup happens once.
-    std::vector<quant_sidecar::Reader::ValueRecord> seg_expr_records;
+    // Per-segment expression lookup. Reads every (sample, type, value)
+    // record for this segment via lookup_all(). Records are sorted by
+    // (sample_id, type) ascending, so all records for one sample appear
+    // contiguously.
+    //
+    // Per-sample stats: expression_sum is a cross-type aggregate (sums
+    // values regardless of type — loose semantics but per_sample.tsv
+    // has no type column so it stays a single scalar). expressed_segments
+    // counts distinct samples that have any record for this segment;
+    // the prev_sid sentinel deduplicates across the type axis since
+    // multiple type records for the same sample are adjacent.
+    std::vector<quant_sidecar::Reader::TypedValueRecord> seg_expr_records;
     if (qtx_reader_) {
-        seg_expr_records = qtx_reader_->lookup(seg.segment_index);
-        // expression_sum adds every record (sum-aggregation
-        // semantic when multiple same-sample transcripts merged
-        // into this segment). expressed_segments counts distinct
-        // samples only — records within a segment block are
-        // sorted by sample_id, so duplicates are adjacent and a
-        // prev-id sentinel is enough to dedup without an
-        // auxiliary set.
+        seg_expr_records = qtx_reader_->lookup_all(seg.segment_index);
         std::optional<uint32_t> prev_sid;
         for (const auto& rec : seg_expr_records) {
             auto& sc = per_sample[rec.sample_id];
@@ -105,6 +97,30 @@ analysis_report::lookup_segment_expression(const segment_feature& seg) {
         }
     }
     return seg_expr_records;
+}
+
+std::vector<analysis_report::sample_type_column>
+analysis_report::compute_sample_type_columns(
+    const std::vector<uint32_t>& sample_ids,
+    const std::vector<bool>& is_sample) const {
+    std::vector<sample_type_column> cols;
+    if (!qtx_reader_) return cols;
+    auto& registry = sample_registry::instance();
+    for (size_t i = 0; i < sample_ids.size(); ++i) {
+        if (!is_sample[i]) continue;
+        uint32_t sid = sample_ids[i];
+        uint8_t mask = qtx_reader_->types_for_sample(sid);
+        if (!mask) continue;
+        const auto& info = registry.get(sid);
+        std::string sample_label = info.id.empty()
+            ? std::to_string(sid) : info.id;
+        for (uint8_t bit = 0; bit < 8; ++bit) {
+            if (!(mask & (1u << bit))) continue;
+            cols.push_back({sid, bit,
+                sample_label + "." + quant_sidecar::expression_type_label(bit)});
+        }
+    }
+    return cols;
 }
 
 void analysis_report::accumulate_gene(const segment_feature& seg, gene_acc& acc) {
@@ -153,7 +169,7 @@ void analysis_report::process_exon_visit(key_ptr exon_key,
                                          const segment_feature& seg,
                                          const std::string& seqid,
                                          gene_acc& acc,
-                                         const std::vector<quant_sidecar::Reader::ValueRecord>& expr_records,
+                                         const std::vector<quant_sidecar::Reader::TypedValueRecord>& expr_records,
                                          size_t chain_pos, size_t chain_total,
                                          grove_type& grove) {
     // Phase 8.4: every visit counts toward the per-gene
@@ -162,15 +178,16 @@ void analysis_report::process_exon_visit(key_ptr exon_key,
     // within a segment don't over-count).
     acc.exon_seg_counts[exon_key]++;
 
-    // Quantification: attribute this segment's per-sample
-    // expression to every exon in its chain. The result
-    // is "total read support flowing through this exon
-    // across all segments containing it, per sample".
-    // Cleared per-chromosome alongside `active_genes_`.
+    // Quantification: attribute this segment's per-(sample, type)
+    // expression to every exon in its chain. The result is "total
+    // value flowing through this exon across all segments containing
+    // it, per (sample, type)". Inner map key is the packed
+    // (sample_id, type) — see pack_sample_type(). Cleared
+    // per-chromosome alongside `active_genes_`.
     if (qtx_reader_ && !expr_records.empty()) {
         auto& exon_map = exon_expr_sum_[exon_key];
         for (const auto& rec : expr_records) {
-            exon_map[rec.sample_id] += rec.value;
+            exon_map[pack_sample_type(rec.sample_id, rec.type)] += rec.value;
         }
     }
 
@@ -241,14 +258,17 @@ void analysis_report::process_exon_visit(key_ptr exon_key,
                 << format_coordinate(seqid, exon_key->get_value()) << "\t"
                 << exon.transcript_ids.size();
             if (conserved_emit_expression) {
+                // Emit one cell per precomputed (sample, type) column.
+                // The header and this loop iterate the same vector,
+                // so structural alignment is guaranteed regardless of
+                // how many types each sample actually carries.
                 auto exon_map_it = qtx_reader_
                     ? exon_expr_sum_.find(exon_key)
                     : exon_expr_sum_.end();
-                for (size_t i = 0; i < conserved_stream_sample_ids.size(); ++i) {
-                    if (!conserved_stream_is_sample[i]) continue;
-                    uint32_t sid = conserved_stream_sample_ids[i];
+                for (const auto& col : conserved_exon_type_cols) {
                     if (exon_map_it != exon_expr_sum_.end()) {
-                        auto v_it = exon_map_it->second.find(sid);
+                        auto v_it = exon_map_it->second.find(
+                            pack_sample_type(col.sample_id, col.type));
                         if (v_it != exon_map_it->second.end()) {
                             out << "\t" << v_it->second;
                             continue;
@@ -452,13 +472,12 @@ void analysis_report::emit_hub_rows(gene_acc& acc, const std::string& seqid) {
             auto hub_expr_it = (qtx_reader_ && hub_emit_expression)
                 ? exon_expr_sum_.find(hub.exon)
                 : exon_expr_sum_.end();
+            size_t hub_col_cursor = 0;
             for (size_t i = 0; i < hub_stream_sample_ids.size(); ++i) {
                 uint32_t sid = hub_stream_sample_ids[i];
-                if (!hub_exon.sample_idx.test(sid)) {
+                bool sample_present = hub_exon.sample_idx.test(sid);
+                if (!sample_present) {
                     hub_out << "\t.\t.\t.\t.\t.";
-                    if (hub_emit_expression && hub_stream_is_sample[i]) {
-                        hub_out << "\t.";
-                    }
                 } else {
                     // PSI: hub_psi_den_[sid] > 0 is guaranteed here
                     double psi = (hub_psi_den_[sid] > 0)
@@ -490,16 +509,27 @@ void analysis_report::emit_hub_rows(gene_acc& acc, const std::string& seqid) {
                         hub_out << "\t" << psi << "\t" << entropy;
                         hub_out.precision(prev_prec);
                     }
-                    if (hub_emit_expression && hub_stream_is_sample[i]) {
-                        if (hub_expr_it != exon_expr_sum_.end()) {
-                            auto v_it = hub_expr_it->second.find(sid);
-                            if (v_it != hub_expr_it->second.end()) {
-                                hub_out << "\t" << v_it->second;
-                                continue;
-                            }
+                }
+                // Per-(sample, type) expression cells. Iterate this
+                // sample's run in hub_type_cols (already ordered by
+                // sample_id from compute_sample_type_columns), looking
+                // up each (sample, type) value in exon_expr_sum_'s
+                // packed-key inner map. If the sample isn't in the hub
+                // segment at all, all of its expression cells are ".".
+                while (hub_col_cursor < hub_type_cols.size()
+                       && hub_type_cols[hub_col_cursor].sample_id == sid) {
+                    const auto& col = hub_type_cols[hub_col_cursor];
+                    bool wrote = false;
+                    if (sample_present && hub_expr_it != exon_expr_sum_.end()) {
+                        auto v_it = hub_expr_it->second.find(
+                            pack_sample_type(col.sample_id, col.type));
+                        if (v_it != hub_expr_it->second.end()) {
+                            hub_out << "\t" << v_it->second;
+                            wrote = true;
                         }
-                        hub_out << "\t.";
                     }
+                    if (!wrote) hub_out << "\t.";
+                    ++hub_col_cursor;
                 }
             }
             hub_out << "\n";
@@ -518,19 +548,28 @@ void analysis_report::emit_hub_rows(gene_acc& acc, const std::string& seqid) {
                     auto tgt_expr_it = (qtx_reader_ && hub_emit_expression)
                         ? exon_expr_sum_.find(tgt_key)
                         : exon_expr_sum_.end();
+                    size_t br_col_cursor = 0;
                     for (size_t i = 0; i < hub_stream_sample_ids.size(); ++i) {
                         uint32_t sid = hub_stream_sample_ids[i];
                         bool present = tgt.sample_idx.test(sid);
                         br_out << "\t" << (present ? "1" : ".");
-                        if (hub_emit_expression && hub_stream_is_sample[i]) {
+                        // Per-(sample, type) expression cells. Same
+                        // cursor pattern as the hub row above; iterate
+                        // this sample's run in hub_type_cols.
+                        while (br_col_cursor < hub_type_cols.size()
+                               && hub_type_cols[br_col_cursor].sample_id == sid) {
+                            const auto& col = hub_type_cols[br_col_cursor];
+                            bool wrote = false;
                             if (present && tgt_expr_it != exon_expr_sum_.end()) {
-                                auto v_it = tgt_expr_it->second.find(sid);
+                                auto v_it = tgt_expr_it->second.find(
+                                    pack_sample_type(col.sample_id, col.type));
                                 if (v_it != tgt_expr_it->second.end()) {
                                     br_out << "\t" << v_it->second;
-                                    continue;
+                                    wrote = true;
                                 }
                             }
-                            br_out << "\t.";
+                            if (!wrote) br_out << "\t.";
+                            ++br_col_cursor;
                         }
                     }
                     br_out << "\n";
@@ -1039,6 +1078,15 @@ void analysis_report::begin_splicing_hub_streams(
         hub_stream_is_sample.push_back(info.type == "sample");
     }
 
+    // Precompute the (sample, type) column list — used by both the
+    // header below and the row writers later. Only populated when
+    // expression columns are enabled AND a .qtx reader is available.
+    hub_type_cols.clear();
+    if (hub_emit_expression) {
+        hub_type_cols = compute_sample_type_columns(
+            hub_stream_sample_ids, hub_stream_is_sample);
+    }
+
     hub_stream = std::make_unique<std::ofstream>(hubs_path);
     branch_stream = std::make_unique<std::ofstream>(branches_path);
 
@@ -1060,9 +1108,14 @@ void analysis_report::begin_splicing_hub_streams(
     *hub_stream << std::fixed;
     if (branch_stream && branch_stream->is_open()) *branch_stream << std::fixed;
 
-    // splicing_hubs.tsv header
+    // splicing_hubs.tsv header. Layout per sample: 5 structural columns
+    // (.branches/.shared/.unique/.psi/.entropy) followed by one column
+    // per (sample, type) the sample carries data for. hub_type_cols is
+    // ordered by sample_id, so all entries for sample N are contiguous;
+    // we advance a cursor in lockstep with the sample loop.
     *hub_stream << "gene_name\tgene_id\texon_id\tcoordinate\texon_number\ttotal_exons"
                 << "\ttotal_branches\ttotal_transcripts";
+    size_t hub_col_cursor = 0;
     for (size_t i = 0; i < hub_stream_sample_ids.size(); ++i) {
         const auto& info = registry.get(hub_stream_sample_ids[i]);
         std::string label = info.id.empty()
@@ -1072,23 +1125,29 @@ void analysis_report::begin_splicing_hub_streams(
                     << "\t" << label << ".unique"
                     << "\t" << label << ".psi"
                     << "\t" << label << ".entropy";
-        if (hub_emit_expression && hub_stream_is_sample[i]) {
-            *hub_stream << "\t" << label << "." << expr_type_label(info.expr_type);
+        while (hub_col_cursor < hub_type_cols.size()
+               && hub_type_cols[hub_col_cursor].sample_id == hub_stream_sample_ids[i]) {
+            *hub_stream << "\t" << hub_type_cols[hub_col_cursor].label;
+            ++hub_col_cursor;
         }
     }
     *hub_stream << "\n";
 
-    // branch_details.tsv header
+    // branch_details.tsv header. Layout per sample: 1 structural column
+    // (.present) followed by per-(sample, type) expression columns.
     if (branch_stream && branch_stream->is_open()) {
         *branch_stream << "hub_gene_name\thub_gene_id\thub_exon_id\thub_coordinate"
                        << "\ttarget_exon_id\ttarget_coordinate";
+        size_t br_col_cursor = 0;
         for (size_t i = 0; i < hub_stream_sample_ids.size(); ++i) {
             const auto& info = registry.get(hub_stream_sample_ids[i]);
             std::string label = info.id.empty()
                 ? std::to_string(hub_stream_sample_ids[i]) : info.id;
             *branch_stream << "\t" << label << ".present";
-            if (hub_emit_expression && hub_stream_is_sample[i]) {
-                *branch_stream << "\t" << label << "." << expr_type_label(info.expr_type);
+            while (br_col_cursor < hub_type_cols.size()
+                   && hub_type_cols[br_col_cursor].sample_id == hub_stream_sample_ids[i]) {
+                *branch_stream << "\t" << hub_type_cols[br_col_cursor].label;
+                ++br_col_cursor;
             }
         }
         *branch_stream << "\n";
@@ -1158,18 +1217,20 @@ void analysis_report::begin_conserved_exon_stream(const std::string& path,
         return;
     }
 
+    // Precompute the per-(sample, type) column list. The row writer
+    // (process_exon_visit's inline conserved-exon emit) iterates the
+    // same vector so header and row stay structurally aligned.
+    conserved_exon_type_cols.clear();
+    if (conserved_emit_expression) {
+        conserved_exon_type_cols = compute_sample_type_columns(
+            conserved_stream_sample_ids, conserved_stream_is_sample);
+    }
+
     auto& out = *conserved_exon_stream;
     out << std::fixed;
     out << "exon_id\tgene_name\tgene_id\tchromosome\tcoordinate\tn_transcripts";
-    if (conserved_emit_expression) {
-        // Per-sample expression columns for sample-typed entries only
-        for (size_t i = 0; i < conserved_stream_sample_ids.size(); ++i) {
-            if (!conserved_stream_is_sample[i]) continue;
-            const auto& info = registry.get(conserved_stream_sample_ids[i]);
-            std::string label = info.id.empty()
-                ? std::to_string(conserved_stream_sample_ids[i]) : info.id;
-            out << "\t" << label << "." << expr_type_label(info.expr_type);
-        }
+    for (const auto& col : conserved_exon_type_cols) {
+        out << "\t" << col.label;
     }
     out << "\n";
 
@@ -1229,18 +1290,21 @@ void analysis_report::begin_conserved_segment_stream(const std::string& path,
         return;
     }
 
+    // Precompute the per-(sample, type) column list. The row writer
+    // (stream_conserved_segment_row) iterates the same vector so
+    // header and row stay structurally aligned.
+    conserved_segment_type_cols.clear();
+    if (conserved_emit_expression) {
+        conserved_segment_type_cols = compute_sample_type_columns(
+            conserved_stream_sample_ids, conserved_stream_is_sample);
+    }
+
     auto& out = *conserved_segment_stream;
     out << std::fixed;
     out << "segment_id\tgene_id\tgene_name\tgene_biotype\tchromosome\tcoordinate"
            "\texon_count\tn_transcripts\tn_samples\tsources";
-    if (conserved_emit_expression) {
-        for (size_t i = 0; i < conserved_stream_sample_ids.size(); ++i) {
-            if (!conserved_stream_is_sample[i]) continue;
-            const auto& info = registry.get(conserved_stream_sample_ids[i]);
-            std::string label = info.id.empty()
-                ? std::to_string(conserved_stream_sample_ids[i]) : info.id;
-            out << "\t" << label << "." << expr_type_label(info.expr_type);
-        }
+    for (const auto& col : conserved_segment_type_cols) {
+        out << "\t" << col.label;
     }
     out << "\n";
 
@@ -1251,7 +1315,7 @@ void analysis_report::stream_conserved_segment_row(
     const segment_feature& seg,
     const std::string& seqid,
     key_ptr seg_key,
-    const std::vector<quant_sidecar::Reader::ValueRecord>& seg_expr_records) {
+    const std::vector<quant_sidecar::Reader::TypedValueRecord>& seg_expr_records) {
 
     auto& out = *conserved_segment_stream;
 
@@ -1275,29 +1339,24 @@ void analysis_report::stream_conserved_segment_row(
         << "\t" << sources_str;
 
     if (conserved_emit_expression) {
-        // seg_expr_records is sorted by sample_id; walk in lockstep with
-        // conserved_stream_sample_ids (which is also registry-order
-        // ascending) for sample-typed entries only.
-        size_t rec_idx = 0;
-        for (size_t i = 0; i < conserved_stream_sample_ids.size(); ++i) {
-            if (!conserved_stream_is_sample[i]) continue;
-            uint32_t sid = conserved_stream_sample_ids[i];
-            // Sum all records for this sample (multiple source transcripts
-            // can collapse into one segment for the same sample).
-            double v = 0.0;
-            bool any = false;
-            while (rec_idx < seg_expr_records.size()
-                   && seg_expr_records[rec_idx].sample_id < sid) {
-                ++rec_idx;
+        // Build a per-(sample, type) lookup so the column iteration is
+        // O(num_cols) regardless of how seg_expr_records is ordered.
+        // Records with the same (sample, type) key get summed —
+        // possible when multiple source transcripts collapsed into
+        // this segment all carried, say, TPM values for the same sample.
+        std::unordered_map<uint64_t, float> values_by_packed_key;
+        values_by_packed_key.reserve(seg_expr_records.size());
+        for (const auto& rec : seg_expr_records) {
+            values_by_packed_key[pack_sample_type(rec.sample_id, rec.type)] += rec.value;
+        }
+        for (const auto& col : conserved_segment_type_cols) {
+            auto it = values_by_packed_key.find(
+                pack_sample_type(col.sample_id, col.type));
+            if (it != values_by_packed_key.end()) {
+                out << "\t" << it->second;
+            } else {
+                out << "\t.";
             }
-            while (rec_idx < seg_expr_records.size()
-                   && seg_expr_records[rec_idx].sample_id == sid) {
-                v += seg_expr_records[rec_idx].value;
-                any = true;
-                ++rec_idx;
-            }
-            if (any) out << "\t" << v;
-            else     out << "\t.";
         }
     }
     out << "\n";

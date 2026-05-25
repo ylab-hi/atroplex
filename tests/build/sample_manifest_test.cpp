@@ -234,34 +234,13 @@ TEST_F(SampleManifestTest, CommentsAndBlankLinesSkipped) {
     EXPECT_EQ(manifest.get_samples()[1].id, "SAMPLE_B");
 }
 
-// ── Expression attributes ──────────────────────────────────────────
-
-TEST_F(SampleManifestTest, ExpressionAttributesCommaSplitWithWhitespace) {
-    touch("a.gtf");
-    auto path = write_file("manifest.tsv",
-        "file\tid\texpression_attribute\n"
-        "a.gtf\tSAMPLE_A\t  cov , TPM ,counts  \n");
-
-    sample_manifest manifest(path);
-    ASSERT_EQ(manifest.size(), 1u);
-    const auto& attrs = manifest.get_samples()[0].expression_attributes;
-    ASSERT_EQ(attrs.size(), 3u);
-    EXPECT_EQ(attrs[0], "cov");
-    EXPECT_EQ(attrs[1], "TPM");
-    EXPECT_EQ(attrs[2], "counts");
-}
-
-TEST_F(SampleManifestTest, EmptyExpressionAttributeYieldsEmptyList) {
-    touch("a.gtf");
-    auto path = write_file("manifest.tsv",
-        "file\tid\texpression_attribute\n"
-        "a.gtf\tSAMPLE_A\t.\n");
-
-    sample_manifest manifest(path);
-    ASSERT_EQ(manifest.size(), 1u);
-    EXPECT_TRUE(manifest.get_samples()[0].expression_attributes.empty())
-        << "'.' in expression_attribute column must yield an empty list.";
-}
+// ── Expression attributes column dropped from manifest ─────────────
+//
+// The legacy `expression_attribute` column is no longer parsed.
+// Filtering moved entirely to CLI flags (--min-X / --filter-precedence)
+// and the .qtx sidecar stores every expression value the GFF row
+// carries. A manifest with this column in its header is silently
+// accepted (only `file` is required); the column is ignored.
 
 // ── Duplicate IDs (currently accepted) ─────────────────────────────
 //

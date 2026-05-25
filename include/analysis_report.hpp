@@ -314,8 +314,25 @@ private:
         uint16_t sources_seen_in_gene = 0;
     };
 
+    /// Per-exon expression map.
+    /// Outer key: exon key_ptr.
+    /// Inner key: packed (sample_id, expression_type byte) — high 32 bits
+    /// are the sample_id, low 8 bits are the type. See pack_sample_type()
+    /// in analysis_report.cpp. Inner value: sum of expression values for
+    /// that (exon, sample, type) across the segments containing the exon.
+    /// One float per (exon, sample, type), summed across segments.
     using exon_expr_map_t = std::unordered_map<key_ptr,
-                                               std::unordered_map<uint32_t, float>>;
+                                               std::unordered_map<uint64_t, float>>;
+
+    /// One TSV column for a (sample, expression_type) pair. Precomputed
+    /// in the begin_*_stream() methods when the .qtx reader is available,
+    /// so the header writer and the per-row writer iterate the same
+    /// vector and stay structurally in sync.
+    struct sample_type_column {
+        uint32_t sample_id;
+        uint8_t  type;       ///< expression_type enum byte
+        std::string label;   ///< pre-rendered "{sample.id}.{type_label}"
+    };
 
     // ── Per-chromosome state (cleared at chromosome boundary) ───────
     std::unordered_map<uint32_t, gene_acc> active_genes_;
@@ -346,12 +363,12 @@ private:
                          grove_type& grove);
 
     void accumulate_segment_stats(const segment_feature& seg);
-    std::vector<quant_sidecar::Reader::ValueRecord> lookup_segment_expression(
+    std::vector<quant_sidecar::Reader::TypedValueRecord> lookup_segment_expression(
         const segment_feature& seg);
     void accumulate_gene(const segment_feature& seg, gene_acc& acc);
     void process_exon_visit(key_ptr exon_key, const segment_feature& seg,
                             const std::string& seqid, gene_acc& acc,
-                            const std::vector<quant_sidecar::Reader::ValueRecord>& expr_records,
+                            const std::vector<quant_sidecar::Reader::TypedValueRecord>& expr_records,
                             size_t chain_pos, size_t chain_total,
                             grove_type& grove);
 
@@ -359,7 +376,29 @@ private:
         const segment_feature& seg,
         const std::string& seqid,
         key_ptr seg_key,
-        const std::vector<quant_sidecar::Reader::ValueRecord>& seg_expr_records);
+        const std::vector<quant_sidecar::Reader::TypedValueRecord>& seg_expr_records);
+
+    /// Build the per-(sample, type) column list for a streamed TSV
+    /// output. Walks `sample_ids` in registry order; for each entry
+    /// flagged in `is_sample` (i.e. non-annotation), queries the
+    /// .qtx reader's types_mask and emits one sample_type_column per
+    /// set bit. Returns an empty vector when `qtx_reader_` is null.
+    /// Called once per stream from begin_*_stream(); the result is
+    /// cached in the matching member vector below.
+    std::vector<sample_type_column> compute_sample_type_columns(
+        const std::vector<uint32_t>& sample_ids,
+        const std::vector<bool>& is_sample) const;
+
+    /// Precomputed (sample, type) column lists for the three streamed
+    /// outputs that emit per-sample expression columns. Populated by
+    /// the matching begin_*_stream() when the .qtx reader is available;
+    /// empty when no reader is plugged in or when expression columns
+    /// are disabled by the caller. Hub and branch share the same list
+    /// because they apply to the same sample set with the same
+    /// emission flag (hub_emit_expression).
+    std::vector<sample_type_column> hub_type_cols;
+    std::vector<sample_type_column> conserved_exon_type_cols;
+    std::vector<sample_type_column> conserved_segment_type_cols;
 };
 
 #endif // ATROPLEX_ANALYSIS_REPORT_HPP
