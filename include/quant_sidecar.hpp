@@ -54,16 +54,23 @@
  *     u32 num_samples
  *     For each sample:
  *       u32  sample_id
- *       u8   expr_type
+ *       u8   types_mask        (bitfield: bit N set ↔ sample has ≥1 record
+ *                                of expression_type N)
  *       u8   name_len
  *       char[name_len] name
  *
  *   Segment blocks (one per segment with >=1 record, in segment_index order):
  *     u64 segment_index
- *     u32 num_records
+ *     u32 num_records         (count of packed records, ie. distinct
+ *                              sample_ids that have at least one value
+ *                              at this segment)
  *     For each record (sorted by sample_id ascending):
  *       u32 sample_id
- *       f32 value
+ *       u8  type_mask          (bit N set ↔ this (seg, sample) carries a
+ *                                value of expression_type N; see
+ *                                expression_type_label())
+ *       f32 values[popcount(type_mask)]  (values in bit-position order:
+ *                                lower bits first)
  *
  *   Segment TOC (at toc_offset, sorted by segment_index ascending):
  *     For each block:
@@ -76,31 +83,39 @@
  *
  *   Header (16 bytes):
  *     char[4] magic "AQTS"
- *     u32     version  1
+ *     u32     version  2
  *     u32     sample_id       (representative; 0 for batched intermediates)
  *     u32     num_records
  *
- *   Records (sorted by (segment_index, sample_id)):
+ *   Records (sorted by (segment_index, sample_id, type)):
  *     u64 segment_index
  *     u32 sample_id           (authoritative — same format used for both
  *                              per-sample streams and batched intermediates)
+ *     u8  type                (expression_type enum byte)
+ *     u8  pad[3]
  *     f32 value
  *
- * Each record is 16 bytes. The sample_id in the header is redundant for
+ * Each record is 20 bytes. The sample_id in the header is redundant for
  * single-sample streams but simplifies the merge code since intermediate
  * batched files have mixed sample_ids and the header slot becomes 0.
+ *
+ * Multi-value storage: one sample × one segment may carry up to N records,
+ * one per expression_type the source GFF row carried (e.g. TPM + FPKM +
+ * counts). Filtering at build time is CLI-driven (--min-X / --filter-
+ * precedence), but the index stores everything the row provided so callers
+ * can re-query in any unit later.
  */
 namespace quant_sidecar {
 
 // ── Constants ──────────────────────────────────────────────────────────
 
 constexpr char     MAGIC[4]    = {'A', 'Q', 'T', 'X'};
-constexpr uint32_t QTX_VERSION = 2;
+constexpr uint32_t QTX_VERSION = 3;
 
 // Temp-stream magic and version (used by SampleStreamWriter and the
 // intermediate files produced by batched merge passes).
 constexpr char     STREAM_MAGIC[4]    = {'A', 'Q', 'T', 'S'};
-constexpr uint32_t STREAM_VERSION     = 1;
+constexpr uint32_t STREAM_VERSION     = 2;
 
 // ── Packed POD structs ────────────────────────────────────────────────
 
@@ -131,10 +146,14 @@ struct StreamHeader {
     uint32_t num_records;
 };
 
-/// On-disk record in the temp-stream format (16 bytes).
+/// On-disk record in the temp-stream format (20 bytes). The `type` byte
+/// carries an `expression_type` enum code (see expression_type_label()).
+/// `_pad` is reserved and must be written as zero.
 struct StreamRecord {
     uint64_t segment_index;
     uint32_t sample_id;
+    uint8_t  type;
+    uint8_t  _pad[3];
     float    value;
 };
 
@@ -143,17 +162,43 @@ struct StreamRecord {
 static_assert(sizeof(Header) == 40,        "quant_sidecar::Header must be 40 bytes");
 static_assert(sizeof(TOCEntry) == 20,      "quant_sidecar::TOCEntry must be 20 bytes");
 static_assert(sizeof(StreamHeader) == 16,  "quant_sidecar::StreamHeader must be 16 bytes");
-static_assert(sizeof(StreamRecord) == 16,  "quant_sidecar::StreamRecord must be 16 bytes");
+static_assert(sizeof(StreamRecord) == 20,  "quant_sidecar::StreamRecord must be 20 bytes");
+
+// ── Expression type labels ─────────────────────────────────────────────
+
+/**
+ * Return the canonical string label for an expression type byte. The
+ * type byte values match the `sample_info::expression_type` enum:
+ *   0=UNKNOWN, 1=TPM, 2=FPKM, 3=RPKM, 4=counts, 5=CPM, 6=cov.
+ * Used to build TSV column suffixes (e.g. "sampleA.TPM") and to format
+ * diagnostics. Returns "unknown" for any unrecognized byte.
+ */
+inline const char* expression_type_label(uint8_t type_byte) {
+    switch (type_byte) {
+        case 1: return "TPM";
+        case 2: return "FPKM";
+        case 3: return "RPKM";
+        case 4: return "counts";
+        case 5: return "CPM";
+        case 6: return "cov";
+        default: return "unknown";
+    }
+}
 
 // ── Sample metadata ────────────────────────────────────────────────────
 
 /**
  * Describes one sample in a .qtx file. Kept small and plain so it can
  * be moved/copied freely between build and merge steps.
+ *
+ * `types_mask` is a bitfield indicating which expression_type codes the
+ * sample carries at least one record for: bit N set ↔ at least one
+ * record with type=N exists for this sample. Populated by merge_to_qtx
+ * as records flow through; zero before merge.
  */
 struct SampleMetadata {
     uint32_t    sample_id;
-    uint8_t     expr_type;   ///< sample_info::expression_type code
+    uint8_t     types_mask;  ///< bit N set ↔ sample has ≥1 record of type N
     std::string name;        ///< the sample's info.id string
 };
 
@@ -162,17 +207,19 @@ struct SampleMetadata {
 /**
  * Per-sample temp stream writer.
  *
- * Used during grove build. Accumulates (segment_index, value) records in
- * memory; at finalize() it sorts by segment_index and writes them to
- * disk atomically (tmp + rename). The resulting file carries its
- * sample_id in the header and in every record, so it can be fed
- * verbatim into the K-way merge.
+ * Used during grove build. Accumulates (segment_index, type, value)
+ * records in memory; at finalize() it sorts by (segment_index, type)
+ * and writes them to disk atomically (tmp + rename). The resulting
+ * file carries its sample_id in the header and in every record, so it
+ * can be fed verbatim into the K-way merge.
  *
  * Typical usage (one writer per sample, owned by the builder):
  *
  *     SampleStreamWriter w(tmp_path, sample_id);
  *     for (every passing transcript in this sample) {
- *         w.append(segment_index, value);
+ *         for (auto [type, value] : transcript_expression_values) {
+ *             w.append(segment_index, type, value);
+ *         }
  *     }
  *     w.finalize();  // or let the destructor do it (exceptions swallowed)
  *
@@ -188,9 +235,10 @@ public:
     SampleStreamWriter& operator=(SampleStreamWriter&&) noexcept = default;
     ~SampleStreamWriter();
 
-    /// Append one (segment_index, value) record. Ordering is not
-    /// enforced — finalize() sorts before writing.
-    void append(uint64_t segment_index, float value);
+    /// Append one (segment_index, type, value) record. Ordering is not
+    /// enforced — finalize() sorts before writing. `type` is an
+    /// expression_type enum byte (see expression_type_label()).
+    void append(uint64_t segment_index, uint8_t type, float value);
 
     size_t size() const { return records_.size(); }
     bool   empty() const { return records_.empty(); }
@@ -280,6 +328,17 @@ void merge_to_qtx(
  */
 class Reader {
 public:
+    /// In-memory record carrying every dimension of a stored value.
+    /// Returned by lookup_all() and for_each_segment(). Records within a
+    /// block are sorted by (sample_id, type) ascending.
+    struct TypedValueRecord {
+        uint32_t sample_id;
+        uint8_t  type;
+        float    value;
+    };
+
+    /// In-memory record from a single-type lookup. The type axis is
+    /// implicit (caller passed it as an argument).
     struct ValueRecord {
         uint32_t sample_id;
         float    value;
@@ -287,25 +346,37 @@ public:
 
     explicit Reader(const std::filesystem::path& path);
 
-    /// Look up all (sample_id, value) records for a segment. Returns an
-    /// empty vector if the segment has no records in the file.
-    [[nodiscard]] std::vector<ValueRecord> lookup(uint64_t segment_index) const;
+    /// Look up every (sample, type, value) record for a segment. Returns
+    /// an empty vector when the segment has no records. Records are
+    /// sorted by (sample_id, type) ascending.
+    [[nodiscard]] std::vector<TypedValueRecord> lookup_all(uint64_t segment_index) const;
 
-    /// Look up a segment and filter to a set of samples of interest.
-    /// Returns a map of sample_id → value for samples that appear in
-    /// both the segment's block and `wanted_samples`. Efficient because
-    /// records are already sorted by sample_id within a block.
+    /// Look up every record matching a single expression type for a
+    /// segment. Returns an empty vector when no record matches. Records
+    /// are sorted by sample_id ascending.
+    [[nodiscard]] std::vector<ValueRecord> lookup(uint64_t segment_index, uint8_t type) const;
+
+    /// Look up a segment, filter to a single expression type, and
+    /// intersect with a sample-id allowlist. Returns a map of sample_id
+    /// → value for samples that appear in both the segment's block (with
+    /// the requested type) and `wanted_samples`.
     [[nodiscard]] std::unordered_map<uint32_t, float> lookup_filtered(
         uint64_t segment_index,
+        uint8_t type,
         const std::vector<uint32_t>& wanted_samples) const;
 
-    /// Iterate over every segment block in segment_index order.
-    /// `fn` is called with (segment_index, vector<ValueRecord>&) for
-    /// each block. Intended for streaming analyses that want a single
-    /// linear pass through the file.
+    /// Bitmask of expression types this sample carries at least one
+    /// record for. Returns 0 if the sample is unknown to this reader.
+    /// Driven by `SampleMetadata::types_mask` (populated at merge time).
+    [[nodiscard]] uint8_t types_for_sample(uint32_t sample_id) const;
+
+    /// Iterate over every segment block in segment_index order. `fn` is
+    /// called with (segment_index, vector<TypedValueRecord>&) for each
+    /// block. Intended for streaming analyses that want a single linear
+    /// pass through the file.
     template <typename Fn>
     void for_each_segment(Fn&& fn) const {
-        std::vector<ValueRecord> buf;
+        std::vector<TypedValueRecord> buf;
         for (const auto& entry : toc_) {
             read_block(entry, buf);
             fn(entry.segment_index, buf);
@@ -322,7 +393,7 @@ private:
     /// Factored out so lookup() and for_each_segment() share the same
     /// on-disk parsing logic.
     void read_block(const TOCEntry& entry,
-                    std::vector<ValueRecord>& out) const;
+                    std::vector<TypedValueRecord>& out) const;
 
     std::filesystem::path       path_;
     mutable std::ifstream       file_;    // mutable: lookup() is const

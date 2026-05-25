@@ -17,6 +17,7 @@
 #include <map>
 #include <unordered_map>
 #include <mutex>
+#include <utility>  // std::pair
 
 #include "build/build_summary.hpp"
 #include "genomic_feature.hpp"
@@ -64,6 +65,13 @@ public:
         size_t segment_index
     );
 
+    /// (expression_type byte, value) pair. Each transcript may carry any
+    /// number of these — the parser collects every quantification the GFF
+    /// row provides; the .qtx stores them all (one sidecar record per
+    /// pair). Filtering is decided upstream of segment creation; by the
+    /// time this vector reaches create_segment all pairs are kept.
+    using expression_values_t = std::vector<std::pair<uint8_t, float>>;
+
     /**
      * Create new segment or match against existing ones via absorption rules.
      *
@@ -87,7 +95,7 @@ public:
         std::optional<uint32_t> sample_id,
         const std::string& gff_source,
         size_t& segment_count,
-        float expression_value,
+        const expression_values_t& expression_values,
         const std::string& transcript_biotype,
         bool absorb,
         size_t fuzzy_tolerance,
@@ -118,18 +126,19 @@ public:
     /**
      * Merge transcript metadata into an existing segment (shared by dedup + absorption).
      *
-     * When `sidecar_writer` is non-null and `expression_value >= 0`, appends
-     * a record for the target segment's index to the sample's stream — so
-     * expression survives the common path where a sample's transcript matches
-     * a previously created segment (e.g. annotations processed first, then
-     * samples merging in).
+     * When `sidecar_writer` is non-null, appends one record per
+     * (type, value) pair in `expression_values` for the target segment's
+     * index — so expression survives the common path where a sample's
+     * transcript matches a previously created segment (e.g. annotations
+     * processed first, then samples merging in). Records with `value < 0`
+     * are skipped.
      */
     static void merge_into_segment(
         key_ptr target_seg,
         const std::string& transcript_id,
         std::optional<uint32_t> sample_id,
         const std::string& gff_source,
-        float expression_value,
+        const expression_values_t& expression_values,
         const std::string& transcript_biotype,
         quant_sidecar::SampleStreamWriter* sidecar_writer = nullptr
     );
@@ -198,7 +207,7 @@ private:
         const std::vector<key_ptr>& exon_chain,
         const std::vector<spatial_candidate>& candidates,
         const std::string& transcript_id, std::optional<uint32_t> sample_id,
-        const std::string& gff_source, float expression_value,
+        const std::string& gff_source, const expression_values_t& expression_values,
         const std::string& transcript_biotype,
         quant_sidecar::SampleStreamWriter* sidecar_writer,
         build_counters& counters);
@@ -216,7 +225,7 @@ private:
         const std::vector<spatial_candidate>& candidates,
         size_t span_start, size_t span_end, size_t fuzzy_tolerance,
         const std::string& transcript_id, std::optional<uint32_t> sample_id,
-        const std::string& gff_source, float expression_value,
+        const std::string& gff_source, const expression_values_t& expression_values,
         const std::string& transcript_biotype,
         quant_sidecar::SampleStreamWriter* sidecar_writer,
         build_counters& counters);

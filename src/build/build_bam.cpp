@@ -110,6 +110,11 @@ void build_bam::build(grove_type& grove,
 
         // Create segment via segment_builder (same absorption rules as GTF)
         uint32_t seg_gene_idx = gene_registry::instance().intern(gene_id, gene_info{gene_id, gene_name, gene_biotype});
+        // BAM only ever produces a counts-equivalent (read_count). Wrap
+        // it as a one-element expression list for the segment builder.
+        segment_builder::expression_values_t expression_values{
+            {static_cast<uint8_t>(sample_info::expression_type::COUNTS), read_count}
+        };
         segment_builder::create_segment(
             grove, grove_mutex, tx_id, seqid, cluster.strand,
             cluster.start, cluster.end,
@@ -117,7 +122,7 @@ void build_bam::build(grove_type& grove,
             exon_coords, exon_chain,
             segment_caches[seqid], seg_gene_idx,
             sample_id, "BAM", segment_count,
-            read_count, "",
+            expression_values, "",
             opts.absorb, opts.fuzzy_tolerance,
             counters, sidecar_writer, opts.annotated_loci_only
         );
@@ -329,8 +334,10 @@ sample_info build_bam::parse_header(const std::filesystem::path& filepath) {
         logging::warning("BAM header parse failed for " + filepath.string() + ": unknown exception");
     }
 
-    // BAM expression is always raw counts
-    info.expr_type = sample_info::expression_type::COUNTS;
+    // BAM produces a counts-equivalent (read_count) per cluster; that
+    // gets emitted to the .qtx as an (COUNTS, value) record at build
+    // time. No per-sample type field on sample_info anymore — the .qtx
+    // sample metadata's types_mask records "this sample has counts".
 
     return info;
 }

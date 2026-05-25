@@ -204,12 +204,13 @@ private:
 
 // ── K-way merge heap node ──────────────────────────────────────────────
 
-/// Min-heap entry keyed by (segment_index, sample_id, stream_index).
+/// Min-heap entry keyed by (segment_index, sample_id, type, stream_index).
 /// The stream_index tiebreaker keeps the ordering total and
-/// deterministic even if two streams somehow carry the same sample_id.
+/// deterministic even if two streams somehow carry the same sample_id+type.
 struct HeapNode {
     uint64_t segment_index;
     uint32_t sample_id;
+    uint8_t  type;
     float    value;
     size_t   stream_index;
 
@@ -218,6 +219,8 @@ struct HeapNode {
             return segment_index > other.segment_index;
         if (sample_id != other.sample_id)
             return sample_id > other.sample_id;
+        if (type != other.type)
+            return type > other.type;
         return stream_index > other.stream_index;
     }
 };
@@ -231,7 +234,7 @@ void push_from_reader(std::priority_queue<HeapNode,
                       size_t stream_index) {
     if (!reader.has_current()) return;
     const auto& r = reader.current();
-    heap.push(HeapNode{r.segment_index, r.sample_id, r.value, stream_index});
+    heap.push(HeapNode{r.segment_index, r.sample_id, r.type, r.value, stream_index});
     reader.advance();
 }
 
@@ -261,7 +264,12 @@ void merge_batch_to_stream(const std::vector<std::filesystem::path>& inputs,
     while (!heap.empty()) {
         HeapNode node = heap.top();
         heap.pop();
-        out.append(StreamRecord{node.segment_index, node.sample_id, node.value});
+        StreamRecord rec{};
+        rec.segment_index = node.segment_index;
+        rec.sample_id     = node.sample_id;
+        rec.type          = node.type;
+        rec.value         = node.value;
+        out.append(rec);
         push_from_reader(heap, *readers[node.stream_index], node.stream_index);
     }
     out.close();
@@ -284,7 +292,7 @@ uint64_t write_sample_metadata(std::ofstream& out,
 
     for (const auto& s : samples) {
         write_exact(out, &s.sample_id, sizeof(s.sample_id), path, "sample_id");
-        write_exact(out, &s.expr_type, sizeof(s.expr_type), path, "expr_type");
+        write_exact(out, &s.types_mask, sizeof(s.types_mask), path, "types_mask");
 
         if (s.name.size() > 255) {
             throw std::runtime_error(
@@ -312,7 +320,21 @@ uint64_t write_sample_metadata(std::ofstream& out,
  * workload this buffer stays tiny (O(num_samples with a value at that
  * segment)) so there's no memory concern.
  */
-std::vector<TOCEntry> run_final_merge(
+/// Per-record entry buffered within a single segment block.
+struct BlockRecord {
+    uint32_t sample_id;
+    uint8_t  type;
+    float    value;
+};
+
+/// Output of run_final_merge — the TOC plus the per-sample type masks
+/// accumulated while records flowed through.
+struct MergeResult {
+    std::vector<TOCEntry>                toc;
+    std::unordered_map<uint32_t, uint8_t> types_mask_by_sample;
+};
+
+MergeResult run_final_merge(
     std::ofstream& out,
     const std::filesystem::path& path,
     std::vector<std::unique_ptr<StreamReader>>& readers,
@@ -324,8 +346,8 @@ std::vector<TOCEntry> run_final_merge(
         push_from_reader(heap, *readers[i], i);
     }
 
-    std::vector<TOCEntry> toc;
-    std::vector<std::pair<uint32_t, float>> block_records;  // (sample_id, value)
+    MergeResult result;
+    std::vector<BlockRecord> block_records;  // (sample_id, type, value)
 
     // Helper: flush the current block_records buffer to disk and
     // append a matching TOCEntry. `current_seg` is the segment_index
@@ -333,30 +355,76 @@ std::vector<TOCEntry> run_final_merge(
     auto flush_block = [&](uint64_t current_seg) {
         if (block_records.empty()) return;
 
-        // Dedup by sample_id: records are sample_id-sorted (heap ordering),
-        // so duplicates are adjacent. Sum values for the same sample (#35).
+        // Dedup by (sample_id, type): records are sorted by that key
+        // (heap ordering), so duplicates are adjacent. Sum values for
+        // the same (sample, type) pair (#35).
         size_t write_pos = 0;
         for (size_t i = 0; i < block_records.size(); ++i) {
-            if (write_pos > 0 && block_records[write_pos - 1].first == block_records[i].first) {
-                block_records[write_pos - 1].second += block_records[i].second;
+            if (write_pos > 0
+                && block_records[write_pos - 1].sample_id == block_records[i].sample_id
+                && block_records[write_pos - 1].type == block_records[i].type) {
+                block_records[write_pos - 1].value += block_records[i].value;
             } else {
                 block_records[write_pos++] = block_records[i];
             }
         }
         block_records.resize(write_pos);
 
+        // Pack runs of same-sample records into per-(seg, sample) groups.
+        // Each on-disk record is {u32 sample, u8 type_mask, f32[popcount(mask)]}
+        // with values written in bit-position order (low bits first). At
+        // read time, popcount(mask) tells the reader how many floats follow
+        // and which expression_type each one carries.
         const auto block_offset = static_cast<uint64_t>(out.tellp());
 
-        const uint32_t num_records =
-            static_cast<uint32_t>(block_records.size());
+        // First pass: count packed records (distinct sample_ids in this block)
+        // so we can write num_records at the front. block_records is sorted
+        // by (sample, type) so distinct sample_ids appear in runs.
+        uint32_t num_records = 0;
+        for (size_t i = 0; i < block_records.size(); ) {
+            uint32_t sample = block_records[i].sample_id;
+            size_t j = i;
+            while (j < block_records.size() && block_records[j].sample_id == sample) ++j;
+            ++num_records;
+            i = j;
+        }
 
         write_exact(out, &current_seg, sizeof(current_seg), path,
                     "block segment_index");
         write_exact(out, &num_records, sizeof(num_records), path,
                     "block num_records");
-        for (const auto& [sid, val] : block_records) {
-            write_exact(out, &sid, sizeof(sid), path, "block sample_id");
-            write_exact(out, &val, sizeof(val), path, "block value");
+
+        // Second pass: emit one packed record per (seg, sample) run.
+        for (size_t i = 0; i < block_records.size(); ) {
+            uint32_t sample = block_records[i].sample_id;
+            uint8_t mask = 0;
+            // Collect this run's values, keyed by type. We use a tiny
+            // fixed-size buffer indexed by type byte; since type_mask
+            // is a u8, type values are in [0, 7] for packed records.
+            float values_by_type[8] = {0};
+            size_t j = i;
+            for (; j < block_records.size() && block_records[j].sample_id == sample; ++j) {
+                const uint8_t t = block_records[j].type;
+                if (t >= 8) {
+                    throw std::runtime_error(
+                        "quant_sidecar: expression type byte " +
+                        std::to_string(t) + " exceeds packed-block limit (0-7) at "
+                        "segment " + std::to_string(current_seg));
+                }
+                mask |= static_cast<uint8_t>(1u << t);
+                values_by_type[t] = block_records[j].value;
+            }
+            write_exact(out, &sample, sizeof(sample), path, "block sample_id");
+            write_exact(out, &mask, sizeof(mask), path, "block type_mask");
+            // Emit floats in bit-position order (low bits first), matching
+            // the reader's bit-walk decode.
+            for (uint8_t bit = 0; bit < 8; ++bit) {
+                if (mask & (1u << bit)) {
+                    write_exact(out, &values_by_type[bit], sizeof(float),
+                                path, "block value");
+                }
+            }
+            i = j;
         }
 
         const auto block_end = static_cast<uint64_t>(out.tellp());
@@ -364,7 +432,7 @@ std::vector<TOCEntry> run_final_merge(
         entry.segment_index = current_seg;
         entry.offset        = block_offset;
         entry.length        = static_cast<uint32_t>(block_end - block_offset);
-        toc.push_back(entry);
+        result.toc.push_back(entry);
 
         block_records.clear();
     };
@@ -416,13 +484,17 @@ std::vector<TOCEntry> run_final_merge(
             flush_block(current_seg);
             current_seg = node.segment_index;
         }
-        block_records.emplace_back(node.sample_id, node.value);
+        block_records.push_back({node.sample_id, node.type, node.value});
+        if (node.type < 8) {
+            result.types_mask_by_sample[node.sample_id] |=
+                static_cast<uint8_t>(1u << node.type);
+        }
     }
     if (have_current) {
         flush_block(current_seg);
     }
 
-    return toc;
+    return result;
 }
 
 } // namespace
@@ -446,21 +518,27 @@ SampleStreamWriter::~SampleStreamWriter() {
     }
 }
 
-void SampleStreamWriter::append(uint64_t segment_index, float value) {
-    records_.push_back(StreamRecord{segment_index, sample_id_, value});
+void SampleStreamWriter::append(uint64_t segment_index, uint8_t type, float value) {
+    StreamRecord rec{};
+    rec.segment_index = segment_index;
+    rec.sample_id     = sample_id_;
+    rec.type          = type;
+    rec.value         = value;
+    records_.push_back(rec);
 }
 
 void SampleStreamWriter::finalize() {
     if (finalized_) return;
     finalized_ = true;
 
-    // Sort by segment_index; sample_id is constant within a single-sample
-    // stream, so it doesn't affect ordering. We use stable_sort so that
-    // if duplicate segment_index values ever appear, insertion order wins
-    // deterministically rather than being implementation-defined.
+    // Sort by (segment_index, type); sample_id is constant within a
+    // single-sample stream, so it doesn't affect ordering. stable_sort
+    // keeps duplicate keys in insertion order for deterministic output.
     std::stable_sort(records_.begin(), records_.end(),
                      [](const StreamRecord& a, const StreamRecord& b) {
-                         return a.segment_index < b.segment_index;
+                         if (a.segment_index != b.segment_index)
+                             return a.segment_index < b.segment_index;
+                         return a.type < b.type;
                      });
 
     const auto tmp_path = tmp_suffixed(path_);
@@ -607,29 +685,38 @@ void merge_to_qtx(
     write_exact(out, &placeholder, sizeof(placeholder), tmp_path,
                 "placeholder header");
 
-    // ── Step 4: write sample metadata right after the header. Doing
-    //    it up front keeps readers from needing to seek to the end
-    //    for names when opening the file.
+    // ── Step 4: run the K-way merge, emitting per-segment blocks and
+    //    accumulating a TOC as we go. The merge also computes a
+    //    per-sample `types_mask` (bitfield of which expression_type
+    //    enum bytes the sample has at least one record for) which we
+    //    fold into the sample metadata in Step 6.
+    //
+    //    The TOC is held in memory briefly — segment count at cohort
+    //    scale is ~10M at the high end, × 20 bytes = 200 MB, which is
+    //    tolerable. If this ever becomes a concern, switch to streaming
+    //    the TOC to a temp file and concatenating at the end.
 
-    const uint64_t sample_meta_offset =
-        write_sample_metadata(out, samples, tmp_path);
-
-    // ── Step 5: run the K-way merge, emitting per-segment blocks and
-    //    accumulating a TOC as we go. The TOC is held in memory
-    //    briefly — segment count at cohort scale is ~10M at the high
-    //    end, × 20 bytes = 200 MB, which is tolerable. If this ever
-    //    becomes a concern, switch to streaming the TOC to a temp
-    //    file and concatenating at the end.
-
-    const std::vector<TOCEntry> toc =
+    const MergeResult merge_result =
         run_final_merge(out, tmp_path, readers, excluded_segments, segment_remap);
+    const auto& toc = merge_result.toc;
 
-    // ── Step 6: write the TOC at the current offset.
+    // ── Step 5: write the TOC at the current offset.
 
     const auto toc_offset = static_cast<uint64_t>(out.tellp());
     for (const auto& entry : toc) {
         write_exact(out, &entry, sizeof(entry), tmp_path, "TOC entry");
     }
+
+    // ── Step 6: write sample metadata after the TOC. Patch each sample's
+    //    types_mask from the merge result before writing.
+
+    std::vector<SampleMetadata> samples_with_masks = samples;
+    for (auto& s : samples_with_masks) {
+        auto it = merge_result.types_mask_by_sample.find(s.sample_id);
+        s.types_mask = (it != merge_result.types_mask_by_sample.end()) ? it->second : 0;
+    }
+    const uint64_t sample_meta_offset =
+        write_sample_metadata(out, samples_with_masks, tmp_path);
 
     // ── Step 7: seek back and patch the real header with the final
     //    offsets and block count.
@@ -719,7 +806,7 @@ Reader::Reader(const std::filesystem::path& path)
     for (uint32_t i = 0; i < num_samples; ++i) {
         SampleMetadata s;
         read_exact(file_, &s.sample_id, sizeof(s.sample_id), path_, "sample_id");
-        read_exact(file_, &s.expr_type, sizeof(s.expr_type), path_, "expr_type");
+        read_exact(file_, &s.types_mask, sizeof(s.types_mask), path_, "types_mask");
 
         uint8_t name_len = 0;
         read_exact(file_, &name_len, sizeof(name_len), path_, "name_len");
@@ -747,7 +834,7 @@ Reader::Reader(const std::filesystem::path& path)
 }
 
 void Reader::read_block(const TOCEntry& entry,
-                        std::vector<ValueRecord>& out) const {
+                        std::vector<TypedValueRecord>& out) const {
     out.clear();
 
     file_.seekg(static_cast<std::streamoff>(entry.offset));
@@ -772,67 +859,115 @@ void Reader::read_block(const TOCEntry& entry,
             ", block says " + std::to_string(block_seg) + ")");
     }
 
-    out.resize(num_records);
-    for (uint32_t i = 0; i < num_records; ++i) {
-        read_exact(file_, &out[i].sample_id, sizeof(out[i].sample_id),
-                   path_, "block sample_id");
-        read_exact(file_, &out[i].value, sizeof(out[i].value),
-                   path_, "block value");
+    // Each on-disk packed record encodes one (seg, sample) group as
+    // {u32 sample, u8 type_mask, f32[popcount(mask)]}. Expand back into
+    // one TypedValueRecord per set bit so callers see a flat triple list.
+    out.reserve(num_records);  // lower bound; actual size >= num_records
+    for (uint32_t r = 0; r < num_records; ++r) {
+        uint32_t sample = 0;
+        uint8_t  mask   = 0;
+        read_exact(file_, &sample, sizeof(sample), path_, "block sample_id");
+        read_exact(file_, &mask,   sizeof(mask),   path_, "block type_mask");
+
+        for (uint8_t bit = 0; bit < 8; ++bit) {
+            if (!(mask & (1u << bit))) continue;
+            float value = 0.0f;
+            read_exact(file_, &value, sizeof(value), path_, "block value");
+            out.push_back(TypedValueRecord{sample, bit, value});
+        }
     }
 }
 
-std::vector<Reader::ValueRecord> Reader::lookup(uint64_t segment_index) const {
-    // Binary search on the TOC. We compare using a custom predicate
-    // rather than constructing a sentinel TOCEntry so we don't depend
-    // on operator< being defined for the struct.
+namespace {
+/// Binary-search the TOC for `segment_index`. Returns nullptr when the
+/// segment has no block. The returned pointer is valid as long as the
+/// TOC vector that owns it is alive.
+const TOCEntry* find_toc_entry(const std::vector<TOCEntry>& toc,
+                               uint64_t segment_index) {
     auto it = std::lower_bound(
-        toc_.begin(), toc_.end(), segment_index,
+        toc.begin(), toc.end(), segment_index,
         [](const TOCEntry& e, uint64_t v) { return e.segment_index < v; });
-    if (it == toc_.end() || it->segment_index != segment_index) {
-        return {};
+    if (it == toc.end() || it->segment_index != segment_index) {
+        return nullptr;
     }
+    return &*it;
+}
+} // namespace
+
+std::vector<Reader::TypedValueRecord> Reader::lookup_all(uint64_t segment_index) const {
+    const auto* entry = find_toc_entry(toc_, segment_index);
+    if (!entry) return {};
+
+    std::vector<TypedValueRecord> out;
+    read_block(*entry, out);
+    return out;
+}
+
+std::vector<Reader::ValueRecord> Reader::lookup(uint64_t segment_index,
+                                                uint8_t type) const {
+    const auto* entry = find_toc_entry(toc_, segment_index);
+    if (!entry) return {};
+
+    std::vector<TypedValueRecord> block;
+    read_block(*entry, block);
 
     std::vector<ValueRecord> out;
-    read_block(*it, out);
+    out.reserve(block.size());
+    for (const auto& r : block) {
+        if (r.type == type) {
+            out.push_back({r.sample_id, r.value});
+        }
+    }
     return out;
 }
 
 std::unordered_map<uint32_t, float> Reader::lookup_filtered(
     uint64_t segment_index,
+    uint8_t type,
     const std::vector<uint32_t>& wanted_samples) const {
     std::unordered_map<uint32_t, float> result;
     if (wanted_samples.empty()) return result;
 
-    auto it = std::lower_bound(
-        toc_.begin(), toc_.end(), segment_index,
-        [](const TOCEntry& e, uint64_t v) { return e.segment_index < v; });
-    if (it == toc_.end() || it->segment_index != segment_index) {
-        return result;
+    const auto* entry = find_toc_entry(toc_, segment_index);
+    if (!entry) return result;
+
+    std::vector<TypedValueRecord> block;
+    read_block(*entry, block);
+
+    // The block is sorted by (sample_id, type) ascending. Filter to the
+    // requested type first, then two-pointer intersect with sorted
+    // wanted_samples.
+    std::vector<ValueRecord> filtered;
+    filtered.reserve(block.size());
+    for (const auto& r : block) {
+        if (r.type == type) {
+            filtered.push_back({r.sample_id, r.value});
+        }
     }
 
-    std::vector<ValueRecord> block;
-    read_block(*it, block);
-
-    // Two-pointer intersection: block is sorted by sample_id by
-    // construction; we sort a local copy of wanted_samples so this is
-    // O(n + m) rather than O(n * m). Leaving wanted_samples itself
-    // untouched keeps the API surface non-surprising.
     std::vector<uint32_t> wanted_sorted = wanted_samples;
     std::sort(wanted_sorted.begin(), wanted_sorted.end());
 
     size_t bi = 0, wi = 0;
-    while (bi < block.size() && wi < wanted_sorted.size()) {
-        if (block[bi].sample_id < wanted_sorted[wi]) {
+    while (bi < filtered.size() && wi < wanted_sorted.size()) {
+        if (filtered[bi].sample_id < wanted_sorted[wi]) {
             ++bi;
-        } else if (block[bi].sample_id > wanted_sorted[wi]) {
+        } else if (filtered[bi].sample_id > wanted_sorted[wi]) {
             ++wi;
         } else {
-            result.emplace(block[bi].sample_id, block[bi].value);
+            result.emplace(filtered[bi].sample_id, filtered[bi].value);
             ++bi;
             ++wi;
         }
     }
     return result;
+}
+
+uint8_t Reader::types_for_sample(uint32_t sample_id) const {
+    for (const auto& s : samples_) {
+        if (s.sample_id == sample_id) return s.types_mask;
+    }
+    return 0;
 }
 
 } // namespace quant_sidecar

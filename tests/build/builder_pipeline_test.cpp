@@ -340,10 +340,8 @@ TEST_F(BuilderPipelineTest, ReverseAbsorption_QtxRemap) {
     std::vector<sample_info> samples;
     samples.emplace_back("rep1", rep1_path);
     samples.back().type = "sample";
-    samples.back().expression_attributes = {"counts"};
     samples.emplace_back("rep2", rep2_path);
     samples.back().type = "sample";
-    samples.back().expression_attributes = {"counts"};
 
     std::string qtx_path = (tmp_dir / "test.qtx").string();
     grove_type grove(3);
@@ -366,7 +364,7 @@ TEST_F(BuilderPipelineTest, ReverseAbsorption_QtxRemap) {
 
     // Read the .qtx sidecar and verify remapped records
     quant_sidecar::Reader reader(qtx_path);
-    auto records = reader.lookup(static_cast<uint64_t>(parent_idx));
+    auto records = reader.lookup_all(static_cast<uint64_t>(parent_idx));
 
     ASSERT_GE(records.size(), 2u)
         << "Parent block should have records from both samples (rep1 remapped + rep2 direct)";
@@ -427,13 +425,10 @@ TEST_F(BuilderPipelineTest, TransitiveChain_QtxRemap) {
     std::vector<sample_info> samples;
     samples.emplace_back("sa", a_path);
     samples.back().type = "sample";
-    samples.back().expression_attributes = {"counts"};
     samples.emplace_back("sb", b_path);
     samples.back().type = "sample";
-    samples.back().expression_attributes = {"counts"};
     samples.emplace_back("sc", c_path);
     samples.back().type = "sample";
-    samples.back().expression_attributes = {"counts"};
 
     std::string qtx_path = (tmp_dir / "chain.qtx").string();
     grove_type grove(3);
@@ -459,7 +454,7 @@ TEST_F(BuilderPipelineTest, TransitiveChain_QtxRemap) {
 
     // All three samples' expression should land on the live segment
     quant_sidecar::Reader reader(qtx_path);
-    auto records = reader.lookup(static_cast<uint64_t>(live_idx));
+    auto records = reader.lookup_all(static_cast<uint64_t>(live_idx));
 
     std::map<uint32_t, float> sample_values;
     for (const auto& rec : records) {

@@ -15,7 +15,6 @@
 #include <memory>
 #include <optional>
 #include <string>
-#include <unordered_set>
 
 #include <cxxopts.hpp>
 
@@ -76,10 +75,6 @@ public:
 protected:
     std::unique_ptr<grove_type> grove;
     std::optional<build_summary> build_stats;
-    chromosome_exon_caches exon_caches_;
-    std::filesystem::path output_dir;
-    bool include_scaffolds = false;  // set from --include-scaffolds (default: main chromosomes only)
-    std::unordered_set<std::string> chromosomes_filter;  // set from --chromosomes
 
     /// Quantification sidecar reader, opened lazily by setup_grove when a
     /// `{prefix}.qtx` file is found alongside the loaded `.ggx`. Empty when
@@ -133,6 +128,15 @@ private:
      * Apply common options (threads, progress, etc.)
      */
     static void apply_common_options(const cxxopts::ParseResult& args);
+
+    /**
+     * Translate all grove/build-related CLI flags into a populated
+     * build_options struct. Reads --threads, --min-X, --filter-precedence,
+     * --no-absorb, --fuzzy-tolerance, --prune-tombstones, --include-scaffolds,
+     * --annotated-loci-only, --chromosomes. Throws on invalid
+     * --filter-precedence tokens.
+     */
+    static build_options apply_grove_options(const cxxopts::ParseResult& args);
 
     /**
      * Always write build summary (.ggx.summary) when grove was built.

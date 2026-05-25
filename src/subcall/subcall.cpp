@@ -10,6 +10,7 @@
 
 #include "subcall/subcall.hpp"
 
+#include <algorithm>
 #include <filesystem>
 #include <fstream>
 #include <sstream>
@@ -42,16 +43,24 @@ void subcall::add_common_options(cxxopts::Options& options) {
             cxxopts::value<std::vector<std::string>>())
         ("k,order", "Genogrove tree order",
             cxxopts::value<int>()->default_value("3"))
-        ("min-counts", "Minimum `counts` value for a transcript to be kept. Only applies to samples whose manifest `expression_attribute` column lists `counts`. Disabled by default.",
+        ("min-counts", "Minimum `counts` value to keep a transcript that carries the `counts` attribute. Disabled by default.",
             cxxopts::value<float>()->default_value("-1"))
-        ("min-TPM", "Minimum `TPM` value for a transcript to be kept. Only applies to samples whose manifest `expression_attribute` column lists `TPM`. Disabled by default.",
+        ("min-TPM", "Minimum `TPM` value to keep a transcript that carries the `TPM` attribute. Disabled by default.",
             cxxopts::value<float>()->default_value("-1"))
-        ("min-FPKM", "Minimum `FPKM` value for a transcript to be kept. Only applies to samples whose manifest `expression_attribute` column lists `FPKM`. Disabled by default.",
+        ("min-FPKM", "Minimum `FPKM` value to keep a transcript that carries the `FPKM` attribute. Disabled by default.",
             cxxopts::value<float>()->default_value("-1"))
-        ("min-RPKM", "Minimum `RPKM` value for a transcript to be kept. Only applies to samples whose manifest `expression_attribute` column lists `RPKM`. Disabled by default.",
+        ("min-RPKM", "Minimum `RPKM` value to keep a transcript that carries the `RPKM` attribute. Disabled by default.",
             cxxopts::value<float>()->default_value("-1"))
-        ("min-cov", "Minimum `cov` value for a transcript to be kept. Only applies to samples whose manifest `expression_attribute` column lists `cov`. Disabled by default.",
+        ("min-cov", "Minimum `cov` value to keep a transcript that carries the `cov` attribute. Disabled by default.",
             cxxopts::value<float>()->default_value("-1"))
+        ("min-CPM", "Minimum `CPM` value to keep a transcript that carries the `CPM` attribute. Disabled by default.",
+            cxxopts::value<float>()->default_value("-1"))
+        ("filter-precedence", "Switch expression filtering to precedence mode. Comma-separated "
+            "list of expression types (e.g. TPM,FPKM,counts). For each transcript, walk this list "
+            "and evaluate ONLY the threshold for the first type the transcript carries; ignore "
+            "other --min-X thresholds. Default (omitted): AND mode — every --min-X threshold the "
+            "user set is evaluated against the transcript's matching attribute; drop if any fails.",
+            cxxopts::value<std::string>())
         ("no-absorb", "Disable ISM (Incomplete Splice Match) segment absorption into longer parents")
         ("fuzzy-tolerance", "Max bp difference for fuzzy exon boundary matching during absorption (0 = exact only)",
             cxxopts::value<size_t>()->default_value("5"))
@@ -78,6 +87,71 @@ void subcall::apply_common_options(const cxxopts::ParseResult& args) {
     if (args.count("progress")) {
         logging::set_progress_enabled(true);
     }
+}
+
+build_options subcall::apply_grove_options(const cxxopts::ParseResult& args) {
+    build_options opts;
+    opts.threads = args["threads"].as<uint32_t>();
+
+    // Expression thresholds (-1 = disabled).
+    opts.filters.min_counts = args["min-counts"].as<float>();
+    opts.filters.min_TPM    = args["min-TPM"].as<float>();
+    opts.filters.min_FPKM   = args["min-FPKM"].as<float>();
+    opts.filters.min_RPKM   = args["min-RPKM"].as<float>();
+    opts.filters.min_cov    = args["min-cov"].as<float>();
+    opts.filters.min_CPM    = args["min-CPM"].as<float>();
+
+    // Optional precedence list. Empty = AND mode; non-empty = walk
+    // user-given order, evaluate only the first carried type's threshold.
+    // Throws on unknown type tokens so CLI typos fail fast.
+    if (args.count("filter-precedence")) {
+        std::string prec_arg = args["filter-precedence"].as<std::string>();
+        std::istringstream ss(prec_arg);
+        std::string token;
+        while (std::getline(ss, token, ',')) {
+            token.erase(0, token.find_first_not_of(' '));
+            token.erase(token.find_last_not_of(' ') + 1);
+            if (token.empty()) continue;
+            auto t = sample_info::expression_type_from_attribute(token);
+            if (t == sample_info::expression_type::UNKNOWN) {
+                throw std::runtime_error(
+                    "--filter-precedence: unrecognized expression type '" + token +
+                    "' (expected one of: counts, TPM, FPKM, RPKM, cov, CPM)");
+            }
+            // Dedup: later occurrences of the same type are dead (the
+            // first occurrence always wins in the build_gff precedence
+            // walk). Silently drop them instead of letting the vector
+            // grow with no-op entries.
+            if (std::find(opts.filter_precedence.begin(),
+                          opts.filter_precedence.end(), t)
+                == opts.filter_precedence.end()) {
+                opts.filter_precedence.push_back(t);
+            }
+        }
+    }
+
+    opts.absorb              = !args.count("no-absorb");
+    opts.fuzzy_tolerance     = args["fuzzy-tolerance"].as<size_t>();
+    opts.prune_tombstones    = args.count("prune-tombstones") > 0;
+    opts.include_scaffolds   = args.count("include-scaffolds") > 0;
+    opts.annotated_loci_only = args.count("annotated-loci-only") > 0;
+
+    // Comma-separated chromosome allowlist; normalized so chr-prefixed
+    // and bare names both work.
+    if (args.count("chromosomes")) {
+        std::string chr_arg = args["chromosomes"].as<std::string>();
+        std::istringstream ss(chr_arg);
+        std::string token;
+        while (std::getline(ss, token, ',')) {
+            token.erase(0, token.find_first_not_of(' '));
+            token.erase(token.find_last_not_of(' ') + 1);
+            if (!token.empty()) {
+                opts.chromosomes_filter.insert(normalize_chromosome(token));
+            }
+        }
+    }
+
+    return opts;
 }
 
 std::filesystem::path subcall::resolve_output_dir(const cxxopts::ParseResult& args,
@@ -137,23 +211,6 @@ static void try_open_qtx_for(const std::filesystem::path& grove_path,
 }
 
 void subcall::setup_grove(const cxxopts::ParseResult& args) {
-    // Capture the scaffold-inclusion preference early so it's visible to
-    // anything the subclass does during execute(), not just the build path.
-    include_scaffolds = args.count("include-scaffolds") > 0;
-
-    if (args.count("chromosomes")) {
-        std::string chr_arg = args["chromosomes"].as<std::string>();
-        std::istringstream ss(chr_arg);
-        std::string token;
-        while (std::getline(ss, token, ',')) {
-            token.erase(0, token.find_first_not_of(' '));
-            token.erase(token.find_last_not_of(' ') + 1);
-            if (!token.empty()) {
-                chromosomes_filter.insert(normalize_chromosome(token));
-            }
-        }
-    }
-
     if (args.count("genogrove")) {
         std::filesystem::path grove_dir = args["genogrove"].as<std::string>();
 
@@ -186,7 +243,6 @@ void subcall::setup_grove(const cxxopts::ParseResult& args) {
     }
 
     int order = args["order"].as<int>();
-    uint32_t threads = args["threads"].as<uint32_t>();
 
     // Collect samples from both sources
     std::vector<sample_info> all_samples;
@@ -216,19 +272,7 @@ void subcall::setup_grove(const cxxopts::ParseResult& args) {
 
     // Build grove if we have samples
     if (!all_samples.empty()) {
-        build_options opts;
-        opts.threads = threads;
-        opts.filters.min_counts = args["min-counts"].as<float>();
-        opts.filters.min_TPM    = args["min-TPM"].as<float>();
-        opts.filters.min_FPKM   = args["min-FPKM"].as<float>();
-        opts.filters.min_RPKM   = args["min-RPKM"].as<float>();
-        opts.filters.min_cov    = args["min-cov"].as<float>();
-        opts.absorb = !args.count("no-absorb");
-        opts.fuzzy_tolerance = args["fuzzy-tolerance"].as<size_t>();
-        opts.prune_tombstones = args.count("prune-tombstones") > 0;
-        opts.include_scaffolds = include_scaffolds;
-        opts.annotated_loci_only = args.count("annotated-loci-only") > 0;
-        opts.chromosomes_filter = chromosomes_filter;
+        build_options opts = apply_grove_options(args);
 
         logging::info("Creating grove with order: " + std::to_string(order));
 
@@ -239,28 +283,23 @@ void subcall::setup_grove(const cxxopts::ParseResult& args) {
             if (opts.filters.min_FPKM   >= 0) note += " FPKM>="   + std::to_string(opts.filters.min_FPKM);
             if (opts.filters.min_RPKM   >= 0) note += " RPKM>="   + std::to_string(opts.filters.min_RPKM);
             if (opts.filters.min_cov    >= 0) note += " cov>="    + std::to_string(opts.filters.min_cov);
+            if (opts.filters.min_CPM    >= 0) note += " CPM>="    + std::to_string(opts.filters.min_CPM);
             logging::info(note);
-
-            auto any_sample_declares = [&](const std::string& attr) {
-                for (const auto& s : all_samples) {
-                    for (const auto& a : s.expression_attributes) {
-                        if (a == attr) return true;
-                    }
-                }
-                return false;
-            };
-            auto check = [&](const std::string& name, float value) {
-                if (value >= 0 && !any_sample_declares(name)) {
-                    logging::warning("--min-" + name + " " + std::to_string(value) +
-                        " set but no sample in the manifest declares `" + name +
-                        "` in its expression_attribute column — filter has no effect");
-                }
-            };
-            check("counts", opts.filters.min_counts);
-            check("TPM",    opts.filters.min_TPM);
-            check("FPKM",   opts.filters.min_FPKM);
-            check("RPKM",   opts.filters.min_RPKM);
-            check("cov",    opts.filters.min_cov);
+        }
+        if (!opts.filter_precedence.empty()) {
+            std::string note = "Filter mode: precedence (";
+            for (size_t i = 0; i < opts.filter_precedence.size(); ++i) {
+                if (i) note += ",";
+                note += sample_info::expression_type_attribute(opts.filter_precedence[i]);
+            }
+            note += ") — evaluate only the first type each transcript carries";
+            logging::info(note);
+            if (!opts.filters.any_active()) {
+                logging::warning("--filter-precedence set but no --min-X thresholds active — "
+                                 "filter will be a no-op");
+            }
+        } else if (opts.filters.any_active()) {
+            logging::info("Filter mode: AND — drop transcript if any present-and-thresholded type fails");
         }
 
         if (!opts.absorb) {
@@ -305,7 +344,7 @@ void subcall::setup_grove(const cxxopts::ParseResult& args) {
         }
 
         auto build_start = std::chrono::steady_clock::now();
-        build_stats = builder::build_from_samples(*grove, all_samples, opts, &exon_caches_);
+        build_stats = builder::build_from_samples(*grove, all_samples, opts, nullptr);
         auto build_elapsed = std::chrono::duration<double>(std::chrono::steady_clock::now() - build_start).count();
         build_stats->build_time_seconds = build_elapsed;
 
@@ -334,6 +373,16 @@ void subcall::setup_grove(const cxxopts::ParseResult& args) {
             build_stats->build_parameters["min_RPKM"] = std::to_string(static_cast<int>(opts.filters.min_RPKM));
         if (opts.filters.min_cov >= 0)
             build_stats->build_parameters["min_cov"] = std::to_string(static_cast<int>(opts.filters.min_cov));
+        if (opts.filters.min_CPM >= 0)
+            build_stats->build_parameters["min_CPM"] = std::to_string(static_cast<int>(opts.filters.min_CPM));
+        if (!opts.filter_precedence.empty()) {
+            std::string prec_list;
+            for (auto t : opts.filter_precedence) {
+                if (!prec_list.empty()) prec_list += ",";
+                prec_list += sample_info::expression_type_attribute(t);
+            }
+            build_stats->build_parameters["filter_precedence"] = prec_list;
+        }
 
         logging::info("Grove ready with spatial index and graph structure");
 

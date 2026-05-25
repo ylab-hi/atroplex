@@ -62,55 +62,91 @@ namespace gdt = genogrove::data_type;
  *   - source_url: URL to original data (e.g., ENCODE portal, GEO accession)
  *   - publication: Publication DOI or reference
  *
- * Expression (optional override for GFF attribute parsing):
- *   - expr_type: Which expression attribute to parse from GFF (TPM, FPKM, etc.)
- *                If UNKNOWN, auto-detects from available GFF attributes
- *
  * Flexible key-value storage:
  *   - attributes: Map for any additional metadata
+ *
+ * Note: expression filtering is no longer a per-sample concern. Every
+ * expression value carried by a GFF row is stored in the .qtx sidecar;
+ * filtering at build time is driven entirely by the CLI flags described
+ * on expression_filters below.
  */
-/// Type-specific expression thresholds set via CLI flags.
-/// Each field is the minimum value a transcript must carry for that
-/// attribute to keep it; -1 means the filter is disabled. Applied with
-/// AND semantics: a sample's declared expression_attributes are
-/// intersected with the set of enabled filters, and the transcript is
-/// kept only if every resulting filter passes.
+/// CLI-driven expression thresholds. Each field is the minimum value a
+/// transcript must carry for the corresponding attribute to be kept;
+/// -1 means the filter is disabled. Filtering is cohort-wide:
+///   AND mode (default): for every threshold the user set, if the
+///     transcript carries that type, evaluate. Drop if any threshold
+///     fails.
+///   Precedence mode (build_options::filter_precedence non-empty):
+///     walk the precedence list; evaluate only the first type the
+///     transcript carries.
 struct expression_filters {
     float min_counts = -1.0f;
     float min_TPM    = -1.0f;
     float min_FPKM   = -1.0f;
     float min_RPKM   = -1.0f;
     float min_cov    = -1.0f;
+    float min_CPM    = -1.0f;
 
     /// Return the threshold for a given GFF attribute name, or -1 if the
     /// attribute is unknown or has no threshold set. Case-sensitive match
-    /// to the GFF convention (counts, TPM, FPKM, RPKM, cov).
+    /// to the GFF convention (counts, TPM, FPKM, RPKM, cov, CPM).
     float for_attribute(const std::string& attr) const {
         if (attr == "counts") return min_counts;
         if (attr == "TPM")    return min_TPM;
         if (attr == "FPKM")   return min_FPKM;
         if (attr == "RPKM")   return min_RPKM;
         if (attr == "cov")    return min_cov;
+        if (attr == "CPM")    return min_CPM;
         return -1.0f;
     }
 
     /// True if at least one threshold is set.
     bool any_active() const {
         return min_counts >= 0 || min_TPM >= 0 || min_FPKM >= 0
-            || min_RPKM >= 0 || min_cov >= 0;
+            || min_RPKM >= 0 || min_cov >= 0 || min_CPM >= 0;
     }
 };
 
 struct sample_info {
-    // Expression quantification types
-    enum class expression_type {
-        UNKNOWN,    // Not specified
-        TPM,        // Transcripts per million
-        FPKM,       // Fragments per kilobase per million
-        RPKM,       // Reads per kilobase per million
-        COUNTS,     // Raw read counts
-        CPM         // Counts per million
+    // Expression quantification types. The enum values are wire-format:
+    // they are written as the `type` byte in .qtx records. Adding new
+    // entries is fine; reordering or removing breaks existing indexes.
+    enum class expression_type : uint8_t {
+        UNKNOWN = 0,    // Not specified
+        TPM     = 1,    // Transcripts per million
+        FPKM    = 2,    // Fragments per kilobase per million
+        RPKM    = 3,    // Reads per kilobase per million
+        COUNTS  = 4,    // Raw read counts
+        CPM     = 5,    // Counts per million (currently orphan — no parser path)
+        COV     = 6     // Per-base coverage depth
     };
+
+    /// GFF attribute string for a given expression_type. Inverse of
+    /// expression_type_from_attribute(). Returns nullptr for UNKNOWN.
+    static const char* expression_type_attribute(expression_type t) {
+        switch (t) {
+            case expression_type::TPM:    return "TPM";
+            case expression_type::FPKM:   return "FPKM";
+            case expression_type::RPKM:   return "RPKM";
+            case expression_type::COUNTS: return "counts";
+            case expression_type::CPM:    return "CPM";
+            case expression_type::COV:    return "cov";
+            case expression_type::UNKNOWN: return nullptr;
+        }
+        return nullptr;
+    }
+
+    /// Map a GFF attribute string to its expression_type enum, or
+    /// UNKNOWN if the attribute name is not a recognized quantification.
+    static expression_type expression_type_from_attribute(const std::string& attr) {
+        if (attr == "TPM")    return expression_type::TPM;
+        if (attr == "FPKM")   return expression_type::FPKM;
+        if (attr == "RPKM")   return expression_type::RPKM;
+        if (attr == "counts") return expression_type::COUNTS;
+        if (attr == "CPM")    return expression_type::CPM;
+        if (attr == "cov")    return expression_type::COV;
+        return expression_type::UNKNOWN;
+    }
 
     // Core identifiers
     std::string id;                     // Unique identifier
@@ -140,24 +176,6 @@ struct sample_info {
     // Links
     std::string source_url;             // URL to original data
     std::string publication;            // Publication DOI or reference
-
-    // Expression type override (optional)
-    // If UNKNOWN, auto-detect from GFF attributes (TPM, FPKM, cov, etc.)
-    // If set, only parse that specific attribute from GFF
-    expression_type expr_type = expression_type::UNKNOWN;
-
-    // Declared GFF attributes carrying quantitative expression for this
-    // sample's transcripts (e.g., {"counts"} for TALON, {"cov","TPM"} for
-    // StringTie, empty for annotations). Populated from the manifest's
-    // optional `expression_attribute` column ('.' or empty = no filtering).
-    // Multiple values may be listed comma-separated — each one is evaluated
-    // against its corresponding CLI threshold (--min-counts / --min-TPM /
-    // --min-FPKM / --min-RPKM / --min-cov) with AND semantics.
-    // The FIRST declared attribute is what gets written to the per-sample
-    // `.qtx` sidecar file as `(segment_index, value)` records. Expression
-    // values no longer live on grove features — sidecars are read at query
-    // time when quantitative analysis is requested.
-    std::vector<std::string> expression_attributes;
 
     // Extensible key-value attributes
     std::unordered_map<std::string, std::string> attributes;
@@ -252,21 +270,12 @@ struct sample_info {
         return *this;
     }
 
-    sample_info& with_expression_type(expression_type type) {
-        expr_type = type;
-        return *this;
-    }
-
     sample_info& with_attribute(const std::string& key, std::string value) {
         attributes[key] = std::move(value);
         return *this;
     }
 
     // Accessors
-    bool has_expression_type() const {
-        return expr_type != expression_type::UNKNOWN;
-    }
-
     bool is_annotation() const {
         return !annotation_source.empty() || !annotation_version.empty();
     }
@@ -323,17 +332,6 @@ struct sample_info {
         write_string(source_url);
         write_string(publication);
 
-        // Expression type
-        auto expr_int = static_cast<std::underlying_type_t<expression_type>>(expr_type);
-        os.write(reinterpret_cast<const char*>(&expr_int), sizeof(expr_int));
-
-        // Expression attributes (declared GFF attributes carrying quantification)
-        size_t ea_count = expression_attributes.size();
-        os.write(reinterpret_cast<const char*>(&ea_count), sizeof(ea_count));
-        for (const auto& attr : expression_attributes) {
-            write_string(attr);
-        }
-
         // Attributes map
         size_t attr_count = attributes.size();
         os.write(reinterpret_cast<const char*>(&attr_count), sizeof(attr_count));
@@ -386,19 +384,6 @@ struct sample_info {
         // Links
         info.source_url = read_string();
         info.publication = read_string();
-
-        // Expression type
-        std::underlying_type_t<expression_type> expr_int;
-        is.read(reinterpret_cast<char*>(&expr_int), sizeof(expr_int));
-        info.expr_type = static_cast<expression_type>(expr_int);
-
-        // Expression attributes
-        size_t ea_count;
-        is.read(reinterpret_cast<char*>(&ea_count), sizeof(ea_count));
-        info.expression_attributes.reserve(ea_count);
-        for (size_t i = 0; i < ea_count; ++i) {
-            info.expression_attributes.push_back(read_string());
-        }
 
         // Attributes map
         size_t attr_count;
