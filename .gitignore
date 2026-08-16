@@ -92,6 +92,7 @@ Temporary Items
 .cache
 .claude/
 CLAUDE.md
+AGENTS.md
 
 # atroplex-specific
 .config.hpp
