@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **Bump genogrove to v0.25.6** ([#98](https://github.com/ylab-hi/atroplex/pull/98), closes [#97](https://github.com/ylab-hi/atroplex/issues/97)): v0.25.6 fixes a silent B+ tree misrouting bug in the plain unsorted `insert()` path (genogrove [#517](https://github.com/genogrove/genogrove/issues/517)/[#518](https://github.com/genogrove/genogrove/pull/518)/[#522](https://github.com/genogrove/genogrove/pull/522)) — descent compared a key against a child's leftmost key instead of its subtree maximum, so an out-of-order key could be pushed one child too far right and become permanently unreachable to later `intersect()` queries, with no exception or crash. `segment_builder::create_segment` and `transcript_matcher`'s query path both insert via the 3-arg `grove.insert_data(seqid, coord, feature)` overload — the plain unsorted tree-insert, exactly the broken path (`add_external_key`, used for `exon_feature`, is unaffected: flat vector storage, never tree-routed). Because atroplex's insertion order across a build is not globally position-sorted (annotations processed before samples, novel loci scattered across the genome), any real chromosome build produces a tree deeper than 2 levels at the default order (3) — so this bug was plausibly live in every `.ggx` ever built, silently dropping segments from spatial queries and therefore from `inspect`/`query`/`discover` output. Two more `.gg`/`.ggx` wire-format breaks happened in the version gap (v0.24.6 header, v0.25.0 block-structured serialize/deserialize), so this is a clean-break rebuild regardless — no back-compat shim, per project policy. **Existing `.ggx`/`.qtx` indexes should be regenerated.**
+
 ## [0.2.0] - 2026-05-25
 
 ### Changed
