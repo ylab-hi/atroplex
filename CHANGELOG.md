@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **Bump genogrove to v0.26.1**: brings in reverse graph traversal (`get_in_neighbors`/`in_degree`/`get_in_edges`/`get_in_edge_list`/`get_in_neighbors_if` on `graph_overlay`/`grove`/`grove_view`, genogrove [#531](https://github.com/genogrove/genogrove/pull/531)/[#532](https://github.com/genogrove/genogrove/pull/532)/[#534](https://github.com/genogrove/genogrove/pull/534)/[#535](https://github.com/genogrove/genogrove/pull/535)) and a `deserialize()` fix for scrambled incoming-edge order on replay (genogrove [#540](https://github.com/genogrove/genogrove/pull/540)/[#545](https://github.com/genogrove/genogrove/pull/545)/[#546](https://github.com/genogrove/genogrove/pull/546)/[#551](https://github.com/genogrove/genogrove/pull/551)). Atroplex uses none of the new API and every `get_neighbors_if` call site (`splicing_catalog.cpp`, `transcript_matcher.cpp`, `analysis_report.cpp`, `segment_builder.cpp`, `export_gtf.cpp`) already null-guards `current` before calling, so v0.26.1's new throw-on-null for `graph_overlay`'s reverse-traversal methods (genogrove [#541](https://github.com/genogrove/genogrove/pull/541)/[#550](https://github.com/genogrove/genogrove/pull/550)) never fires — no atroplex code changes needed. The `.gg` block format bumps 0.2 → 0.3 (genogrove [#535](https://github.com/genogrove/genogrove/pull/535)), so this is a clean-break rebuild regardless — no back-compat shim, per project policy. **Existing `.ggx`/`.qtx` indexes should be regenerated.**
+
 ## [0.2.1] - 2026-08-15
 
 ### Changed
