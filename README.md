@@ -24,7 +24,7 @@ cmake --build build
 ### Dependencies
 
 - **cxxopts** (v3.3.1): Command-line argument parsing (fetched automatically)
-- **genogrove** (v0.21.0): Genomic interval data structures and graph structure (fetched automatically)
+- **genogrove** (v0.27.0): Genomic interval data structures and graph structure (fetched automatically)
 - **htslib**: Reading BAM/SAM files (system dependency via pkg-config)
 - **zlib**: Compression support
 
