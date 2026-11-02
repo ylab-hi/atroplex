@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **Bump genogrove to v0.27.0**: includes stricter validation of malformed serialized groves, exception-safe root creation, and reader/API improvements since v0.26.1. The embedded grove format changes from 0.3 to 0.4 (type tags and fixed-width little-endian serialization), so **existing `.ggx`/`.qtx` indexes must be regenerated**. Atroplex's custom payload serialization remains platform-dependent; this update does not make the complete `.ggx` format portable. The reader's new GFF3 ID fallbacks do not provide full GFF3 parent resolution in Atroplex's builder.
+
 ## [0.2.2] - 2026-09-10
 
 ### Changed
