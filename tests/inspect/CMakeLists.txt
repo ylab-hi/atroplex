@@ -22,3 +22,12 @@ target_link_libraries(conserved_threshold_tests PRIVATE
 )
 
 gtest_discover_tests(conserved_threshold_tests WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+
+# Splicing event detection and standalone/streaming TSV schema regression tests (#61).
+add_executable(splicing_events_tests splicing_events_test.cpp)
+target_link_libraries(splicing_events_tests PRIVATE
+    atroplex_core
+    gtest gtest_main
+)
+
+gtest_discover_tests(splicing_events_tests WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
